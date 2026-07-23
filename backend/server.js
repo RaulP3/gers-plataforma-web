@@ -1,6 +1,8 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
+const axios = require('axios');
 const path = require('path');
 
 const app = express();
@@ -16,6 +18,31 @@ const db = new sqlite3.Database(dbPath, (err) => {
 });
 
 db.serialize(() => {
+  db.run(`CREATE TABLE IF NOT EXISTS viajes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vehicle_id TEXT,
+    vehicle_name TEXT,
+    origen TEXT,
+    destino TEXT,
+    conductor TEXT,
+    estado TEXT DEFAULT 'programado',
+    fecha_inicio DATETIME,
+    fecha_fin DATETIME,
+    notas TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS alertas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vehicle_id TEXT,
+    vehicle_name TEXT,
+    tipo TEXT,
+    mensaje TEXT,
+    severidad TEXT DEFAULT 'info',
+    leida INTEGER DEFAULT 0,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
   db.run(`CREATE TABLE IF NOT EXISTS operaciones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     codigo TEXT NOT NULL,
@@ -25,17 +52,138 @@ db.serialize(() => {
     destino TEXT,
     fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
-
-  db.run(`CREATE TABLE IF NOT EXISTS monitoreo (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    operacion_id INTEGER,
-    latitud REAL,
-    longitud REAL,
-    estado TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (operacion_id) REFERENCES operaciones(id)
-  )`);
 });
+
+const samsaraApi = axios.create({
+  baseURL: 'https://api.samsara.com/v1',
+  headers: {
+    'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`,
+    'Content-Type': 'application/json'
+  }
+});
+
+// ============ SAMSARA VEHICLES + LOCATIONS ============
+
+app.get('/api/samsara/vehicles', async (req, res) => {
+  try {
+    const listRes = await samsaraApi.get('/fleet/list');
+    const vehicles = listRes.data.vehicles || [];
+
+    const vehicleIds = vehicles.map(v => v.id);
+    const now = Date.now();
+    const tenMinAgo = now - 600000;
+
+    let locationsMap = {};
+    try {
+      const locRes = await samsaraApi.get('/fleet/vehicles/locations', {
+        params: {
+          vehicleIds: vehicleIds.join(','),
+          startMs: tenMinAgo,
+          endMs: now
+        }
+      });
+
+      for (const v of (locRes.data || [])) {
+        if (v.locations && v.locations.length > 0) {
+          const lastLoc = v.locations[v.locations.length - 1];
+          locationsMap[v.id] = {
+            latitude: lastLoc.latitude,
+            longitude: lastLoc.longitude,
+            speed: lastLoc.speedMilesPerHour,
+            location: lastLoc.location,
+            timeMs: lastLoc.timeMs
+          };
+        }
+      }
+    } catch (locErr) {
+      console.error('Error fetching locations:', locErr.message);
+    }
+
+    const enrichedVehicles = vehicles.map(v => ({
+      ...v,
+      location: locationsMap[v.id] || null,
+      isOnline: !!locationsMap[v.id]
+    }));
+
+    res.json(enrichedVehicles);
+  } catch (error) {
+    console.error('Error Samsara API:', error.message);
+    res.status(500).json({ error: 'Error al obtener vehículos', details: error.message });
+  }
+});
+
+// ============ VIAJES ============
+
+app.get('/api/viajes', (req, res) => {
+  db.all('SELECT * FROM viajes ORDER BY fecha_inicio ASC', [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+app.post('/api/viajes', (req, res) => {
+  const { vehicle_id, vehicle_name, origen, destino, conductor, fecha_inicio, fecha_fin, notas } = req.body;
+  db.run(
+    'INSERT INTO viajes (vehicle_id, vehicle_name, origen, destino, conductor, fecha_inicio, fecha_fin, notas) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [vehicle_id, vehicle_name, origen, destino, conductor, fecha_inicio, fecha_fin, notas],
+    function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ id: this.lastID });
+    }
+  );
+});
+
+app.put('/api/viajes/:id', (req, res) => {
+  const { estado } = req.body;
+  db.run('UPDATE viajes SET estado = ? WHERE id = ?', [estado, req.params.id], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ changes: this.changes });
+  });
+});
+
+app.delete('/api/viajes/:id', (req, res) => {
+  db.run('DELETE FROM viajes WHERE id = ?', [req.params.id], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ changes: this.changes });
+  });
+});
+
+// ============ ALERTAS ============
+
+app.get('/api/alertas', (req, res) => {
+  db.all('SELECT * FROM alertas ORDER BY timestamp DESC', [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+app.post('/api/alertas', (req, res) => {
+  const { vehicle_id, vehicle_name, tipo, mensaje, severidad } = req.body;
+  db.run(
+    'INSERT INTO alertas (vehicle_id, vehicle_name, tipo, mensaje, severidad) VALUES (?, ?, ?, ?, ?)',
+    [vehicle_id, vehicle_name, tipo, mensaje, severidad || 'info'],
+    function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ id: this.lastID });
+    }
+  );
+});
+
+app.put('/api/alertas/:id/leer', (req, res) => {
+  db.run('UPDATE alertas SET leida = 1 WHERE id = ?', [req.params.id], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ changes: this.changes });
+  });
+});
+
+app.delete('/api/alertas/:id', (req, res) => {
+  db.run('DELETE FROM alertas WHERE id = ?', [req.params.id], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ changes: this.changes });
+  });
+});
+
+// ============ OPERACIONES ============
 
 app.get('/api/operaciones', (req, res) => {
   db.all('SELECT * FROM operaciones', [], (err, rows) => {
@@ -58,46 +206,53 @@ app.post('/api/operaciones', (req, res) => {
 
 app.put('/api/operaciones/:id', (req, res) => {
   const { estado } = req.body;
-  db.run(
-    'UPDATE operaciones SET estado = ? WHERE id = ?',
-    [estado, req.params.id],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ changes: this.changes });
-    }
-  );
+  db.run('UPDATE operaciones SET estado = ? WHERE id = ?', [estado, req.params.id], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ changes: this.changes });
+  });
 });
 
-app.get('/api/monitoreo', (req, res) => {
-  db.all('SELECT * FROM monitoreo ORDER BY timestamp DESC', [], (err, rows) => {
+// ============ REPORTES ============
+
+app.get('/api/reportes/resumen', (req, res) => {
+  const stats = {};
+  db.get('SELECT COUNT(*) as total FROM operaciones', [], (err, row) => {
+    stats.totalOperaciones = row?.total || 0;
+    db.get('SELECT COUNT(*) as total FROM viajes', [], (err, row) => {
+      stats.totalViajes = row?.total || 0;
+      db.get("SELECT COUNT(*) as programados FROM viajes WHERE estado = 'programado'", [], (err, row) => {
+        stats.viajesProgramados = row?.programados || 0;
+        db.get('SELECT COUNT(*) as total FROM alertas WHERE leida = 0', [], (err, row) => {
+          stats.alertasNoLeidas = row?.total || 0;
+          res.json(stats);
+        });
+      });
+    });
+  });
+});
+
+app.get('/api/reportes/operaciones', (req, res) => {
+  const { fecha_inicio, fecha_fin } = req.query;
+  let query = 'SELECT * FROM operaciones WHERE 1=1';
+  const params = [];
+  if (fecha_inicio) { query += ' AND fecha_creacion >= ?'; params.push(fecha_inicio); }
+  if (fecha_fin) { query += ' AND fecha_creacion <= ?'; params.push(fecha_fin); }
+  db.all(query, params, (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
   });
 });
 
-app.post('/api/monitoreo', (req, res) => {
-  const { operacion_id, latitud, longitud, estado } = req.body;
-  db.run(
-    'INSERT INTO monitoreo (operacion_id, latitud, longitud, estado) VALUES (?, ?, ?, ?)',
-    [operacion_id, latitud, longitud, estado],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ id: this.lastID });
-    }
-  );
-});
-
-app.get('/api/dashboard', (req, res) => {
-  const stats = {};
-  db.get('SELECT COUNT(*) as total FROM operaciones', [], (err, row) => {
-    stats.totalOperaciones = row?.total || 0;
-    db.get("SELECT COUNT(*) as activas FROM operaciones WHERE estado = 'en_curso'", [], (err, row) => {
-      stats.operacionesActivas = row?.activas || 0;
-      db.get("SELECT COUNT(*) as completadas FROM operaciones WHERE estado = 'completada'", [], (err, row) => {
-        stats.operacionesCompletadas = row?.completadas || 0;
-        res.json(stats);
-      });
-    });
+app.get('/api/reportes/viajes', (req, res) => {
+  const { fecha_inicio, fecha_fin, estado } = req.query;
+  let query = 'SELECT * FROM viajes WHERE 1=1';
+  const params = [];
+  if (fecha_inicio) { query += ' AND fecha_inicio >= ?'; params.push(fecha_inicio); }
+  if (fecha_fin) { query += ' AND fecha_fin <= ?'; params.push(fecha_fin); }
+  if (estado) { query += ' AND estado = ?'; params.push(estado); }
+  db.all(query, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
   });
 });
 
