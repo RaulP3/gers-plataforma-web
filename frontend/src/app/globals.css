@@ -6,8 +6,8 @@
 
 body {
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  background: #f0f2f5;
-  color: #1a202c;
+  background: #0a0a0a;
+  color: #e0e0e0;
 }
 
 ::-webkit-scrollbar {
@@ -16,15 +16,23 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: #0d0d0d;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
+  background: #1a3d1a;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a1a1a1;
+  background: #00ff41;
+}
+
+input, select, textarea {
+  color: #e0e0e0 !important;
+}
+
+input::placeholder, textarea::placeholder {
+  color: #4a8a4a !important;
 }

@@ -63,11 +63,10 @@ export default function MapaUnidades({ vehiculos }) {
             }
           });
 
-          if (vehiculos.length > 0) {
+          const withLoc = vehiculos.filter(v => v.location);
+          if (withLoc.length > 0) {
             const bounds = L.latLngBounds(
-              vehiculos
-                .filter(v => v.location)
-                .map(v => [v.location.latitude, v.location.longitude])
+              withLoc.map(v => [v.location.latitude, v.location.longitude])
             );
             if (bounds.isValid()) {
               map.fitBounds(bounds, { padding: [30, 30] });
