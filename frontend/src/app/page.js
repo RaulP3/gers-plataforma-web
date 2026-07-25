@@ -6,7 +6,7 @@ import dynamic from 'next/dynamic';
 const MapaUnidades = dynamic(() => import('../components/MapaUnidades'), { ssr: false });
 const RouteMap = dynamic(() => import('../components/RouteMap'), { ssr: false });
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || (typeof window !== 'undefined' ? `http://${window.location.hostname}:3001/api` : 'http://localhost:3001/api');
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState('dashboard');
