@@ -5,6 +5,7 @@ const sqlite3 = require('sqlite3').verbose();
 const axios = require('axios');
 const path = require('path');
 
+const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 3001;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
@@ -12,7 +13,9 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 app.use(cors({ origin: FRONTEND_URL, credentials: true }));
 app.use(express.json());
 
-const dbPath = process.env.DATABASE_URL || path.join(__dirname, 'gers.db');
+const dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'gers.db');
+const dbDir = path.dirname(dbPath);
+if (!fs.existsSync(dbDir)) { fs.mkdirSync(dbDir, { recursive: true }); }
 const db = new sqlite3.Database(dbPath, (err) => {
   if (err) console.error('Error al conectar con SQLite:', err);
   else console.log('Conectado a SQLite en', dbPath);

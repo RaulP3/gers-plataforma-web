@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: gers-backend
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - SAMSARA_API_TOKEN=${SAMSARA_API_TOKEN}
+      - PORT=3001
+      - FRONTEND_URL=http://localhost:3000
+      - DATABASE_PATH=/app/data/gers.db
+    volumes:
+      - gers-data:/app/data
+    networks:
+      - gers-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=http://localhost:3001/api
+    container_name: gers-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - gers-network
+
+volumes:
+  gers-data:
+
+networks:
+  gers-network:
+    driver: bridge
