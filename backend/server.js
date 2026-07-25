@@ -7,14 +7,15 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
-app.use(cors());
+app.use(cors({ origin: FRONTEND_URL, credentials: true }));
 app.use(express.json());
 
-const dbPath = path.join(__dirname, 'gers.db');
+const dbPath = process.env.DATABASE_URL || path.join(__dirname, 'gers.db');
 const db = new sqlite3.Database(dbPath, (err) => {
   if (err) console.error('Error al conectar con SQLite:', err);
-  else console.log('Conectado a SQLite');
+  else console.log('Conectado a SQLite en', dbPath);
 });
 
 db.serialize(() => {
