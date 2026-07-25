@@ -6,9 +6,8 @@ import dynamic from 'next/dynamic';
 const MapaUnidades = dynamic(() => import('../components/MapaUnidades'), { ssr: false });
 const RouteMap = dynamic(() => import('../components/RouteMap'), { ssr: false });
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || (typeof window !== 'undefined' ? `http://${window.location.hostname}:3001/api` : 'http://localhost:3001/api');
-
 export default function Home() {
+  const [apiUrl, setApiUrl] = useState('');
   const [activeTab, setActiveTab] = useState('dashboard');
   const [stats, setStats] = useState({});
   const [operaciones, setOperaciones] = useState([]);
@@ -41,23 +40,27 @@ export default function Home() {
   const [routeLoading, setRouteLoading] = useState(false);
 
   useEffect(() => {
-    loadAll();
+    setApiUrl(process.env.NEXT_PUBLIC_API_URL || `http://${window.location.hostname}:3001/api`);
   }, []);
+
+  useEffect(() => {
+    if (apiUrl) loadAll();
+  }, [apiUrl]);
 
   const loadAll = async () => {
     setLoading(true);
     try {
       const [statsRes, opsRes, viajesRes, alertasRes, vehiculosRes, comentariosRes, operadoresRes, driversRes, geofencesRes, eventsRes] = await Promise.allSettled([
-        fetch(`${API_URL}/reportes/resumen`).then(r => r.json()),
-        fetch(`${API_URL}/operaciones`).then(r => r.json()),
-        fetch(`${API_URL}/viajes`).then(r => r.json()),
-        fetch(`${API_URL}/alertas`).then(r => r.json()),
-        fetch(`${API_URL}/samsara/vehicles`).then(r => r.json()),
-        fetch(`${API_URL}/comentarios`).then(r => r.json()),
-        fetch(`${API_URL}/vehicle-operators`).then(r => r.json()),
-        fetch(`${API_URL}/samsara/drivers`).then(r => r.json()),
-        fetch(`${API_URL}/geofences`).then(r => r.json()),
-        fetch(`${API_URL}/geofence-events?limit=100`).then(r => r.json()),
+        fetch(`${apiUrl}/reportes/resumen`).then(r => r.json()),
+        fetch(`${apiUrl}/operaciones`).then(r => r.json()),
+        fetch(`${apiUrl}/viajes`).then(r => r.json()),
+        fetch(`${apiUrl}/alertas`).then(r => r.json()),
+        fetch(`${apiUrl}/samsara/vehicles`).then(r => r.json()),
+        fetch(`${apiUrl}/comentarios`).then(r => r.json()),
+        fetch(`${apiUrl}/vehicle-operators`).then(r => r.json()),
+        fetch(`${apiUrl}/samsara/drivers`).then(r => r.json()),
+        fetch(`${apiUrl}/geofences`).then(r => r.json()),
+        fetch(`${apiUrl}/geofence-events?limit=100`).then(r => r.json()),
       ]);
 
       if (statsRes.status === 'fulfilled') setStats(statsRes.value);
@@ -87,7 +90,7 @@ export default function Home() {
 
   const crearOperacion = async (e) => {
     e.preventDefault();
-    await fetch(`${API_URL}/operaciones`, {
+    await fetch(`${apiUrl}/operaciones`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(nuevaOp),
@@ -97,7 +100,7 @@ export default function Home() {
   };
 
   const actualizarEstadoOp = async (id, estado) => {
-    await fetch(`${API_URL}/operaciones/${id}`, {
+    await fetch(`${apiUrl}/operaciones/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ estado }),
@@ -107,7 +110,7 @@ export default function Home() {
 
   const crearViaje = async (e) => {
     e.preventDefault();
-    await fetch(`${API_URL}/viajes`, {
+    await fetch(`${apiUrl}/viajes`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(formViaje),
@@ -117,7 +120,7 @@ export default function Home() {
   };
 
   const actualizarEstadoViaje = async (id, estado) => {
-    await fetch(`${API_URL}/viajes/${id}`, {
+    await fetch(`${apiUrl}/viajes/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ estado }),
@@ -127,24 +130,24 @@ export default function Home() {
 
   const eliminarViaje = async (id) => {
     if (confirm('Eliminar este viaje?')) {
-      await fetch(`${API_URL}/viajes/${id}`, { method: 'DELETE' });
+      await fetch(`${apiUrl}/viajes/${id}`, { method: 'DELETE' });
       loadAll();
     }
   };
 
   const marcarAlertaLeida = async (id) => {
-    await fetch(`${API_URL}/alertas/${id}/leer`, { method: 'PUT' });
+    await fetch(`${apiUrl}/alertas/${id}/leer`, { method: 'PUT' });
     loadAll();
   };
 
   const eliminarAlerta = async (id) => {
-    await fetch(`${API_URL}/alertas/${id}`, { method: 'DELETE' });
+    await fetch(`${apiUrl}/alertas/${id}`, { method: 'DELETE' });
     loadAll();
   };
 
   const crearComentario = async (e) => {
     e.preventDefault();
-    await fetch(`${API_URL}/comentarios`, {
+    await fetch(`${apiUrl}/comentarios`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(nuevoComentario),
@@ -155,14 +158,14 @@ export default function Home() {
 
   const eliminarComentario = async (id) => {
     if (confirm('Eliminar este comentario?')) {
-      await fetch(`${API_URL}/comentarios/${id}`, { method: 'DELETE' });
+      await fetch(`${apiUrl}/comentarios/${id}`, { method: 'DELETE' });
       loadAll();
     }
   };
 
   const guardarComentarioRapido = async () => {
     if (!comentarioRapido.contenido.trim() || !selectedVehicle) return;
-    await fetch(`${API_URL}/comentarios`, {
+    await fetch(`${apiUrl}/comentarios`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -180,7 +183,7 @@ export default function Home() {
   };
 
   const guardarOperador = async (vehicleId, vehicleName, nombre) => {
-    await fetch(`${API_URL}/vehicle-operators/${vehicleId}`, {
+    await fetch(`${apiUrl}/vehicle-operators/${vehicleId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ vehicle_name: vehicleName, operator_name: nombre }),
@@ -190,7 +193,7 @@ export default function Home() {
 
   const crearGeofence = async (e) => {
     e.preventDefault();
-    await fetch(`${API_URL}/geofences`, {
+    await fetch(`${apiUrl}/geofences`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -208,13 +211,13 @@ export default function Home() {
 
   const eliminarGeofence = async (id) => {
     if (confirm('Eliminar esta geocerca?')) {
-      await fetch(`${API_URL}/geofences/${id}`, { method: 'DELETE' });
+      await fetch(`${apiUrl}/geofences/${id}`, { method: 'DELETE' });
       loadAll();
     }
   };
 
   const toggleGeofence = async (id, activa) => {
-    await fetch(`${API_URL}/geofences/${id}`, {
+    await fetch(`${apiUrl}/geofences/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ activa: activa ? 0 : 1 }),
@@ -223,12 +226,12 @@ export default function Home() {
   };
 
   const ejecutarCheckGeofences = async () => {
-    await fetch(`${API_URL}/check-geofences`, { method: 'POST' });
+    await fetch(`${apiUrl}/check-geofences`, { method: 'POST' });
     loadAll();
   };
 
   const ejecutarCheckFuel = async () => {
-    await fetch(`${API_URL}/check-fuel`, { method: 'POST' });
+    await fetch(`${apiUrl}/check-fuel`, { method: 'POST' });
     loadAll();
   };
 
@@ -236,7 +239,7 @@ export default function Home() {
     if (!routeVehicleId || !routeDate) return;
     setRouteLoading(true);
     try {
-      const res = await fetch(`${API_URL}/route-history?vehicle_id=${routeVehicleId}&fecha_inicio=${routeDate}&fecha_fin=${routeDate}&limit=5000`);
+      const res = await fetch(`${apiUrl}/route-history?vehicle_id=${routeVehicleId}&fecha_inicio=${routeDate}&fecha_fin=${routeDate}&limit=5000`);
       const data = await res.json();
       setRouteHistory(data);
     } catch (e) { console.error(e); }
@@ -248,7 +251,7 @@ export default function Home() {
     setRouteHistory([]);
     if (!vid) { setRouteDates([]); return; }
     try {
-      const res = await fetch(`${API_URL}/route-history/dates?vehicle_id=${vid}`);
+      const res = await fetch(`${apiUrl}/route-history/dates?vehicle_id=${vid}`);
       const data = await res.json();
       setRouteDates(data);
     } catch (e) { console.error(e); }
@@ -259,7 +262,7 @@ export default function Home() {
     if (filtroReporte.fecha_inicio) params.append('fecha_inicio', filtroReporte.fecha_inicio);
     if (filtroReporte.fecha_fin) params.append('fecha_fin', filtroReporte.fecha_fin);
     if (filtroReporte.vehicle_id) params.append('vehicle_id', filtroReporte.vehicle_id);
-    const res = await fetch(`${API_URL}/reportes/${filtroReporte.tipo}?${params}`);
+    const res = await fetch(`${apiUrl}/reportes/${filtroReporte.tipo}?${params}`);
     const data = await res.json();
     setReportes(data);
   };
