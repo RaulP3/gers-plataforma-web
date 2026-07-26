@@ -12,7 +12,14 @@ export default function Home() {
   const [apiUrl, setApiUrl] = useState('');
   const [activeTab, setActiveTab] = useState('dashboard');
   const [stats, setStats] = useState({});
-  const [operaciones, setOperaciones] = useState([]);
+  const [pendientes, setPendientes] = useState([]);
+  const [filtroTurno, setFiltroTurno] = useState('');
+  const [showPendienteModal, setShowPendienteModal] = useState(false);
+  const [pendienteEditando, setPendienteEditando] = useState(null);
+  const [formPendiente, setFormPendiente] = useState({ titulo: '', descripcion: '', prioridad: 'media', asignado_a: '', turno: '', notas: '' });
+  const [draggedPendiente, setDraggedPendiente] = useState(null);
+  const [dragOverColumn, setDragOverColumn] = useState(null);
+  const [nuevoComentarioPendiente, setNuevoComentarioPendiente] = useState('');
   const [viajes, setViajes] = useState([]);
   const [alertas, setAlertas] = useState([]);
   const [vehiculos, setVehiculos] = useState([]);
@@ -20,9 +27,8 @@ export default function Home() {
   const [comentarios, setComentarios] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const [nuevaOp, setNuevaOp] = useState({ codigo: '', descripcion: '', origen: '', destino: '' });
-  const [filtroReporte, setFiltroReporte] = useState({ tipo: 'operaciones', fecha_inicio: '', fecha_fin: '', vehicle_id: '' });
-  const [formViaje, setFormViaje] = useState({ vehicle_id: '', vehicle_name: '', origen: '', destino: '', conductor: '', telefono: '', fecha_inicio: '', fecha_fin: '', notas: '' });
+  const [filtroReporte, setFiltroReporte] = useState({ tipo: 'pendientes', fecha_inicio: '', fecha_fin: '', vehicle_id: '' });
+  const [formViaje, setFormViaje] = useState({ vehicle_id: '', vehicle_name: '', origen: '', destino: '', conductor: '', telefono: '', fecha_inicio: '', fecha_fin: '', notas: '', remolque: '' });
   const [vehicleFilter, setVehicleFilter] = useState('');
   const [nuevoComentario, setNuevoComentario] = useState({ vehicle_id: '', vehicle_name: '', autor: '', tipo: 'seguimiento', titulo: '', contenido: '', estatus: '', remolque: '', grupo: '', origen: '', destino: '' });
   const [clientes, setClientes] = useState([]);
@@ -37,6 +43,45 @@ export default function Home() {
   const [historialSeguimiento, setHistorialSeguimiento] = useState([]);
   const [selectedSeguimiento, setSelectedSeguimiento] = useState(null);
   const [seguimientoFilter, setSeguimientoFilter] = useState('');
+  const [showMensajeModal, setShowMensajeModal] = useState(false);
+  const [mensajeCliente, setMensajeCliente] = useState('');
+  const [mensajeTexto, setMensajeTexto] = useState('');
+
+  const generarMensajeSeguimiento = (grupo) => {
+    const filas = seguimiento.filter(row => row.grupo === grupo);
+    let msg = `📲 REPORTE DE UNIDADES "${grupo}"\n------------------------------------------\n\n`;
+    filas.forEach(row => {
+      msg += `${row.unidad || 'N/A'} | ${row.remolque || 'N/A'} | ${row.operador || 'N/A'} | ${row.origen || 'N/A'} --> ${row.destino || 'N/A'}\n`;
+      msg += `Cita carga: ${row.cita_carga || 'N/A'}\n`;
+      msg += `Cita descarga: ${row.cita_descarga || 'N/A'}\n`;
+      msg += `Estatus: ${row.estatus || 'N/A'}\n`;
+      msg += `Observaciones: ${row.coment_cliente || 'Sin observaciones'}\n\n`;
+    });
+    return msg;
+  };
+
+  const abrirGeneradorMensajes = () => {
+    setShowMensajeModal(true);
+    setMensajeCliente('');
+    setMensajeTexto('');
+  };
+
+  const actualizarMensaje = (grupo) => {
+    setMensajeCliente(grupo);
+    setMensajeTexto(generarMensajeSeguimiento(grupo));
+  };
+
+  const copiarMensaje = () => {
+    navigator.clipboard.writeText(mensajeTexto);
+    alert('Mensaje copiado al portapapeles');
+  };
+
+  const enviarWhatsApp = () => {
+    const msg = encodeURIComponent(mensajeTexto);
+    window.open(`https://wa.me/?text=${msg}`, '_blank');
+  };
+
+  const gruposUnicos = [...new Set(seguimiento.map(row => row.grupo).filter(Boolean))];
   const [selectedVehicle, setSelectedVehicle] = useState(null);
   const [comentarioRapido, setComentarioRapido] = useState({ autor: '', tipo: 'seguimiento', titulo: '', contenido: '' });
   const [destinoInput, setDestinoInput] = useState('');
@@ -84,12 +129,30 @@ export default function Home() {
   const [showZoneModal, setShowZoneModal] = useState(false);
   const [newZone, setNewZone] = useState({ name: '', description: '', severity: 'high', lat: '', lng: '', radius: 5000 });
   const [unidadesLocales, setUnidadesLocales] = useState([]);
+  const [showViajeModal, setShowViajeModal] = useState(false);
+  const [viajeDetalle, setViajeDetalle] = useState(null);
+  const [viajeEditando, setViajeEditando] = useState(false);
+  const [viajeForm, setViajeForm] = useState({});
+
+  const actualizarViaje = async () => {
+    if (!viajeDetalle?.id) return;
+    await fetch(`${apiUrl}/viajes/${viajeDetalle.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(viajeForm),
+    });
+    setViajeDetalle(viajeForm);
+    setViajeEditando(false);
+    loadAll();
+  };
+
   const [showUnidadModal, setShowUnidadModal] = useState(false);
   const [editUnidad, setEditUnidad] = useState(null);
   const [formUnidad, setFormUnidad] = useState({ nombre: '', estatus: 'Activa', notas: '', tipo: 'manual', samsara_id: '' });
   const [monitoreoSelectedId, setMonitoreoSelectedId] = useState(null);
   const [monitoreoRouteHistory, setMonitoreoRouteHistory] = useState([]);
   const [monitoreoEta, setMonitoreoEta] = useState(null);
+  const [monitoreoGeofenceMatch, setMonitoreoGeofenceMatch] = useState(null);
   const [viajesActivos, setViajesActivos] = useState([]);
 
   const defaultZonesList = [
@@ -165,9 +228,9 @@ export default function Home() {
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [statsRes, opsRes, viajesRes, alertasRes, vehiculosRes, comentariosRes, operadoresRes, driversRes, geofencesRes, eventsRes, riskZonesRes, samsaraAddrRes, clientesRes, remolquesRes, seguimientoRes, unidadesRes] = await Promise.allSettled([
+      const [statsRes, pendientesRes, viajesRes, alertasRes, vehiculosRes, comentariosRes, operadoresRes, driversRes, geofencesRes, eventsRes, riskZonesRes, samsaraAddrRes, clientesRes, remolquesRes, seguimientoRes, unidadesRes] = await Promise.allSettled([
         fetch(`${apiUrl}/reportes/resumen`).then(r => r.json()),
-        fetch(`${apiUrl}/operaciones`).then(r => r.json()),
+        fetch(`${apiUrl}/pendientes`).then(r => r.json()),
         fetch(`${apiUrl}/viajes`).then(r => r.json()),
         fetch(`${apiUrl}/alertas`).then(r => r.json()),
         fetch(`${apiUrl}/samsara/vehicles`).then(r => r.json()),
@@ -185,7 +248,7 @@ export default function Home() {
       ]);
 
       if (statsRes.status === 'fulfilled') setStats(statsRes.value);
-      if (opsRes.status === 'fulfilled') setOperaciones(opsRes.value);
+      if (pendientesRes.status === 'fulfilled') setPendientes(pendientesRes.value);
       if (viajesRes.status === 'fulfilled') setViajes(viajesRes.value);
       if (alertasRes.status === 'fulfilled') setAlertas(alertasRes.value);
       if (comentariosRes.status === 'fulfilled') setComentarios(comentariosRes.value);
@@ -218,24 +281,84 @@ export default function Home() {
     setLoading(false);
   };
 
-  const crearOperacion = async (e) => {
+  const guardarPendiente = async (e) => {
     e.preventDefault();
-    await fetch(`${apiUrl}/operaciones`, {
-      method: 'POST',
+    if (!formPendiente.titulo.trim()) return;
+    const url = pendienteEditando?.id
+      ? `${apiUrl}/pendientes/${pendienteEditando.id}`
+      : `${apiUrl}/pendientes`;
+    const method = pendienteEditando?.id ? 'PUT' : 'POST';
+    await fetch(url, {
+      method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(nuevaOp),
+      body: JSON.stringify({ ...formPendiente, estado: pendienteEditando?.estado || 'pendiente' }),
     });
-    setNuevaOp({ codigo: '', descripcion: '', origen: '', destino: '' });
+    setFormPendiente({ titulo: '', descripcion: '', prioridad: 'media', asignado_a: '', turno: '', notas: '' });
+    setPendienteEditando(null);
+    setShowPendienteModal(false);
     loadAll();
   };
 
-  const actualizarEstadoOp = async (id, estado) => {
-    await fetch(`${apiUrl}/operaciones/${id}`, {
+  const eliminarPendiente = async (id) => {
+    if (!confirm('¿Eliminar este pendiente?')) return;
+    await fetch(`${apiUrl}/pendientes/${id}`, { method: 'DELETE' });
+    loadAll();
+  };
+
+  const cambiarEstadoPendiente = async (id, nuevoEstado) => {
+    const p = pendientes.find(x => x.id === id);
+    if (!p) return;
+    await fetch(`${apiUrl}/pendientes/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ estado }),
+      body: JSON.stringify({ ...p, estado: nuevoEstado }),
     });
     loadAll();
+  };
+
+  const agregarComentarioPendiente = async (pendienteId, contenido) => {
+    if (!contenido.trim()) return;
+    await fetch(`${apiUrl}/pendientes/${pendienteId}/comentarios`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contenido, autor: 'Monitorista' }),
+    });
+    setNuevoComentarioPendiente('');
+    const comentarios = await fetch(`${apiUrl}/pendientes/${pendienteId}/comentarios`).then(r => r.json());
+    setPendienteEditando({ ...pendienteEditando, comentarios });
+  };
+
+  const handleDragStart = (e, pendiente) => {
+    setDraggedPendiente(pendiente);
+    e.dataTransfer.effectAllowed = 'move';
+    e.target.style.opacity = '0.5';
+  };
+
+  const handleDragEnd = (e) => {
+    e.target.style.opacity = '1';
+    setDraggedPendiente(null);
+    setDragOverColumn(null);
+  };
+
+  const handleDragOver = (e, estado) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverColumn(estado);
+  };
+
+  const handleDragLeave = (e) => {
+    if (!e.currentTarget.contains(e.relatedTarget)) {
+      setDragOverColumn(null);
+    }
+  };
+
+  const handleDrop = async (e, nuevoEstado) => {
+    e.preventDefault();
+    if (draggedPendiente && draggedPendiente.estado !== nuevoEstado) {
+      await cambiarEstadoPendiente(draggedPendiente.id, nuevoEstado);
+    }
+    setDraggedPendiente(null);
+    setDragOverColumn(null);
   };
 
   const crearViaje = async (e) => {
@@ -257,7 +380,7 @@ export default function Home() {
       const tel = formViaje.telefono.replace(/[^0-9+]/g, '');
       const inicio = formViaje.fecha_inicio ? new Date(formViaje.fecha_inicio + (formViaje.fecha_inicio.includes('Z') ? '' : 'Z')).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' }) : 'Por definir';
       const fin = formViaje.fecha_fin ? new Date(formViaje.fecha_fin + (formViaje.fecha_fin.includes('Z') ? '' : 'Z')).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' }) : 'Por definir';
-      const msg = encodeURIComponent(`Hola ${formViaje.conductor || 'Operador'}, se te ha asignado un viaje:\n\nVehiculo: ${formViaje.vehicle_name || formViaje.vehicle_id}\nOrigen: ${formViaje.origen}\nDestino: ${formViaje.destino}\nInicio: ${inicio}\nFin: ${fin}${formViaje.notas ? '\nNotas: ' + formViaje.notas : ''}`);
+      const msg = encodeURIComponent(`*Saludos ${formViaje.conductor || 'Operador'}.*\nSe le ha asignado un nuevo viaje, a continuación los detalles:\n\n*Nombre de viaje:* ${formViaje.origen || '?'} --> ${formViaje.destino || '?'}\n\n*Unidad:* ${formViaje.vehicle_name || formViaje.vehicle_id}\n*Remolque:* ${formViaje.remolque || 'Sin remolque'}\n*Hora de salida:* ${inicio}\n*Hora de descarga:* ${fin}\n\n*Instrucciones Adicionales:* ${formViaje.notas || 'Ninguna'}\n\n*Link de ruta:* https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(formViaje.origen || '')}&destination=${encodeURIComponent(formViaje.destino || '')}\n\n=========================================`);
       window.open(`https://wa.me/${tel}?text=${msg}`, '_blank');
     }
     setFormViaje({ vehicle_id: '', vehicle_name: '', origen: '', destino: '', conductor: '', telefono: '', fecha_inicio: '', fecha_fin: '', notas: '' });
@@ -470,21 +593,35 @@ export default function Home() {
     loadAll();
   };
 
+  const haversineKm = (lat1, lon1, lat2, lon2) => {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  };
+
   const selectMonitoreoVehicle = async (v) => {
     setMonitoreoSelectedId(v.id);
     setMonitoreoEta(null);
+    setMonitoreoGeofenceMatch(null);
     if (v.isLocal) { setMonitoreoRouteHistory([]); return; }
     try {
       const route = await fetch(`${apiUrl}/route-history/last?vehicle_id=${v.id}&hours=24`).then(r => r.json());
       setMonitoreoRouteHistory(Array.isArray(route) ? route : []);
     } catch (e) { setMonitoreoRouteHistory([]); }
-    const viaje = viajesActivos.find(vj => String(vj.vehicle_id) === String(v.id) || vj.vehicle_name === v.name);
-    if (viaje && v.location) {
+    const fullVehicle = vehiculos.find(vh => String(vh.id) === String(v.id)) || v;
+    const viaje = viajesActivos.find(vj => String(vj.vehicle_id) === String(v.id) || vj.vehicle_name === v.name || vj.vehicle_name === fullVehicle?.name);
+    if (viaje && fullVehicle?.location) {
       const destino = viaje.destino || viaje.seg_destino || '';
       if (destino) {
         try {
-          const eta = await calcularRuta(destino, v.location.latitude, v.location.longitude);
+          const eta = await calcularRuta(destino, fullVehicle.location.latitude, fullVehicle.location.longitude);
           setMonitoreoEta(eta);
+          if (eta?.destLat && eta?.destLon) {
+            const match = allGeofences.find(g => g.activa && haversineKm(eta.destLat, eta.destLon, g.latitud, g.longitud) * 1000 <= g.radio_metros);
+            setMonitoreoGeofenceMatch(match || null);
+          }
         } catch (e) { setMonitoreoEta(null); }
       }
     }
@@ -605,7 +742,8 @@ export default function Home() {
           duracionSegundos: duracionTruck,
           horaLlegada: llegada.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }),
           horaLlegadaISO: llegada.toISOString().slice(0, 16),
-          destinoNombre: geoData[0].display_name.split(',').slice(0, 3).join(',')
+          destinoNombre: geoData[0].display_name.split(',').slice(0, 3).join(','),
+          destLat, destLon
         };
       }
     } catch (e) {
@@ -672,7 +810,7 @@ export default function Home() {
   const generarPDF = () => {
     if (!reportes.length) return;
     const doc = new jsPDF({ orientation: 'landscape' });
-    const tipoLabel = { operaciones: 'Operaciones', viajes: 'Viajes', seguimiento: 'Seguimiento / Comentarios' };
+    const tipoLabel = { pendientes: 'Pendientes', viajes: 'Viajes', seguimiento: 'Seguimiento / Comentarios' };
     doc.setFontSize(18);
     doc.text(`Reporte: ${tipoLabel[filtroReporte.tipo] || filtroReporte.tipo}`, 14, 20);
     doc.setFontSize(10);
@@ -759,7 +897,7 @@ export default function Home() {
     { key: 'monitoreo', label: 'Monitoreo', icon: '🗺️' },
     { key: 'notas', label: 'Notas', icon: '📝' },
     { key: 'alertas', label: 'Alertas', icon: '🔔', badge: alertasNoLeidas.length },
-    { key: 'operaciones', label: 'Operaciones', icon: '📋' },
+    { key: 'operaciones', label: 'Pendientes', icon: '📋' },
     { key: 'viajes', label: 'Viajes', icon: '🚚' },
     { key: 'operadores', label: 'Operadores', icon: '👤' },
     { key: 'remolques', label: 'Remolques', icon: '🚛' },
@@ -1205,21 +1343,27 @@ export default function Home() {
           const endPt = routeLen > 0 ? monitoreoRouteHistory[routeLen - 1] : null;
           let avancePct = 0;
           let avanceLabel = 'Sin datos';
-          if (routeLen > 1 && selSeg.destino) {
-            let totalDist = 0;
+          if (routeLen > 1 && monitoreoEta?.distanciaMetros) {
+            let distanciaRecorridaM = 0;
             for (let i = 1; i < routeLen; i++) {
-              const dlat = monitoreoRouteHistory[i].latitude - monitoreoRouteHistory[i - 1].latitude;
-              const dlng = monitoreoRouteHistory[i].longitude - monitoreoRouteHistory[i - 1].longitude;
-              totalDist += Math.sqrt(dlat * dlat + dlng * dlng);
+              distanciaRecorridaM += haversineKm(
+                monitoreoRouteHistory[i - 1].latitude, monitoreoRouteHistory[i - 1].longitude,
+                monitoreoRouteHistory[i].latitude, monitoreoRouteHistory[i].longitude
+              ) * 1000;
             }
-            const progressDist = totalDist;
-            const remaining = selVehicle?.lastSeen != null ? Math.max(0.1, (selVehicle.lastSeen / 60) * 1.60934) : 0;
-            const totalEst = progressDist + remaining;
-            avancePct = totalEst > 0 ? Math.min(95, Math.round((progressDist / totalEst) * 100)) : 0;
-            avanceLabel = `${avancePct}% recorrido · ${routeLen} puntos`;
+            avancePct = Math.min(99, Math.round((distanciaRecorridaM / monitoreoEta.distanciaMetros) * 100));
+            const recorridosKm = (distanciaRecorridaM / 1000).toFixed(1);
+            const totalKm = (monitoreoEta.distanciaMetros / 1000).toFixed(1);
+            avanceLabel = `${avancePct}% · ${recorridosKm} / ${totalKm} km`;
           } else if (routeLen > 1) {
-            avancePct = 100;
-            avanceLabel = `${routeLen} puntos registrados`;
+            let distanciaRecorridaM = 0;
+            for (let i = 1; i < routeLen; i++) {
+              distanciaRecorridaM += haversineKm(
+                monitoreoRouteHistory[i - 1].latitude, monitoreoRouteHistory[i - 1].longitude,
+                monitoreoRouteHistory[i].latitude, monitoreoRouteHistory[i].longitude
+              ) * 1000;
+            }
+            avanceLabel = `${(distanciaRecorridaM / 1000).toFixed(1)} km · ${routeLen} puntos`;
           }
           let etaText = '-';
           let horaLlegada = '-';
@@ -1287,6 +1431,11 @@ export default function Home() {
                       <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
                         <div style={{ fontSize: '0.65rem', color: '#4a8a4a', marginBottom: '0.2rem', textTransform: 'uppercase' }}>Destino</div>
                         <div style={{ fontSize: '0.8rem', color: '#60a5fa', fontWeight: 600 }}>{selSeg.destino || '-'}</div>
+                        {monitoreoGeofenceMatch && (
+                          <div style={{ fontSize: '0.65rem', color: monitoreoGeofenceMatch.color || '#10b981', marginTop: '0.2rem', fontWeight: 600 }}>
+                            📍 {monitoreoGeofenceMatch.nombre}
+                          </div>
+                        )}
                       </div>
                       <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
                         <div style={{ fontSize: '0.65rem', color: '#4a8a4a', marginBottom: '0.2rem', textTransform: 'uppercase' }}>ETA (+1h)</div>
@@ -1617,63 +1766,103 @@ export default function Home() {
 
         {activeTab === 'operaciones' && (
           <div>
-            <h2 style={{ marginTop: 0, marginBottom: '1.5rem' }}>Operaciones</h2>
-            <div style={{ ...s.card, marginBottom: '1.5rem' }}>
-              <h3 style={{ marginTop: 0, marginBottom: '1rem', fontSize: '1rem' }}>Nueva Operación</h3>
-              <form onSubmit={crearOperacion} style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                <div style={{ flex: 1, minWidth: '140px' }}>
-                  <label style={s.label}>Código</label>
-                  <input style={s.input} placeholder="OP-001" value={nuevaOp.codigo} onChange={(e) => setNuevaOp({ ...nuevaOp, codigo: e.target.value })} required />
-                </div>
-                <div style={{ flex: 2, minWidth: '200px' }}>
-                  <label style={s.label}>Descripción</label>
-                  <input style={s.input} placeholder="Descripción" value={nuevaOp.descripcion} onChange={(e) => setNuevaOp({ ...nuevaOp, descripcion: e.target.value })} />
-                </div>
-                <div style={{ flex: 1, minWidth: '140px' }}>
-                  <label style={s.label}>Origen</label>
-                  <input style={s.input} placeholder="Ciudad origen" value={nuevaOp.origen} onChange={(e) => setNuevaOp({ ...nuevaOp, origen: e.target.value })} />
-                </div>
-                <div style={{ flex: 1, minWidth: '140px' }}>
-                  <label style={s.label}>Destino</label>
-                  <input style={s.input} placeholder="Ciudad destino" value={nuevaOp.destino} onChange={(e) => setNuevaOp({ ...nuevaOp, destino: e.target.value })} />
-                </div>
-                <button type="submit" style={s.button()}>Crear</button>
-              </form>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1.5rem', color: '#e0e0e0' }}>Tablero de Pendientes</h2>
+                <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>
+                  {pendientes.length} pendientes · {pendientes.filter(p => p.estado === 'pendiente').length} por hacer
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <select style={s.select} value={filtroTurno} onChange={(e) => setFiltroTurno(e.target.value)}>
+                  <option value="">Todos los turnos</option>
+                  <option value="mañana">Mañana</option>
+                  <option value="tarde">Tarde</option>
+                  <option value="noche">Noche</option>
+                </select>
+                <button onClick={() => { setPendienteEditando(null); setFormPendiente({ titulo: '', descripcion: '', prioridad: 'media', asignado_a: '', turno: '', notas: '' }); setShowPendienteModal(true); }} style={s.button('#10b981')}>+ Nuevo Pendiente</button>
+              </div>
             </div>
-            <div style={s.card}>
-              <table style={s.table}>
-                <thead>
-                  <tr>
-                    <th style={s.th}>Código</th>
-                    <th style={s.th}>Descripción</th>
-                    <th style={s.th}>Origen</th>
-                    <th style={s.th}>Destino</th>
-                    <th style={s.th}>Estado</th>
-                    <th style={s.th}>Acciones</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {operaciones.length === 0 ? (
-                    <tr><td colSpan="6" style={{ ...s.td, textAlign: 'center', color: '#4a8a4a', padding: '2rem' }}>No hay operaciones</td></tr>
-                  ) : operaciones.map((op) => (
-                    <tr key={op.id}>
-                      <td style={s.td}><strong>{op.codigo}</strong></td>
-                      <td style={s.td}>{op.descripcion}</td>
-                      <td style={s.td}>{op.origen}</td>
-                      <td style={s.td}>{op.destino}</td>
-                      <td style={s.td}><span style={s.badge(estadoColors[op.estado] || '#6b7280')}>{op.estado}</span></td>
-                      <td style={s.td}>
-                        <select style={s.select} value={op.estado} onChange={(e) => actualizarEstadoOp(op.id, e.target.value)}>
-                          <option value="pendiente">Pendiente</option>
-                          <option value="en_curso">En Curso</option>
-                          <option value="completada">Completada</option>
-                          <option value="cancelada">Cancelada</option>
-                        </select>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
+              {['pendiente', 'en_proceso', 'completado'].map(estado => {
+                const estadoLabel = { pendiente: 'Pendiente', en_proceso: 'En Proceso', completado: 'Completado' }[estado];
+                const estadoColor = { pendiente: '#f59e0b', en_proceso: '#3b82f6', completado: '#10b981' }[estado];
+                const items = pendientes.filter(p => p.estado === estado && (!filtroTurno || p.turno === filtroTurno));
+                const isDragOver = dragOverColumn === estado;
+                return (
+                  <div 
+                    key={estado} 
+                    onDragOver={(e) => handleDragOver(e, estado)}
+                    onDragLeave={handleDragLeave}
+                    onDrop={(e) => handleDrop(e, estado)}
+                    style={{ 
+                      background: isDragOver ? `${estadoColor}11` : '#0a0a0a', 
+                      borderRadius: '12px', 
+                      padding: '1rem', 
+                      border: `2px solid ${isDragOver ? estadoColor : estadoColor + '33'}`, 
+                      minHeight: '400px',
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', paddingBottom: '0.75rem', borderBottom: `2px solid ${estadoColor}44` }}>
+                      <h3 style={{ margin: 0, fontSize: '1rem', color: estadoColor }}>{estadoLabel}</h3>
+                      <span style={{ background: `${estadoColor}22`, color: estadoColor, padding: '0.25rem 0.6rem', borderRadius: '12px', fontSize: '0.75rem', fontWeight: '700' }}>{items.length}</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      {items.map(p => {
+                        const prioridadColor = { alta: '#ef4444', media: '#f59e0b', baja: '#6b7280' }[p.prioridad] || '#6b7280';
+                        const isDragging = draggedPendiente?.id === p.id;
+                        return (
+                          <div 
+                            key={p.id} 
+                            draggable="true"
+                            onDragStart={(e) => handleDragStart(e, p)}
+                            onDragEnd={handleDragEnd}
+                            style={{ 
+                              background: '#1a1a1a', 
+                              borderRadius: '8px', 
+                              padding: '0.75rem', 
+                              border: `1px solid ${prioridadColor}44`, 
+                              cursor: 'grab',
+                              opacity: isDragging ? 0.5 : 1,
+                              transition: 'opacity 0.2s ease'
+                            }}
+                            onClick={async () => { 
+                              const comentarios = await fetch(`${apiUrl}/pendientes/${p.id}/comentarios`).then(r => r.json()).catch(() => []);
+                              setPendienteEditando({ ...p, comentarios }); 
+                              setFormPendiente({ titulo: p.titulo, descripcion: p.descripcion || '', prioridad: p.prioridad || 'media', asignado_a: p.asignado_a || '', turno: p.turno || '', notas: p.notas || '' }); 
+                              setShowPendienteModal(true); 
+                            }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+                              <div style={{ fontSize: '0.9rem', fontWeight: '600', color: '#e0e0e0', flex: 1 }}>
+                                <span style={{ color: '#4a4a4a', marginRight: '0.5rem', cursor: 'grab' }}>⋮⋮</span>
+                                {p.titulo}
+                              </div>
+                              <span style={{ background: `${prioridadColor}22`, color: prioridadColor, padding: '0.15rem 0.5rem', borderRadius: '4px', fontSize: '0.65rem', fontWeight: '700', textTransform: 'uppercase', marginLeft: '0.5rem' }}>{p.prioridad}</span>
+                            </div>
+                            {p.descripcion && <div style={{ fontSize: '0.8rem', color: '#a0a0a0', marginBottom: '0.5rem', lineHeight: '1.4', paddingLeft: '1.2rem' }}>{p.descripcion}</div>}
+                            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', fontSize: '0.7rem', paddingLeft: '1.2rem' }}>
+                              {p.asignado_a && <span style={{ background: '#1a3d1a', color: '#00ff41', padding: '0.15rem 0.5rem', borderRadius: '4px' }}>👤 {p.asignado_a}</span>}
+                              {p.turno && <span style={{ background: '#1a2a3d', color: '#60a5fa', padding: '0.15rem 0.5rem', borderRadius: '4px' }}>🕐 {p.turno}</span>}
+                            </div>
+                            {p.notas && <div style={{ fontSize: '0.75rem', color: '#6a9b6a', marginTop: '0.5rem', fontStyle: 'italic', paddingLeft: '1.2rem' }}>📝 {p.notas}</div>}
+                            <div style={{ display: 'flex', gap: '0.35rem', marginTop: '0.5rem', justifyContent: 'flex-end' }}>
+                              {p.estado !== 'pendiente' && <button onClick={(e) => { e.stopPropagation(); cambiarEstadoPendiente(p.id, p.estado === 'completado' ? 'en_proceso' : 'pendiente'); }} style={{ padding: '0.15rem 0.4rem', background: '#f59e0b22', border: '1px solid #f59e0b44', borderRadius: '4px', color: '#f59e0b', cursor: 'pointer', fontSize: '0.7rem' }}>←</button>}
+                              {p.estado !== 'completado' && <button onClick={(e) => { e.stopPropagation(); cambiarEstadoPendiente(p.id, p.estado === 'pendiente' ? 'en_proceso' : 'completado'); }} style={{ padding: '0.15rem 0.4rem', background: '#10b98122', border: '1px solid #10b98144', borderRadius: '4px', color: '#10b981', cursor: 'pointer', fontSize: '0.7rem' }}>→</button>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {items.length === 0 && (
+                        <div style={{ textAlign: 'center', padding: '2rem', color: '#4a4a4a', fontSize: '0.85rem' }}>
+                          Sin pendientes
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -1745,6 +1934,15 @@ export default function Home() {
                       <label style={s.label}>Fecha Fin</label>
                       <input style={s.input} type="datetime-local" value={formViaje.fecha_fin} onChange={(e) => setFormViaje({ ...formViaje, fecha_fin: e.target.value })} />
                     </div>
+                  </div>
+                  <div style={{ marginBottom: '1rem' }}>
+                    <label style={s.label}>Remolque</label>
+                    <select style={s.select} value={formViaje.remolque} onChange={(e) => setFormViaje({ ...formViaje, remolque: e.target.value })}>
+                      <option value="">Sin remolque</option>
+                      {remolques.filter(r => !r.vehicle_id_asignado || r.vehicle_id_asignado === formViaje.vehicle_id).map(r => (
+                        <option key={r.id} value={r.numero}>#{r.numero}</option>
+                      ))}
+                    </select>
                   </div>
                   <div style={{ marginBottom: '1rem' }}>
                     <label style={s.label}>Notas</label>
@@ -1841,6 +2039,7 @@ export default function Home() {
                       <td style={s.td}>{v.fecha_fin ? parseFecha(v.fecha_fin)?.toLocaleDateString() : '-'}</td>
                       <td style={s.td}><span style={s.badge(estadoColors[v.estado] || '#6a9b6a')}>{v.estado}</span></td>
                       <td style={s.td}>
+                        <button onClick={() => { setViajeDetalle(v); setViajeForm(v); setShowViajeModal(true); setViajeEditando(false); }} style={{ ...s.button('#3b82f6'), padding: '0.2rem 0.5rem', fontSize: '0.7rem', marginRight: '0.5rem' }}>Ver</button>
                         <select style={{ ...s.select, marginRight: '0.5rem' }} value={v.estado} onChange={(e) => actualizarEstadoViaje(v.id, e.target.value)}>
                           <option value="disponible">Disponible</option>
                           <option value="programado">Programado</option>
@@ -1979,6 +2178,7 @@ export default function Home() {
                   />
                 </div>
                 <button onClick={agregarFilaSeguimiento} style={{ padding: '0.45rem 0.85rem', background: '#00ff41', color: '#000', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem' }}>+ Fila</button>
+                <button onClick={abrirGeneradorMensajes} style={{ padding: '0.45rem 0.85rem', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem' }}>📲 Generar Mensaje</button>
               </div>
             </div>
 
@@ -2331,7 +2531,7 @@ export default function Home() {
                 <div>
                   <label style={s.label}>Tipo</label>
                   <select style={s.select} value={filtroReporte.tipo} onChange={(e) => setFiltroReporte({ ...filtroReporte, tipo: e.target.value })}>
-                    <option value="operaciones">Operaciones</option>
+                    <option value="pendientes">Pendientes</option>
                     <option value="viajes">Viajes</option>
                     <option value="seguimiento">Seguimiento / Comentarios</option>
                   </select>
@@ -2698,6 +2898,330 @@ export default function Home() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showViajeModal && viajeDetalle && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => { setShowViajeModal(false); setViajeEditando(false); }}>
+          <div style={{ background: '#0d1a0d', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '1.5rem', maxWidth: '600px', width: '90%', maxHeight: '80vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <h2 style={{ margin: 0, fontSize: '1.3rem', color: '#00ff41' }}>{viajeEditando ? 'Editar Viaje' : 'Detalles del Viaje'}</h2>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                {!viajeEditando && (
+                  <button onClick={() => setViajeEditando(true)} style={{ ...s.button('#f59e0b'), padding: '0.3rem 0.8rem', fontSize: '0.8rem' }}>Editar</button>
+                )}
+                <button onClick={() => { setShowViajeModal(false); setViajeEditando(false); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.5rem' }}>✕</button>
+              </div>
+            </div>
+
+            {viajeEditando ? (
+              <div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                  <div>
+                    <label style={s.label}>Unidad</label>
+                    <select style={s.select} value={viajeForm.vehicle_id || ''} onChange={(e) => {
+                      const v = vehiculos.find(vh => String(vh.id) === e.target.value);
+                      setViajeForm({ ...viajeForm, vehicle_id: e.target.value, vehicle_name: v?.name || '' });
+                    }}>
+                      <option value="">Seleccionar...</option>
+                      {vehiculos.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={s.label}>Estado</label>
+                    <select style={s.select} value={viajeForm.estado || ''} onChange={(e) => setViajeForm({ ...viajeForm, estado: e.target.value })}>
+                      <option value="disponible">Disponible</option>
+                      <option value="programado">Programado</option>
+                      <option value="en_ruta_vacio">En Ruta Vacío</option>
+                      <option value="en_ruta_cargado">En Ruta Cargado</option>
+                      <option value="espera_ingreso">En Espera de Ingreso</option>
+                      <option value="proceso_carga">En Proceso de Carga</option>
+                      <option value="proceso_descarga">En Proceso de Descarga</option>
+                      <option value="proceso_liberacion">En Proceso de Liberación</option>
+                      <option value="en_resguardo">En Resguardo</option>
+                      <option value="completado">Completado</option>
+                      <option value="cancelado">Cancelado</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={s.label}>Conductor</label>
+                  <input style={s.input} value={viajeForm.conductor || ''} onChange={(e) => setViajeForm({ ...viajeForm, conductor: e.target.value })} />
+                </div>
+
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={s.label}>Teléfono</label>
+                  <input style={s.input} value={viajeForm.telefono || ''} onChange={(e) => setViajeForm({ ...viajeForm, telefono: e.target.value })} />
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                  <div>
+                    <label style={s.label}>Origen</label>
+                    <input style={s.input} value={viajeForm.origen || ''} onChange={(e) => setViajeForm({ ...viajeForm, origen: e.target.value })} />
+                  </div>
+                  <div>
+                    <label style={s.label}>Destino</label>
+                    <input style={s.input} value={viajeForm.destino || ''} onChange={(e) => setViajeForm({ ...viajeForm, destino: e.target.value })} />
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                  <div>
+                    <label style={s.label}>Fecha Inicio</label>
+                    <input style={s.input} type="datetime-local" value={viajeForm.fecha_inicio || ''} onChange={(e) => setViajeForm({ ...viajeForm, fecha_inicio: e.target.value })} />
+                  </div>
+                  <div>
+                    <label style={s.label}>Fecha Fin</label>
+                    <input style={s.input} type="datetime-local" value={viajeForm.fecha_fin || ''} onChange={(e) => setViajeForm({ ...viajeForm, fecha_fin: e.target.value })} />
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={s.label}>Remolque</label>
+                  <select style={s.select} value={viajeForm.remolque || ''} onChange={(e) => setViajeForm({ ...viajeForm, remolque: e.target.value })}>
+                    <option value="">Sin remolque</option>
+                    {remolques.filter(r => !r.vehicle_id_asignado || r.vehicle_id_asignado === viajeForm.vehicle_id).map(r => (
+                      <option key={r.id} value={r.numero}>#{r.numero}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={s.label}>Notas</label>
+                  <textarea style={{ ...s.input, minHeight: '80px', resize: 'vertical' }} value={viajeForm.notas || ''} onChange={(e) => setViajeForm({ ...viajeForm, notas: e.target.value })} />
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                  <button onClick={() => setViajeEditando(false)} style={s.button('#6b7280')}>Cancelar</button>
+                  <button onClick={actualizarViaje} style={s.button('#10b981')}>Guardar</button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                  <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
+                    <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Unidad</div>
+                    <div style={{ fontSize: '1rem', fontWeight: '600', color: '#00ff41' }}>{viajeDetalle.vehicle_name || viajeDetalle.vehicle_id}</div>
+                  </div>
+                  <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
+                    <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Estado</div>
+                    <div style={{ fontSize: '1rem', fontWeight: '600' }}>
+                      <span style={s.badge(estadoColors[viajeDetalle.estado] || '#6a9b6a')}>{viajeDetalle.estado}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a', marginBottom: '1rem' }}>
+                  <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Conductor</div>
+                  <div style={{ fontSize: '0.95rem', fontWeight: '600' }}>{viajeDetalle.conductor || 'Sin asignar'}</div>
+                  {viajeDetalle.telefono && <div style={{ fontSize: '0.8rem', color: '#6a9b6a', marginTop: '0.2rem' }}>📱 {viajeDetalle.telefono}</div>}
+                </div>
+
+                <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a', marginBottom: '1rem' }}>
+                  <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.5rem' }}>Ruta</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: '0.75rem', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontSize: '0.75rem', color: '#6a9b6a', marginBottom: '0.2rem' }}>Origen</div>
+                      <div style={{ fontSize: '0.9rem', fontWeight: '600' }}>{viajeDetalle.origen || '-'}</div>
+                    </div>
+                    <div style={{ fontSize: '1.5rem', color: '#00ff41' }}>→</div>
+                    <div>
+                      <div style={{ fontSize: '0.75rem', color: '#6a9b6a', marginBottom: '0.2rem' }}>Destino</div>
+                      <div style={{ fontSize: '0.9rem', fontWeight: '600', color: '#60a5fa' }}>{viajeDetalle.destino || '-'}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                  <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
+                    <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Fecha Inicio</div>
+                    <div style={{ fontSize: '0.9rem', fontWeight: '600' }}>
+                      {viajeDetalle.fecha_inicio ? parseFecha(viajeDetalle.fecha_inicio)?.toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
+                    </div>
+                  </div>
+                  <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
+                    <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Fecha Fin</div>
+                    <div style={{ fontSize: '0.9rem', fontWeight: '600' }}>
+                      {viajeDetalle.fecha_fin ? parseFecha(viajeDetalle.fecha_fin)?.toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
+                    </div>
+                  </div>
+                </div>
+
+                {viajeDetalle.notas && (
+                  <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a', marginBottom: '1rem' }}>
+                    <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Notas</div>
+                    <div style={{ fontSize: '0.85rem', color: '#e0e0e0', lineHeight: '1.5' }}>{viajeDetalle.notas}</div>
+                  </div>
+                )}
+
+                <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
+                  <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Creado</div>
+                  <div style={{ fontSize: '0.85rem', color: '#6a9b6a' }}>
+                    {viajeDetalle.created_at ? parseFecha(viajeDetalle.created_at)?.toLocaleString('es-MX') : '-'}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showMensajeModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowMensajeModal(false)}>
+          <div style={{ background: '#0d1a0d', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '1.5rem', maxWidth: '700px', width: '90%', maxHeight: '80vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <h2 style={{ margin: 0, fontSize: '1.3rem', color: '#00ff41' }}>Generar Mensaje de Seguimiento</h2>
+              <button onClick={() => setShowMensajeModal(false)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.5rem' }}>✕</button>
+            </div>
+
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={s.label}>Seleccionar Cliente/Grupo</label>
+              <select style={s.select} value={mensajeCliente} onChange={(e) => actualizarMensaje(e.target.value)}>
+                <option value="">Seleccionar grupo...</option>
+                {gruposUnicos.map(grupo => (
+                  <option key={grupo} value={grupo}>{grupo}</option>
+                ))}
+              </select>
+            </div>
+
+            {mensajeTexto && (
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={s.label}>Mensaje Generado</label>
+                <textarea
+                  value={mensajeTexto}
+                  onChange={(e) => setMensajeTexto(e.target.value)}
+                  style={{ ...s.input, minHeight: '300px', resize: 'vertical', fontFamily: 'monospace', fontSize: '0.85rem', lineHeight: '1.6' }}
+                />
+              </div>
+            )}
+
+            {mensajeTexto && (
+              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                <button onClick={copiarMensaje} style={s.button('#10b981')}>📋 Copiar</button>
+                <button onClick={enviarWhatsApp} style={s.button('#25D366')}>📲 WhatsApp</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showPendienteModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => { setShowPendienteModal(false); setPendienteEditando(null); setFormPendiente({ titulo: '', descripcion: '', prioridad: 'media', asignado_a: '', turno: '', notas: '' }); setNuevoComentarioPendiente(''); }}>
+          <div style={{ background: '#0d1a0d', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '1.5rem', maxWidth: '500px', width: '90%', maxHeight: '80vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <h2 style={{ margin: 0, fontSize: '1.2rem', color: '#00ff41' }}>{pendienteEditando ? 'Detalles del Pendiente' : 'Nuevo Pendiente'}</h2>
+              <button onClick={() => { setShowPendienteModal(false); setPendienteEditando(null); setFormPendiente({ titulo: '', descripcion: '', prioridad: 'media', asignado_a: '', turno: '', notas: '' }); setNuevoComentarioPendiente(''); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.5rem' }}>✕</button>
+            </div>
+            {pendienteEditando ? (
+              <div>
+                <div style={{ marginBottom: '1rem', padding: '1rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <label style={s.label}>Título</label>
+                    <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '4px', color: '#e0e0e0' }}>{pendienteEditando.titulo}</div>
+                  </div>
+                  {pendienteEditando.descripcion && (
+                    <div style={{ marginBottom: '0.75rem' }}>
+                      <label style={s.label}>Descripción</label>
+                      <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '4px', color: '#a0a0a0', whiteSpace: 'pre-wrap' }}>{pendienteEditando.descripcion}</div>
+                    </div>
+                  )}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                    <div>
+                      <label style={s.label}>Prioridad</label>
+                      <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '4px', color: { alta: '#ef4444', media: '#f59e0b', baja: '#6b7280' }[pendienteEditando.prioridad] || '#6b7280', fontWeight: '600', textTransform: 'uppercase' }}>{pendienteEditando.prioridad}</div>
+                    </div>
+                    <div>
+                      <label style={s.label}>Turno</label>
+                      <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '4px', color: '#60a5fa' }}>{pendienteEditando.turno || 'Sin turno'}</div>
+                    </div>
+                  </div>
+                  {pendienteEditando.asignado_a && (
+                    <div style={{ marginBottom: '0.75rem' }}>
+                      <label style={s.label}>Asignado a</label>
+                      <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '4px', color: '#00ff41' }}>👤 {pendienteEditando.asignado_a}</div>
+                    </div>
+                  )}
+                  {pendienteEditando.notas && (
+                    <div style={{ marginBottom: '0.75rem' }}>
+                      <label style={s.label}>Notas</label>
+                      <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '4px', color: '#6a9b6a', fontStyle: 'italic' }}>{pendienteEditando.notas}</div>
+                    </div>
+                  )}
+                </div>
+                
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={s.label}>Comentarios</label>
+                  <div style={{ maxHeight: '200px', overflowY: 'auto', marginBottom: '0.75rem' }}>
+                    {(pendienteEditando.comentarios || []).length === 0 ? (
+                      <div style={{ padding: '1rem', textAlign: 'center', color: '#4a4a4a', fontSize: '0.85rem' }}>Sin comentarios</div>
+                    ) : (
+                      pendienteEditando.comentarios.map(c => (
+                        <div key={c.id} style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '6px', marginBottom: '0.5rem', border: '1px solid #1a3d1a' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                            <span style={{ fontSize: '0.75rem', color: '#00ff41', fontWeight: '600' }}>{c.autor || 'Anónimo'}</span>
+                            <span style={{ fontSize: '0.7rem', color: '#4a4a4a' }}>{new Date(c.fecha_creacion).toLocaleString('es-MX')}</span>
+                          </div>
+                          <div style={{ fontSize: '0.85rem', color: '#e0e0e0', whiteSpace: 'pre-wrap' }}>{c.contenido}</div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <input style={{ ...s.input, flex: 1 }} placeholder="Agregar comentario..." value={nuevoComentarioPendiente} onChange={(e) => setNuevoComentarioPendiente(e.target.value)} onKeyPress={(e) => { if (e.key === 'Enter' && nuevoComentarioPendiente.trim()) { agregarComentarioPendiente(pendienteEditando.id, nuevoComentarioPendiente); } }} />
+                    <button type="button" onClick={() => { if (nuevoComentarioPendiente.trim()) agregarComentarioPendiente(pendienteEditando.id, nuevoComentarioPendiente); }} style={s.button('#10b981')}>Agregar</button>
+                  </div>
+                </div>
+                
+                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                  <button type="button" onClick={() => { eliminarPendiente(pendienteEditando.id); setShowPendienteModal(false); setPendienteEditando(null); }} style={s.button('#ef4444')}>Eliminar</button>
+                  <button type="button" onClick={() => { setShowPendienteModal(false); setPendienteEditando(null); setNuevoComentarioPendiente(''); }} style={s.button('#6b7280')}>Cerrar</button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={guardarPendiente}>
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <label style={s.label}>Título *</label>
+                  <input style={s.input} placeholder="Ej: Revisar unidad GERS-243" value={formPendiente.titulo} onChange={(e) => setFormPendiente({ ...formPendiente, titulo: e.target.value })} required />
+                </div>
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <label style={s.label}>Descripción</label>
+                  <textarea style={{ ...s.input, minHeight: '60px', resize: 'vertical' }} placeholder="Detalles del pendiente..." value={formPendiente.descripcion} onChange={(e) => setFormPendiente({ ...formPendiente, descripcion: e.target.value })} />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                  <div>
+                    <label style={s.label}>Prioridad</label>
+                    <select style={s.select} value={formPendiente.prioridad} onChange={(e) => setFormPendiente({ ...formPendiente, prioridad: e.target.value })}>
+                      <option value="alta">Alta</option>
+                      <option value="media">Media</option>
+                      <option value="baja">Baja</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={s.label}>Turno</label>
+                    <select style={s.select} value={formPendiente.turno} onChange={(e) => setFormPendiente({ ...formPendiente, turno: e.target.value })}>
+                      <option value="">Sin turno</option>
+                      <option value="mañana">Mañana</option>
+                      <option value="tarde">Tarde</option>
+                      <option value="noche">Noche</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <label style={s.label}>Asignado a</label>
+                  <input style={s.input} placeholder="Nombre del monitorista" value={formPendiente.asignado_a} onChange={(e) => setFormPendiente({ ...formPendiente, asignado_a: e.target.value })} />
+                </div>
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={s.label}>Notas</label>
+                  <textarea style={{ ...s.input, minHeight: '50px', resize: 'vertical' }} placeholder="Notas adicionales..." value={formPendiente.notas} onChange={(e) => setFormPendiente({ ...formPendiente, notas: e.target.value })} />
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                  <button type="button" onClick={() => { setShowPendienteModal(false); setPendienteEditando(null); setFormPendiente({ titulo: '', descripcion: '', prioridad: 'media', asignado_a: '', turno: '', notas: '' }); }} style={s.button('#6b7280')}>Cancelar</button>
+                  <button type="submit" style={s.button('#10b981')}>Guardar</button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

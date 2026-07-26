@@ -58,14 +58,27 @@ db.serialize(() => {
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  db.run(`CREATE TABLE IF NOT EXISTS operaciones (
+  db.run(`CREATE TABLE IF NOT EXISTS pendientes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    codigo TEXT NOT NULL,
+    titulo TEXT NOT NULL,
     descripcion TEXT,
+    prioridad TEXT DEFAULT 'media',
     estado TEXT DEFAULT 'pendiente',
-    origen TEXT,
-    destino TEXT,
-    fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP
+    asignado_a TEXT,
+    turno TEXT,
+    notas TEXT,
+    creado_por TEXT,
+    fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
+    fecha_actualizacion DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS comentarios_pendientes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pendiente_id INTEGER NOT NULL,
+    autor TEXT,
+    contenido TEXT NOT NULL,
+    fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (pendiente_id) REFERENCES pendientes(id)
   )`);
 
   db.run(`CREATE TABLE IF NOT EXISTS comentarios (
@@ -665,6 +678,18 @@ app.put('/api/viajes/:id', (req, res) => {
   });
 });
 
+app.put('/api/viajes/:id', (req, res) => {
+  const { vehicle_id, vehicle_name, origen, destino, conductor, telefono, fecha_inicio, fecha_fin, notas, estado, remolque } = req.body;
+  db.run(
+    'UPDATE viajes SET vehicle_id = ?, vehicle_name = ?, origen = ?, destino = ?, conductor = ?, telefono = ?, fecha_inicio = ?, fecha_fin = ?, notas = ?, estado = ?, remolque = ? WHERE id = ?',
+    [vehicle_id || null, vehicle_name || null, origen || null, destino || null, conductor || null, telefono || null, fecha_inicio || null, fecha_fin || null, notas || null, estado || null, remolque || null, req.params.id],
+    function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ changes: this.changes });
+    }
+  );
+});
+
 app.delete('/api/viajes/:id', (req, res) => {
   db.run('DELETE FROM viajes WHERE id = ?', [req.params.id], function (err) {
     if (err) return res.status(500).json({ error: err.message });
@@ -707,20 +732,27 @@ app.delete('/api/alertas/:id', (req, res) => {
   });
 });
 
-// ============ OPERACIONES ============
+// ============ PENDIENTES ============
 
-app.get('/api/operaciones', (req, res) => {
-  db.all('SELECT * FROM operaciones', [], (err, rows) => {
+app.get('/api/pendientes', (req, res) => {
+  const { turno, estado } = req.query;
+  let query = 'SELECT * FROM pendientes WHERE 1=1';
+  const params = [];
+  if (turno) { query += ' AND turno = ?'; params.push(turno); }
+  if (estado) { query += ' AND estado = ?'; params.push(estado); }
+  query += ' ORDER BY CASE prioridad WHEN "alta" THEN 1 WHEN "media" THEN 2 WHEN "baja" THEN 3 ELSE 4 END, fecha_creacion DESC';
+  db.all(query, params, (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
   });
 });
 
-app.post('/api/operaciones', (req, res) => {
-  const { codigo, descripcion, origen, destino } = req.body;
+app.post('/api/pendientes', (req, res) => {
+  const { titulo, descripcion, prioridad, asignado_a, turno, notas, creado_por } = req.body;
+  if (!titulo) return res.status(400).json({ error: 'Título es requerido' });
   db.run(
-    'INSERT INTO operaciones (codigo, descripcion, origen, destino) VALUES (?, ?, ?, ?)',
-    [codigo, descripcion, origen, destino],
+    'INSERT INTO pendientes (titulo, descripcion, prioridad, asignado_a, turno, notas, creado_por) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [titulo, descripcion || '', prioridad || 'media', asignado_a || '', turno || '', notas || '', creado_por || ''],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ id: this.lastID });
@@ -728,9 +760,47 @@ app.post('/api/operaciones', (req, res) => {
   );
 });
 
-app.put('/api/operaciones/:id', (req, res) => {
-  const { estado } = req.body;
-  db.run('UPDATE operaciones SET estado = ? WHERE id = ?', [estado, req.params.id], function (err) {
+app.put('/api/pendientes/:id', (req, res) => {
+  const { titulo, descripcion, prioridad, estado, asignado_a, turno, notas } = req.body;
+  db.run(
+    'UPDATE pendientes SET titulo = ?, descripcion = ?, prioridad = ?, estado = ?, asignado_a = ?, turno = ?, notas = ?, fecha_actualizacion = CURRENT_TIMESTAMP WHERE id = ?',
+    [titulo, descripcion, prioridad, estado, asignado_a, turno, notas, req.params.id],
+    function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ changes: this.changes });
+    }
+  );
+});
+
+app.delete('/api/pendientes/:id', (req, res) => {
+  db.run('DELETE FROM pendientes WHERE id = ?', [req.params.id], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ changes: this.changes });
+  });
+});
+
+app.get('/api/pendientes/:id/comentarios', (req, res) => {
+  db.all('SELECT * FROM comentarios_pendientes WHERE pendiente_id = ? ORDER BY fecha_creacion DESC', [req.params.id], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows || []);
+  });
+});
+
+app.post('/api/pendientes/:id/comentarios', (req, res) => {
+  const { autor, contenido } = req.body;
+  if (!contenido) return res.status(400).json({ error: 'Contenido es requerido' });
+  db.run(
+    'INSERT INTO comentarios_pendientes (pendiente_id, autor, contenido) VALUES (?, ?, ?)',
+    [req.params.id, autor || '', contenido],
+    function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ id: this.lastID });
+    }
+  );
+});
+
+app.delete('/api/pendientes/:id/comentarios/:comentarioId', (req, res) => {
+  db.run('DELETE FROM comentarios_pendientes WHERE id = ?', [req.params.comentarioId], function (err) {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ changes: this.changes });
   });
@@ -811,8 +881,8 @@ app.get('/api/reportes/seguimiento', (req, res) => {
 
 app.get('/api/reportes/resumen', (req, res) => {
   const stats = {};
-  db.get('SELECT COUNT(*) as total FROM operaciones', [], (err, row) => {
-    stats.totalOperaciones = row?.total || 0;
+  db.get('SELECT COUNT(*) as total FROM pendientes', [], (err, row) => {
+    stats.totalPendientes = row?.total || 0;
     db.get('SELECT COUNT(*) as total FROM viajes', [], (err, row) => {
       stats.totalViajes = row?.total || 0;
       db.get("SELECT COUNT(*) as programados FROM viajes WHERE estado = 'programado'", [], (err, row) => {
@@ -826,9 +896,9 @@ app.get('/api/reportes/resumen', (req, res) => {
   });
 });
 
-app.get('/api/reportes/operaciones', (req, res) => {
+app.get('/api/reportes/pendientes', (req, res) => {
   const { fecha_inicio, fecha_fin } = req.query;
-  let query = 'SELECT * FROM operaciones WHERE 1=1';
+  let query = 'SELECT * FROM pendientes WHERE 1=1';
   const params = [];
   if (fecha_inicio) { query += ' AND fecha_creacion >= ?'; params.push(fecha_inicio); }
   if (fecha_fin) { query += ' AND fecha_creacion <= ?'; params.push(fecha_fin); }
