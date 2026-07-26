@@ -52,6 +52,7 @@ export default function Home() {
   const [geofenceEvents, setGeofenceEvents] = useState([]);
   const [samsaraAddresses, setSamsaraAddresses] = useState([]);
   const [geofenceCat, setGeofenceCat] = useState('todas');
+  const [busquedaGeofence, setBusquedaGeofence] = useState('');
   const geofenceCategories = [
     { key: 'todas', label: 'Todas', icon: '📋' },
     { key: 'samsara', label: 'Samsara', icon: '☁️' },
@@ -86,6 +87,10 @@ export default function Home() {
   const [showUnidadModal, setShowUnidadModal] = useState(false);
   const [editUnidad, setEditUnidad] = useState(null);
   const [formUnidad, setFormUnidad] = useState({ nombre: '', estatus: 'Activa', notas: '', tipo: 'manual', samsara_id: '' });
+  const [monitoreoSelectedId, setMonitoreoSelectedId] = useState(null);
+  const [monitoreoRouteHistory, setMonitoreoRouteHistory] = useState([]);
+  const [monitoreoEta, setMonitoreoEta] = useState(null);
+  const [viajesActivos, setViajesActivos] = useState([]);
 
   const defaultZonesList = [
     { name: 'Tamaulipas - Zona Norte', severity: 'critical', lat: 25.8811, lng: -97.4981 },
@@ -193,6 +198,9 @@ export default function Home() {
       if (remolquesRes.status === 'fulfilled') setRemolques(remolquesRes.value || []);
       if (seguimientoRes.status === 'fulfilled') setSeguimiento(seguimientoRes.value || []);
       if (unidadesRes.status === 'fulfilled') setUnidadesLocales(unidadesRes.value || []);
+
+      const viajesActivosRes = await fetch(`${apiUrl}/viajes/activos`).then(r => r.json()).catch(() => []);
+      setViajesActivos(Array.isArray(viajesActivosRes) ? viajesActivosRes : []);
       if (operadoresRes.status === 'fulfilled') {
         const map = {};
         for (const op of (operadoresRes.value || [])) {
@@ -460,6 +468,26 @@ export default function Home() {
     setEditUnidad(null);
     setFormUnidad({ nombre: '', estatus: 'Activa', notas: '', tipo: 'manual', samsara_id: '' });
     loadAll();
+  };
+
+  const selectMonitoreoVehicle = async (v) => {
+    setMonitoreoSelectedId(v.id);
+    setMonitoreoEta(null);
+    if (v.isLocal) { setMonitoreoRouteHistory([]); return; }
+    try {
+      const route = await fetch(`${apiUrl}/route-history/last?vehicle_id=${v.id}&hours=24`).then(r => r.json());
+      setMonitoreoRouteHistory(Array.isArray(route) ? route : []);
+    } catch (e) { setMonitoreoRouteHistory([]); }
+    const viaje = viajesActivos.find(vj => String(vj.vehicle_id) === String(v.id) || vj.vehicle_name === v.name);
+    if (viaje && v.location) {
+      const destino = viaje.destino || viaje.seg_destino || '';
+      if (destino) {
+        try {
+          const eta = await calcularRuta(destino, v.location.latitude, v.location.longitude);
+          setMonitoreoEta(eta);
+        } catch (e) { setMonitoreoEta(null); }
+      }
+    }
   };
 
   const guardarComentarioRapido = async () => {
@@ -762,9 +790,10 @@ export default function Home() {
   };
 
   const estadoColors = {
-    pendiente: '#f59e0b', en_curso: '#3b82f6', completada: '#10b981', cancelada: '#ef4444',
-    programado: '#8b5cf6', 'en Curso': '#3b82f6', completado: '#10b981', cancelado: '#ef4444',
-    en_resguardo: '#f97316', 'en Resguardo': '#f97316',
+    disponible: '#6b7280', programado: '#8b5cf6',
+    en_ruta_vacio: '#22c55e', en_ruta_cargado: '#00ff41',
+    espera_ingreso: '#f59e0b', proceso_carga: '#f97316', proceso_descarga: '#ec4899', proceso_liberacion: '#a855f7',
+    en_resguardo: '#f97316', completado: '#10b981', cancelado: '#ef4444',
   };
 
   const thStyle = { padding: '0.5rem 0.6rem', color: '#4a8a4a', fontWeight: 700, textAlign: 'left', whiteSpace: 'nowrap', borderBottom: '2px solid #1a3d1a', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.5px', background: '#0d1a0d', position: 'sticky', top: 0, zIndex: 2 };
@@ -830,7 +859,7 @@ export default function Home() {
               {[
                 { label: 'Alertas', value: alertasNoLeidas.length, color: '#ef4444' },
                 { label: 'Diesel Bajo', value: vehiculos.filter(v => v.fuelLevelPercent !== null && v.fuelLevelPercent < 0.25).length, color: '#f59e0b' },
-                { label: 'Viajes', value: viajes.filter(v => v.estado === 'en_curso').length, color: '#6366f1' },
+                { label: 'Viajes', value: viajes.filter(v => !['completado', 'cancelado'].includes(v.estado)).length, color: '#6366f1' },
               ].map((item, i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: item.color, flexShrink: 0 }} />
@@ -971,14 +1000,14 @@ export default function Home() {
 
                 {dashTab === 'viajes' && (
                   <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
-                    {viajes.filter(v => v.estado === 'en_curso' || v.estado === 'programado').length === 0 ? (
+                    {viajes.filter(v => !['completado', 'cancelado'].includes(v.estado)).length === 0 ? (
                       <div style={{ textAlign: 'center', padding: '40px 20px', color: '#6a9b6a' }}>
                         <div style={{ fontSize: '2rem', marginBottom: '8px', opacity: 0.3 }}>🚚</div>
                         <p style={{ fontSize: '13px' }}>No hay viajes activos</p>
                       </div>
-                    ) : viajes.filter(v => v.estado === 'en_curso' || v.estado === 'programado').map(v => {
-                      const viajeColor = v.estado === 'en_curso' ? '#3b82f6' : '#8b5cf6';
-                      const viajeLabel = v.estado === 'en_curso' ? 'En Curso' : 'Programado';
+                    ) : viajes.filter(v => !['completado', 'cancelado'].includes(v.estado)).map(v => {
+                      const viajeColor = estadoColors[v.estado] || '#6a9b6a';
+                      const viajeLabel = v.estado.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
                       return (
                         <div key={v.id} style={{ background: '#1a1a1a', borderRadius: '8px', padding: '12px', marginBottom: '8px', borderLeft: `3px solid ${viajeColor}` }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
@@ -1167,47 +1196,186 @@ export default function Home() {
           );
         })()}
 
-        {activeTab === 'monitoreo' && (
+        {activeTab === 'monitoreo' && (() => {
+          const selVehicle = monitoreoSelectedId ? vehiculos.find(v => String(v.id) === String(monitoreoSelectedId)) : null;
+          const selViaje = monitoreoSelectedId ? viajesActivos.find(vj => String(vj.vehicle_id) === String(monitoreoSelectedId) || vj.vehicle_name === selVehicle?.name) : null;
+          const selSeg = selViaje ? { destino: selViaje.destino || selViaje.seg_destino || '', remolque: selViaje.seg_remolque || '', origen: selViaje.origen || selViaje.seg_origen || '', estatus: selViaje.estado || selViaje.seg_estatus || '' } : {};
+          const routeLen = monitoreoRouteHistory.length;
+          const startPt = routeLen > 0 ? monitoreoRouteHistory[0] : null;
+          const endPt = routeLen > 0 ? monitoreoRouteHistory[routeLen - 1] : null;
+          let avancePct = 0;
+          let avanceLabel = 'Sin datos';
+          if (routeLen > 1 && selSeg.destino) {
+            let totalDist = 0;
+            for (let i = 1; i < routeLen; i++) {
+              const dlat = monitoreoRouteHistory[i].latitude - monitoreoRouteHistory[i - 1].latitude;
+              const dlng = monitoreoRouteHistory[i].longitude - monitoreoRouteHistory[i - 1].longitude;
+              totalDist += Math.sqrt(dlat * dlat + dlng * dlng);
+            }
+            const progressDist = totalDist;
+            const remaining = selVehicle?.lastSeen != null ? Math.max(0.1, (selVehicle.lastSeen / 60) * 1.60934) : 0;
+            const totalEst = progressDist + remaining;
+            avancePct = totalEst > 0 ? Math.min(95, Math.round((progressDist / totalEst) * 100)) : 0;
+            avanceLabel = `${avancePct}% recorrido · ${routeLen} puntos`;
+          } else if (routeLen > 1) {
+            avancePct = 100;
+            avanceLabel = `${routeLen} puntos registrados`;
+          }
+          let etaText = '-';
+          let horaLlegada = '-';
+          if (monitoreoEta) {
+            etaText = monitoreoEta.duracion;
+            horaLlegada = monitoreoEta.horaLlegada;
+          } else if (selVehicle?.location && selSeg.destino) {
+            const lastSeenMin = selVehicle.lastSeen != null ? selVehicle.lastSeen : 999;
+            if (lastSeenMin < 15) {
+              etaText = 'Calculando...';
+              horaLlegada = '...';
+            } else {
+              etaText = 'Detenida';
+              horaLlegada = 'N/A';
+            }
+          }
+          const formatDate = (dt) => {
+            if (!dt) return '-';
+            try {
+              const d = new Date(dt.endsWith('Z') ? dt : dt + 'Z');
+              return d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short' }) + ' ' + d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+            } catch (e) { return dt; }
+          };
+          return (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: '1.5rem' }}>Monitoreo en Tiempo Real</h2>
                 <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>
-                  {vehiculosOnline.length} en línea | {vehiculos.filter(v => !v.isOnline).length} sin señal reciente
+                  {vehiculosOnline.length} en línea | {vehiculos.filter(v => !v.isOnline).length} sin señal | {viajesActivos.length} viajes activos
+                  {monitoreoSelectedId && <span style={{ color: '#00ff41' }}> · Ruta: {routeLen} puntos</span>}
                 </p>
               </div>
-              <button onClick={loadAll} style={s.button()}>Actualizar</button>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                {monitoreoSelectedId && <button onClick={() => { setMonitoreoSelectedId(null); setMonitoreoRouteHistory([]); setMonitoreoEta(null); }} style={{ ...s.button('#ef4444'), background: '#ef444420', border: '1px solid #ef4444', color: '#ef4444' }}>Limpiar Ruta</button>}
+                <button onClick={loadAll} style={s.button()}>Actualizar</button>
+              </div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '1rem' }}>
-              <div style={{ ...s.card, padding: 0, overflow: 'hidden', height: 'calc(100vh - 180px)' }}>
-                <MapaUnidades vehiculos={vehiculos} geofences={allGeofences} />
-              </div>
-              <div style={{ ...s.card, overflow: 'auto', maxHeight: 'calc(100vh - 180px)' }}>
-                <h3 style={{ marginTop: 0, fontSize: '1rem', marginBottom: '1rem' }}>Unidades ({vehiculos.length})</h3>
-                {vehiculos.map((v) => (
-                  <div key={v.id} onClick={() => setSelectedVehicle(v)} style={{ padding: '0.6rem 0', borderBottom: '1px solid #0d1f0d', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', transition: 'background 0.15s', borderRadius: '6px', paddingLeft: '6px', paddingRight: '6px' }}
-                    onMouseEnter={e => e.currentTarget.style.background = '#152015'}
-                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                    <div>
-                      <div style={{ fontWeight: '600', fontSize: '0.85rem' }}>{v.name}</div>
-                      <div style={{ fontSize: '0.75rem', color: '#6a9b6a' }}>
-                        {operadores[String(v.id)]?.nombre || 'Sin operador'}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div style={{ ...s.card, padding: 0, overflow: 'hidden', height: monitoreoSelectedId ? '45vh' : 'calc(100vh - 180px)', transition: 'height 0.3s ease' }}>
+                  <MapaUnidades vehiculos={vehiculos} geofences={allGeofences} routeHistory={monitoreoRouteHistory} selectedVehicleId={monitoreoSelectedId} />
+                </div>
+                {monitoreoSelectedId && selVehicle && (
+                  <div style={{ ...s.card, padding: '1rem 1.25rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        <span style={{ fontSize: '1.3rem' }}>🚛</span>
+                        <div>
+                          <h3 style={{ margin: 0, fontSize: '1rem', color: '#00ff41' }}>{selVehicle.name}</h3>
+                          <span style={{ fontSize: '0.75rem', color: '#6a9b6a' }}>{operadores[String(selVehicle.id)]?.nombre || 'Sin operador'}{selSeg.remolque ? ` · 🚛 ${selSeg.remolque}` : ''}</span>
+                        </div>
                       </div>
-                      <div style={{ fontSize: '0.75rem', color: '#4a8a4a' }}>
-                        {v.location ? `${Math.round(v.location.speed || 0)} mph` : 'Sin ubicación'}
-                        {v.fuelLevelPercent !== null && ` · ${Math.round(v.fuelLevelPercent * 100)}%`}
-                        {v.lastSeen !== null && v.lastSeen !== undefined && ` · hace ${v.lastSeen}min`}
+                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        <span style={{ padding: '3px 10px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 700, background: selVehicle.isOnline ? '#003311' : '#3a1111', color: selVehicle.isOnline ? '#00ff41' : '#ef4444', border: `1px solid ${selVehicle.isOnline ? '#00ff4133' : '#ef444433'}` }}>{selVehicle.isOnline ? 'Online' : 'Offline'}</span>
+                        {selSeg.estatus && <span style={{ padding: '3px 10px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 700, background: '#1a1a1a', color: '#f59e0b', border: '1px solid #f59e0b33' }}>{selSeg.estatus}</span>}
                       </div>
                     </div>
-                    <span style={s.badge(v.isOnline ? '#10b981' : '#f59e0b')}>
-                      {v.isOnline ? 'Online' : 'Sin señal'}
-                    </span>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                      <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
+                        <div style={{ fontSize: '0.65rem', color: '#4a8a4a', marginBottom: '0.2rem', textTransform: 'uppercase' }}>Origen Hoy</div>
+                        <div style={{ fontSize: '0.8rem', color: '#e0e0e0', fontWeight: 600 }}>{selSeg.origen || (startPt?.location || '-')}</div>
+                        {startPt && <div style={{ fontSize: '0.65rem', color: '#4a8a4a', marginTop: '0.15rem' }}>{formatDate(startPt.recorded_at)}</div>}
+                      </div>
+                      <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
+                        <div style={{ fontSize: '0.65rem', color: '#4a8a4a', marginBottom: '0.2rem', textTransform: 'uppercase' }}>Destino</div>
+                        <div style={{ fontSize: '0.8rem', color: '#60a5fa', fontWeight: 600 }}>{selSeg.destino || '-'}</div>
+                      </div>
+                      <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
+                        <div style={{ fontSize: '0.65rem', color: '#4a8a4a', marginBottom: '0.2rem', textTransform: 'uppercase' }}>ETA (+1h)</div>
+                        <div style={{ fontSize: '0.8rem', color: '#00ff41', fontWeight: 700 }}>{etaText}</div>
+                        {monitoreoEta ? (
+                          <div style={{ fontSize: '0.65rem', color: '#f59e0b', marginTop: '0.15rem' }}>Llegada: {horaLlegada} · {monitoreoEta.distancia}</div>
+                        ) : (
+                          <div style={{ fontSize: '0.65rem', color: '#f59e0b', marginTop: '0.15rem' }}>Llegada: {horaLlegada}</div>
+                        )}
+                      </div>
+                      <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
+                        <div style={{ fontSize: '0.65rem', color: '#4a8a4a', marginBottom: '0.2rem', textTransform: 'uppercase' }}>Ubicación Actual</div>
+                        <div style={{ fontSize: '0.8rem', color: '#e0e0e0', fontWeight: 600 }}>{selVehicle.location?.location || 'Sin ubicación'}</div>
+                        {selVehicle.location && <div style={{ fontSize: '0.65rem', color: '#94a3b8', marginTop: '0.15rem' }}>{Math.round((selVehicle.location.speed || 0) * 1.60934)} km/h · {endPt ? formatDate(endPt.recorded_at) : '-'}</div>}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                        <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Avance en Ruta</span>
+                        <span style={{ fontSize: '0.75rem', color: '#00ff41', fontWeight: 600 }}>{avanceLabel}</span>
+                      </div>
+                      <div style={{ width: '100%', height: '12px', background: '#1a1a1a', borderRadius: '6px', overflow: 'hidden', border: '1px solid #1a3d1a' }}>
+                        <div style={{ width: `${avancePct}%`, height: '100%', background: avancePct >= 80 ? 'linear-gradient(90deg, #10b981, #00ff41)' : avancePct >= 40 ? 'linear-gradient(90deg, #f59e0b, #10b981)' : 'linear-gradient(90deg, #3b82f6, #10b981)', borderRadius: '6px', transition: 'width 0.5s ease', boxShadow: `0 0 10px ${avancePct >= 80 ? '#00ff4144' : '#3b82f644'}` }} />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.25rem', fontSize: '0.65rem', color: '#4a8a4a' }}>
+                        <span>📍 Inicio: {startPt ? startPt.location || 'GPS' : '-'}</span>
+                        <span>{routeLen > 1 ? `${Math.round(routeLen)} pts · ${formatDate(startPt?.recorded_at)} → ${formatDate(endPt?.recorded_at)}` : 'Sin historial hoy'}</span>
+                        <span>🏁 Fin</span>
+                      </div>
+                    </div>
                   </div>
-                ))}
+                )}
+              </div>
+              <div style={{ overflow: 'auto', maxHeight: 'calc(100vh - 180px)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {viajesActivos.length > 0 && (
+                  <div style={{ ...s.card, padding: '0.75rem' }}>
+                    <h3 style={{ marginTop: 0, fontSize: '0.9rem', marginBottom: '0.75rem', color: '#f59e0b' }}>🚐 Viajes Activos ({viajesActivos.length})</h3>
+                    {viajesActivos.slice(0, 8).map((vj) => {
+                      const vehicleNow = vehiculos.find(v => String(v.id) === String(vj.vehicle_id) || v.name === vj.vehicle_name);
+                      const hasLoc = vehicleNow?.location;
+                      const destino = vj.destino || vj.seg_destino || '';
+                      const remolque = vj.seg_remolque || '';
+                      const estatus = vj.estado || vj.seg_estatus || '';
+                      return (
+                        <div key={vj.id} onClick={() => selectMonitoreoVehicle({ id: vj.vehicle_id, name: vj.vehicle_name })} style={{ padding: '0.5rem', borderBottom: '1px solid #1a1a1a', cursor: 'pointer', borderRadius: '6px', transition: 'background 0.15s', background: monitoreoSelectedId === String(vj.vehicle_id) ? '#00ff4110' : 'transparent' }}
+                          onMouseEnter={e => e.currentTarget.style.background = '#152015'}
+                          onMouseLeave={e => e.currentTarget.style.background = monitoreoSelectedId === String(vj.vehicle_id) ? '#00ff4110' : 'transparent'}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                            <span style={{ fontWeight: 700, fontSize: '0.8rem', color: '#00ff41' }}>{vj.vehicle_name}</span>
+                            {hasLoc && <span style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: '8px', background: vehicleNow.isOnline ? '#003311' : '#3a1111', color: vehicleNow.isOnline ? '#00ff41' : '#ef4444', border: `1px solid ${vehicleNow.isOnline ? '#00ff4133' : '#ef444433'}` }}>{vehicleNow.isOnline ? 'Online' : 'Offline'}</span>}
+                          </div>
+                          {remolque && <div style={{ fontSize: '0.7rem', color: '#f59e0b' }}>🚛 {remolque}</div>}
+                          {destino && <div style={{ fontSize: '0.7rem', color: '#60a5fa' }}>🏁 {destino}</div>}
+                          <div style={{ marginTop: '0.2rem' }}>
+                            <span style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: '8px', background: '#1a1a1a', color: '#94a3b8', border: '1px solid #333' }}>{estatus}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <div style={{ ...s.card, overflow: 'auto', flex: 1, padding: '0.75rem' }}>
+                  <h3 style={{ marginTop: 0, fontSize: '0.9rem', marginBottom: '0.75rem' }}>Todas las Unidades ({vehiculos.length})</h3>
+                  {vehiculos.map((v) => (
+                    <div key={v.id} onClick={() => selectMonitoreoVehicle(v)} style={{ padding: '0.5rem', borderBottom: '1px solid #0d1f0d', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', transition: 'background 0.15s', borderRadius: '6px', paddingLeft: '6px', paddingRight: '6px', background: monitoreoSelectedId === v.id ? '#00ff4110' : 'transparent' }}
+                      onMouseEnter={e => e.currentTarget.style.background = '#152015'}
+                      onMouseLeave={e => e.currentTarget.style.background = monitoreoSelectedId === v.id ? '#00ff4110' : 'transparent'}>
+                      <div>
+                        <div style={{ fontWeight: '600', fontSize: '0.85rem', color: monitoreoSelectedId === v.id ? '#00ff41' : '#e0e0e0' }}>{v.name}</div>
+                        <div style={{ fontSize: '0.75rem', color: '#6a9b6a' }}>
+                          {operadores[String(v.id)]?.nombre || 'Sin operador'}
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: '#4a8a4a' }}>
+                          {v.location ? `${Math.round(v.location.speed || 0)} mph` : 'Sin ubicación'}
+                          {v.fuelLevelPercent !== null && ` · ${Math.round(v.fuelLevelPercent * 100)}%`}
+                          {v.lastSeen !== null && v.lastSeen !== undefined && ` · hace ${v.lastSeen}min`}
+                        </div>
+                      </div>
+                      <span style={s.badge(v.isOnline ? '#10b981' : '#f59e0b')}>
+                        {v.isOnline ? 'Online' : 'Sin señal'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {activeTab === 'notas' && (
           <div>
@@ -1515,7 +1683,7 @@ export default function Home() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: '1.5rem', color: '#e0e0e0' }}>Programación de Viajes</h2>
-                <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>{viajes.length} viajes registrados · {viajes.filter(v => v.estado === 'en_curso').length} en curso</p>
+                <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>{viajes.length} viajes registrados · {viajes.filter(v => !['completado', 'cancelado'].includes(v.estado)).length} activos</p>
               </div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
@@ -1658,8 +1826,8 @@ export default function Home() {
                   {viajes.length === 0 ? (
                     <tr><td colSpan="7" style={{ ...s.td, textAlign: 'center', color: '#4a8a4a', padding: '2rem' }}>No hay viajes programados</td></tr>
                   ) : [...viajes].sort((a, b) => {
-                    const ordenEstado = { en_curso: 0, en_resguardo: 1, programado: 2, completado: 3, cancelado: 4 };
-                    const oe = (ordenEstado[a.estado] ?? 4) - (ordenEstado[b.estado] ?? 4);
+                    const ordenEstado = { en_ruta_cargado: 0, en_ruta_vacio: 1, proceso_carga: 2, proceso_descarga: 3, proceso_liberacion: 4, espera_ingreso: 5, en_resguardo: 6, programado: 7, disponible: 8, completado: 9, cancelado: 10 };
+                    const oe = (ordenEstado[a.estado] ?? 5) - (ordenEstado[b.estado] ?? 5);
                     if (oe !== 0) return oe;
                     const fa = a.fecha_inicio ? new Date(parseFecha(a.fecha_inicio)).getTime() : 0;
                     const fb = b.fecha_inicio ? new Date(parseFecha(b.fecha_inicio)).getTime() : 0;
@@ -1674,8 +1842,14 @@ export default function Home() {
                       <td style={s.td}><span style={s.badge(estadoColors[v.estado] || '#6a9b6a')}>{v.estado}</span></td>
                       <td style={s.td}>
                         <select style={{ ...s.select, marginRight: '0.5rem' }} value={v.estado} onChange={(e) => actualizarEstadoViaje(v.id, e.target.value)}>
+                          <option value="disponible">Disponible</option>
                           <option value="programado">Programado</option>
-                          <option value="en_curso">En Curso</option>
+                          <option value="en_ruta_vacio">En Ruta Vacío</option>
+                          <option value="en_ruta_cargado">En Ruta Cargado</option>
+                          <option value="espera_ingreso">En Espera de Ingreso</option>
+                          <option value="proceso_carga">En Proceso de Carga</option>
+                          <option value="proceso_descarga">En Proceso de Descarga</option>
+                          <option value="proceso_liberacion">En Proceso de Liberación</option>
                           <option value="en_resguardo">En Resguardo</option>
                           <option value="completado">Completado</option>
                           <option value="cancelado">Cancelado</option>
@@ -1940,6 +2114,7 @@ export default function Home() {
                 <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>{allGeofences.filter(g => g.activa).length} activas de {allGeofences.length} totales</p>
               </div>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <input placeholder="Buscar geocerca..." value={busquedaGeofence} onChange={e => setBusquedaGeofence(e.target.value)} style={{ ...s.input, width: '250px' }} />
                 <button onClick={() => toggleGeofencesBulk(geofences.map(g => g.id), 1)} style={s.button('#10b981')}>Activar Todas</button>
                 <button onClick={() => toggleGeofencesBulk(geofences.map(g => g.id), 0)} style={s.button('#ef4444')}>Desactivar Todas</button>
                 <button onClick={loadAll} style={s.button()}>Actualizar</button>
@@ -1999,6 +2174,7 @@ export default function Home() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '0.75rem' }}>
                   {allGeofences
                     .filter(g => geofenceCat === 'todas' || g.categoria === geofenceCat)
+                    .filter(g => !busquedaGeofence.trim() || g.nombre.toLowerCase().includes(busquedaGeofence.toLowerCase()) || (g.descripcion && g.descripcion.toLowerCase().includes(busquedaGeofence.toLowerCase())))
                     .sort((a, b) => (b.activa - a.activa) || a.nombre.localeCompare(b.nombre))
                     .map(g => (
                     <div key={g.id} style={{ padding: '0.75rem', border: g.activa ? '1px solid #1a3d1a' : '1px solid #0d120d', borderRadius: '10px', background: g.activa ? '#0a1a0a' : '#060d06', opacity: g.activa ? 1 : 0.55, transition: 'all 0.2s' }}>
@@ -2402,23 +2578,24 @@ export default function Home() {
 
               {(() => {
                 const viajesVehiculo = viajes.filter(v => String(v.vehicle_id) === String(selectedVehicle.id)).sort((a, b) => {
-                  const ordenEstado = { en_transito: 0, en_curso: 0, en_resguardo: 1, programado: 2, completado: 3, cancelado: 4 };
-                  const oe = (ordenEstado[a.estado] ?? 4) - (ordenEstado[b.estado] ?? 4);
+                  const ordenEstado = { en_ruta_cargado: 0, en_ruta_vacio: 1, proceso_carga: 2, proceso_descarga: 3, proceso_liberacion: 4, espera_ingreso: 5, en_resguardo: 6, programado: 7, disponible: 8, completado: 9, cancelado: 10 };
+                  const oe = (ordenEstado[a.estado] ?? 5) - (ordenEstado[b.estado] ?? 5);
                   if (oe !== 0) return oe;
                   const fa = a.fecha_inicio ? new Date(parseFecha(a.fecha_inicio)).getTime() : 0;
                   const fb = b.fecha_inicio ? new Date(parseFecha(b.fecha_inicio)).getTime() : 0;
                   return fa - fb;
                 });
-                const viajeActivo = viajesVehiculo.find(v => v.estado === 'en_transito' || v.estado === 'en_curso' || v.estado === 'enCurso' || v.estado === 'en_resguardo');
-                const viajesProgramados = viajesVehiculo.filter(v => v.estado === 'programado' || v.estado === 'Programado');
+                const estadosActivos = ['en_ruta_cargado', 'en_ruta_vacio', 'proceso_carga', 'proceso_descarga', 'proceso_liberacion', 'espera_ingreso', 'en_resguardo'];
+                const viajeActivo = viajesVehiculo.find(v => estadosActivos.includes(v.estado));
+                const viajesProgramados = viajesVehiculo.filter(v => v.estado === 'programado');
                 if (!viajeActivo && viajesProgramados.length === 0) return null;
                 return (
                   <div style={{ background: '#1a1a1a', borderRadius: '10px', padding: '1rem', marginBottom: '1.5rem' }}>
                     <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.75rem' }}>Viajes</div>
                     {viajeActivo && (
-                      <div style={{ padding: '0.75rem', background: viajeActivo.estado === 'en_resguardo' ? '#2a1a0d' : '#0d2e0d', borderRadius: '8px', border: `1px solid ${viajeActivo.estado === 'en_resguardo' ? '#f97316' : '#10b981'}`, marginBottom: viajesProgramados.length > 0 ? '0.75rem' : 0 }}>
+                      <div style={{ padding: '0.75rem', background: '#0d2e0d', borderRadius: '8px', border: `1px solid ${estadoColors[viajeActivo.estado] || '#10b981'}`, marginBottom: viajesProgramados.length > 0 ? '0.75rem' : 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
-                          <span style={{ fontSize: '0.65rem', background: viajeActivo.estado === 'en_resguardo' ? '#f97316' : '#10b981', color: '#000', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: '700', textTransform: 'uppercase' }}>{viajeActivo.estado === 'en_resguardo' ? 'En Resguardo' : 'En Curso'}</span>
+                          <span style={{ fontSize: '0.65rem', background: estadoColors[viajeActivo.estado] || '#10b981', color: '#000', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: '700', textTransform: 'uppercase' }}>{viajeActivo.estado.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</span>
                         </div>
                         <div style={{ fontSize: '0.85rem', color: '#e0e0e0' }}>
                           <strong>{viajeActivo.origen}</strong> → <strong>{viajeActivo.destino}</strong>

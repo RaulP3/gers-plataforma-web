@@ -913,6 +913,36 @@ app.delete('/api/route-history', (req, res) => {
   });
 });
 
+app.get('/api/route-history/last', (req, res) => {
+  const { vehicle_id, hours } = req.query;
+  if (!vehicle_id) return res.status(400).json({ error: 'vehicle_id es requerido' });
+  const h = Number(hours) || 24;
+  db.all(
+    `SELECT * FROM route_history WHERE vehicle_id = ? AND recorded_at >= datetime('now', '-' || ? || ' hours') ORDER BY recorded_at ASC`,
+    [vehicle_id, h],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows || []);
+    }
+  );
+});
+
+app.get('/api/viajes/activos', (req, res) => {
+  db.all(
+    `SELECT v.*, s.remolque as seg_remolque, s.origen as seg_origen, s.destino as seg_destino, s.estatus as seg_estatus,
+            s.cita_carga, s.cita_descarga, s.hora_llegada, s.hora_liberacion
+     FROM viajes v
+     LEFT JOIN seguimiento s ON s.unidad = v.vehicle_name
+     WHERE v.estado NOT IN ('completado', 'cancelado')
+     ORDER BY v.fecha_inicio ASC`,
+    [],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows || []);
+    }
+  );
+});
+
 // ============ CLIENTES ============
 
 app.get('/api/clientes', (req, res) => {

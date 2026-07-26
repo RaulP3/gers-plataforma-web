@@ -82,13 +82,14 @@ function drawVehicles(L, map, vehiculos, vehicleLayerRef) {
   vehicleLayerRef.current = group;
 }
 
-export default function MapaUnidades({ vehiculos, geofences = [], customRiskZones = [], placingZone = false, onZonePlaced = null }) {
+export default function MapaUnidades({ vehiculos, geofences = [], customRiskZones = [], placingZone = false, onZonePlaced = null, routeHistory = [], selectedVehicleId = null, onVehicleClick = null }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const LRef = useRef(null);
   const vehicleLayerRef = useRef(null);
   const customGroupRef = useRef(null);
   const geofenceGroupRef = useRef(null);
+  const routeLayerRef = useRef(null);
   const placingRef = useRef(placingZone);
   const onPlacedRef = useRef(onZonePlaced);
 
@@ -209,6 +210,39 @@ export default function MapaUnidades({ vehiculos, geofences = [], customRiskZone
       map.getContainer().style.cursor = '';
     }
   }, [placingZone]);
+
+  useEffect(() => {
+    if (!mapRef.current || !LRef.current) return;
+    const map = mapRef.current;
+    const L = LRef.current;
+    if (routeLayerRef.current) {
+      map.removeLayer(routeLayerRef.current);
+      routeLayerRef.current = null;
+    }
+    if (!routeHistory || routeHistory.length < 2) return;
+    const group = L.layerGroup().addTo(map);
+    const latlngs = routeHistory.map(p => [p.latitude, p.longitude]);
+
+    const polyline = L.polyline(latlngs, { color: '#00ff41', weight: 3, opacity: 0.8, dashArray: '8, 6' }).addTo(group);
+
+    if (latlngs.length > 0) {
+      const startIcon = L.divIcon({
+        className: 'custom-marker',
+        html: '<div style="width:12px;height:12px;background:#10b981;border:2px solid #fff;border-radius:50%;box-shadow:0 0 8px #10b981"></div>',
+        iconSize: [12, 12], iconAnchor: [6, 6]
+      });
+      const endIcon = L.divIcon({
+        className: 'custom-marker',
+        html: '<div style="width:14px;height:14px;background:#ef4444;border:2px solid #fff;border-radius:50%;box-shadow:0 0 8px #ef4444"></div>',
+        iconSize: [14, 14], iconAnchor: [7, 7]
+      });
+      L.marker(latlngs[0], { icon: startIcon }).addTo(group).bindPopup('<b style="color:#10b981">📍 Inicio</b>');
+      L.marker(latlngs[latlngs.length - 1], { icon: endIcon }).addTo(group).bindPopup('<b style="color:#ef4444">🏁 Última posición</b>');
+    }
+
+    try { map.fitBounds(polyline.getBounds(), { padding: [50, 50] }); } catch (e) {}
+    routeLayerRef.current = group;
+  }, [routeHistory]);
 
   return (
     <div
