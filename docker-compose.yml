@@ -14,6 +14,7 @@ services:
     environment:
       - FRONTEND_URL=http://localhost:3000
       - DATABASE_PATH=/app/data/gers.db
+      - TZ=America/Mexico_City
     volumes:
       - gers-data:/app/data
     networks:
@@ -31,6 +32,8 @@ services:
       - "3000:3000"
     depends_on:
       - backend
+    environment:
+      - TZ=America/Mexico_City
     networks:
       - gers-network
 

@@ -6,6 +6,8 @@ COPY . .
 RUN npm run build
 
 FROM node:18-alpine AS runner
+RUN apk add --no-cache tzdata
+ENV TZ=America/Mexico_City
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=builder /app/.next/standalone ./

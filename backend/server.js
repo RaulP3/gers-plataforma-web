@@ -38,12 +38,14 @@ db.serialize(() => {
     origen TEXT,
     destino TEXT,
     conductor TEXT,
+    telefono TEXT,
     estado TEXT DEFAULT 'programado',
     fecha_inicio DATETIME,
     fecha_fin DATETIME,
     notas TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+  db.run("ALTER TABLE viajes ADD COLUMN telefono TEXT", [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS alertas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,6 +77,11 @@ db.serialize(() => {
     titulo TEXT,
     contenido TEXT NOT NULL,
     kilometraje REAL,
+    estatus TEXT DEFAULT '',
+    remolque TEXT DEFAULT '',
+    grupo TEXT DEFAULT '',
+    origen TEXT DEFAULT '',
+    destino TEXT DEFAULT '',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
@@ -94,8 +101,10 @@ db.serialize(() => {
     vehicle_id TEXT UNIQUE NOT NULL,
     vehicle_name TEXT,
     operator_name TEXT,
+    telefono TEXT,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+  db.run("ALTER TABLE vehicle_operators ADD COLUMN telefono TEXT", [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS geofences (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -142,6 +151,143 @@ db.serialize(() => {
   )`);
 
   db.run(`CREATE INDEX IF NOT EXISTS idx_route_history_vehicle_time ON route_history (vehicle_id, recorded_at)`);
+
+  db.run("ALTER TABLE geofences ADD COLUMN categoria TEXT DEFAULT 'custom'", [], () => {});
+
+  db.run("ALTER TABLE comentarios ADD COLUMN estatus TEXT DEFAULT ''", [], () => {});
+  db.run("ALTER TABLE comentarios ADD COLUMN remolque TEXT DEFAULT ''", [], () => {});
+  db.run("ALTER TABLE comentarios ADD COLUMN grupo TEXT DEFAULT ''", [], () => {});
+  db.run("ALTER TABLE comentarios ADD COLUMN origen TEXT DEFAULT ''", [], () => {});
+  db.run("ALTER TABLE comentarios ADD COLUMN destino TEXT DEFAULT ''", [], () => {});
+
+  db.run(`CREATE TABLE IF NOT EXISTS clientes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT NOT NULL,
+    contacto TEXT,
+    telefono TEXT,
+    email TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS remolques (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    numero TEXT NOT NULL UNIQUE,
+    status TEXT DEFAULT 'disponible',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS remolque_asignaciones (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    remolque_id INTEGER NOT NULL,
+    vehicle_id TEXT NOT NULL,
+    vehicle_name TEXT,
+    fecha_inicio DATETIME DEFAULT CURRENT_TIMESTAMP,
+    fecha_fin DATETIME,
+    activa INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS seguimiento (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    unidad TEXT NOT NULL,
+    operador TEXT DEFAULT '',
+    remolque TEXT DEFAULT '',
+    ruta TEXT DEFAULT '',
+    origen TEXT DEFAULT '',
+    destino TEXT DEFAULT '',
+    cita_carga TEXT DEFAULT '',
+    cita_descarga TEXT DEFAULT '',
+    hora_llegada TEXT DEFAULT '',
+    hora_liberacion TEXT DEFAULT '',
+    estatus TEXT DEFAULT 'Disponible',
+    ubicacion_samsara TEXT DEFAULT '',
+    comentarios_cliente TEXT DEFAULT '',
+    comentarios_monitoreo TEXT DEFAULT '',
+    grupo TEXT DEFAULT '',
+    fecha_actualizacion DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS seguimiento_historial (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    seguimiento_id INTEGER NOT NULL,
+    campo TEXT NOT NULL,
+    valor_anterior TEXT,
+    valor_nuevo TEXT,
+    usuario TEXT DEFAULT 'Sistema',
+    fecha_cambio DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS unidades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT NOT NULL,
+    estatus TEXT DEFAULT 'Activa',
+    notas TEXT DEFAULT '',
+    tipo TEXT DEFAULT 'manual',
+    samsara_id TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS risk_zones (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    severity TEXT DEFAULT 'high',
+    lat REAL NOT NULL,
+    lng REAL NOT NULL,
+    radius INTEGER DEFAULT 5000,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  const catalogGeofences = [
+    { nombre: 'GERS Planta Principal', latitud: 25.7894, longitud: -100.1824, radio_metros: 1000, descripcion: 'Planta principal GERS Monterrey', color: '#10b981', categoria: 'planta' },
+    { nombre: 'GERS Centro de Distribución', latitud: 25.7234, longitud: -100.3140, radio_metros: 800, descripcion: 'Centro de distribución zona metropolitana', color: '#10b981', categoria: 'planta' },
+    { nombre: 'Monterrey - Zona Industrial', latitud: 25.6866, longitud: -100.3161, radio_metros: 5000, descripcion: 'Zona industrial Valle de Santiago', color: '#3b82f6', categoria: 'logistica' },
+    { nombre: 'Guadalajara - Zona Logística', latitud: 20.6597, longitud: -103.3496, radio_metros: 5000, descripcion: 'Zona logística poniente', color: '#3b82f6', categoria: 'logistica' },
+    { nombre: 'CDMX - Zona Industrial Vallejo', latitud: 19.5050, longitud: -99.1230, radio_metros: 4000, descripcion: 'Zona industrial Vallejo', color: '#3b82f6', categoria: 'logistica' },
+    { nombre: 'Querétaro - Zona Industrial', latitud: 20.5888, longitud: -100.3899, radio_metros: 4000, descripcion: 'Zona industrial El Marques', color: '#3b82f6', categoria: 'logistica' },
+    { nombre: 'Aguascalientes - Zona Industrial', latitud: 21.8853, longitud: -102.2916, radio_metros: 4000, descripcion: 'Zona industrial oriente', color: '#3b82f6', categoria: 'logistica' },
+    { nombre: 'León - Zona Industrial', latitud: 21.1236, longitud: -101.6821, radio_metros: 3500, descripcion: 'Zona industrial León este', color: '#3b82f6', categoria: 'logistica' },
+    { nombre: 'Puebla - Zona Industrial', latitud: 19.0514, longitud: -98.2153, radio_metros: 3500, descripcion: 'Zona industrial Chore', color: '#3b82f6', categoria: 'logistica' },
+    { nombre: 'Ciudad Juárez - Zona Industrial', latitud: 31.6904, longitud: -106.4245, radio_metros: 4000, descripcion: 'Zona industrial fronteriza', color: '#3b82f6', categoria: 'logistica' },
+    { nombre: 'Tijuana - Zona Industrial', latitud: 32.5149, longitud: -116.9983, radio_metros: 3500, descripcion: 'Zona industrial Tijuana', color: '#3b82f6', categoria: 'logistica' },
+    { nombre: 'Mérida - Zona Industrial', latitud: 20.9674, longitud: -89.5926, radio_metros: 3000, descripcion: 'Zona industrial Mérida norte', color: '#3b82f6', categoria: 'logistica' },
+    { nombre: 'Puerto de Veracruz', latitud: 19.1958, longitud: -96.1350, radio_metros: 3000, descripcion: 'Puerto marítimo de Veracruz', color: '#f59e0b', categoria: 'puerto' },
+    { nombre: 'Puerto de Manzanillo', latitud: 19.0513, longitud: -104.3188, radio_metros: 3000, descripcion: 'Puerto marítimo de Manzanillo, Colima', color: '#f59e0b', categoria: 'puerto' },
+    { nombre: 'Puerto de Lázaro Cárdenas', latitud: 17.9553, longitud: -102.1847, radio_metros: 3000, descripcion: 'Puerto marítimo de Lázaro Cárdenas', color: '#f59e0b', categoria: 'puerto' },
+    { nombre: 'Puerto de Altamira', latitud: 22.3844, longitud: -97.9216, radio_metros: 2500, descripcion: 'Puerto industrial de Altamira, Tamps', color: '#f59e0b', categoria: 'puerto' },
+    { nombre: 'Puerto de Coatzacoalcos', latitud: 18.1493, longitud: -94.4242, radio_metros: 2500, descripcion: 'Puerto de Coatzacoalcos, Ver', color: '#f59e0b', categoria: 'puerto' },
+    { nombre: 'Aduana Nuevo Laredo', latitud: 27.4722, longitud: -99.5117, radio_metros: 1500, descripcion: 'Aduana fronteriza Nuevo Laredo, Tamps', color: '#ef4444', categoria: 'aduana' },
+    { nombre: 'Aduana Ciudad Juárez', latitud: 31.7431, longitud: -106.4304, radio_metros: 1500, descripcion: 'Aduana fronteriza Cd. Juárez, Chih', color: '#ef4444', categoria: 'aduana' },
+    { nombre: 'Aduana Tijuana', latitud: 32.5431, longitud: -117.0291, radio_metros: 1500, descripcion: 'Aduana fronteriza Tijuana, BC', color: '#ef4444', categoria: 'aduana' },
+    { nombre: 'Aduana Mexicali', latitud: 32.6312, longitud: -115.4360, radio_metros: 1500, descripcion: 'Aduana fronteriza Mexicali, BC', color: '#ef4444', categoria: 'aduana' },
+    { nombre: 'Aduana Reynosa', latitud: 26.0927, longitud: -98.2778, radio_metros: 1500, descripcion: 'Aduana fronteriza Reynosa, Tamps', color: '#ef4444', categoria: 'aduana' },
+    { nombre: 'Aduana Nogales', latitud: 31.3265, longitud: -110.9408, radio_metros: 1500, descripcion: 'Aduana fronteriza Nogales, Son', color: '#ef4444', categoria: 'aduana' },
+  ];
+
+  db.get('SELECT COUNT(*) as count FROM geofences', [], (err, row) => {
+    if (row && row.count === 0) {
+      const stmt = db.prepare('INSERT INTO geofences (nombre, latitud, longitud, radio_metros, descripcion, color, categoria) VALUES (?, ?, ?, ?, ?, ?, ?)');
+      catalogGeofences.forEach(g => {
+        stmt.run(g.nombre, g.latitud, g.longitud, g.radio_metros, g.descripcion, g.color, g.categoria);
+      });
+      stmt.finalize();
+      console.log(`Seeded ${catalogGeofences.length} geocercas del catálogo`);
+    } else {
+      db.all('SELECT nombre FROM geofences', [], (e, existing) => {
+        const existingNames = new Set((existing || []).map(r => r.nombre));
+        const missing = catalogGeofences.filter(g => !existingNames.has(g.nombre));
+        if (missing.length > 0) {
+          const stmt = db.prepare('INSERT INTO geofences (nombre, latitud, longitud, radio_metros, descripcion, color, categoria) VALUES (?, ?, ?, ?, ?, ?, ?)');
+          missing.forEach(g => {
+            stmt.run(g.nombre, g.latitud, g.longitud, g.radio_metros, g.descripcion, g.color, g.categoria);
+          });
+          stmt.finalize();
+          console.log(`Seeded ${missing.length} geocercas faltantes del catálogo`);
+        }
+      });
+    }
+  });
 });
 
 const samsaraApi = axios.create({
@@ -226,12 +372,12 @@ app.get('/api/vehicle-operators', (req, res) => {
 });
 
 app.put('/api/vehicle-operators/:vehicleId', (req, res) => {
-  const { operator_name } = req.body;
+  const { operator_name, telefono } = req.body;
   db.run(
-    `INSERT INTO vehicle_operators (vehicle_id, vehicle_name, operator_name, updated_at)
-     VALUES (?, ?, ?, datetime('now'))
-     ON CONFLICT(vehicle_id) DO UPDATE SET operator_name = ?, updated_at = datetime('now')`,
-    [req.params.vehicleId, req.body.vehicle_name || null, operator_name, operator_name],
+    `INSERT INTO vehicle_operators (vehicle_id, vehicle_name, operator_name, telefono, updated_at)
+     VALUES (?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(vehicle_id) DO UPDATE SET operator_name = ?, telefono = ?, updated_at = datetime('now')`,
+    [req.params.vehicleId, req.body.vehicle_name || null, operator_name || '', telefono || '', operator_name || '', telefono || ''],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ changes: this.changes });
@@ -291,6 +437,32 @@ app.get('/api/geofences', (req, res) => {
   });
 });
 
+app.get('/api/samsara/addresses', async (req, res) => {
+  try {
+    const addressRes = await axios.get('https://api.samsara.com/addresses', {
+      headers: { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' }
+    });
+    const data = addressRes.data;
+    const addresses = data.addresses || (Array.isArray(data) ? data : (data.data || []));
+    const mapped = (Array.isArray(addresses) ? addresses : []).map(a => ({
+      id: a.id,
+      nombre: a.name || a.formattedAddress || 'Sin nombre',
+      latitud: a.latitude,
+      longitud: a.longitude,
+      radio_metros: a.geofence?.circle?.radiusMeters || 500,
+      descripcion: a.formattedAddress || '',
+      color: '#8b5cf6',
+      categoria: 'samsara',
+      activa: 1,
+      polygon: a.geofence?.polygon || null,
+    }));
+    res.json(mapped);
+  } catch (error) {
+    console.error('Error fetching Samsara addresses:', error.message);
+    res.json([]);
+  }
+});
+
 app.post('/api/geofences', (req, res) => {
   const { nombre, latitud, longitud, radio_metros, descripcion, color } = req.body;
   if (!nombre || latitud === undefined || longitud === undefined) {
@@ -323,6 +495,18 @@ app.put('/api/geofences/:id', (req, res) => {
 
 app.delete('/api/geofences/:id', (req, res) => {
   db.run('DELETE FROM geofences WHERE id = ?', [req.params.id], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ changes: this.changes });
+  });
+});
+
+app.put('/api/geofences/toggle', (req, res) => {
+  const { ids, activa } = req.body;
+  if (!Array.isArray(ids) || activa === undefined) {
+    return res.status(400).json({ error: 'ids (array) y activa (0/1) son requeridos' });
+  }
+  const placeholders = ids.map(() => '?').join(',');
+  db.run(`UPDATE geofences SET activa = ? WHERE id IN (${placeholders})`, [activa, ...ids], function (err) {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ changes: this.changes });
   });
@@ -462,10 +646,10 @@ app.get('/api/viajes', (req, res) => {
 });
 
 app.post('/api/viajes', (req, res) => {
-  const { vehicle_id, vehicle_name, origen, destino, conductor, fecha_inicio, fecha_fin, notas } = req.body;
+  const { vehicle_id, vehicle_name, origen, destino, conductor, telefono, fecha_inicio, fecha_fin, notas } = req.body;
   db.run(
-    'INSERT INTO viajes (vehicle_id, vehicle_name, origen, destino, conductor, fecha_inicio, fecha_fin, notas) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [vehicle_id, vehicle_name, origen, destino, conductor, fecha_inicio, fecha_fin, notas],
+    'INSERT INTO viajes (vehicle_id, vehicle_name, origen, destino, conductor, telefono, fecha_inicio, fecha_fin, notas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [vehicle_id, vehicle_name, origen, destino, conductor, telefono || '', fecha_inicio, fecha_fin, notas],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ id: this.lastID });
@@ -724,6 +908,274 @@ app.delete('/api/route-history', (req, res) => {
   if (vehicle_id) { query += ' AND vehicle_id = ?'; params.push(vehicle_id); }
   if (fecha) { query += ' AND DATE(recorded_at) = ?'; params.push(fecha); }
   db.run(query, params, function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ deleted: this.changes });
+  });
+});
+
+// ============ CLIENTES ============
+
+app.get('/api/clientes', (req, res) => {
+  db.all('SELECT * FROM clientes ORDER BY nombre ASC', [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+app.post('/api/clientes', (req, res) => {
+  const { nombre, contacto, telefono, email } = req.body;
+  if (!nombre) return res.status(400).json({ error: 'nombre es requerido' });
+  db.run('INSERT INTO clientes (nombre, contacto, telefono, email) VALUES (?, ?, ?, ?)', [nombre, contacto || '', telefono || '', email || ''], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ id: this.lastID });
+  });
+});
+
+app.delete('/api/clientes/:id', (req, res) => {
+  db.run('DELETE FROM clientes WHERE id = ?', [req.params.id], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ changes: this.changes });
+  });
+});
+
+// ============ REMOLQUES ============
+
+app.get('/api/remolques', (req, res) => {
+  db.all(`SELECT r.*,
+    (SELECT ra.vehicle_name FROM remolque_asignaciones ra WHERE ra.remolque_id = r.id AND ra.activa = 1 LIMIT 1) as unidad_asignada,
+    (SELECT ra.vehicle_id FROM remolque_asignaciones ra WHERE ra.remolque_id = r.id AND ra.activa = 1 LIMIT 1) as vehicle_id_asignado
+    FROM remolques r ORDER BY r.numero ASC`, [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+app.post('/api/remolques', (req, res) => {
+  const { numero } = req.body;
+  if (!numero) return res.status(400).json({ error: 'numero es requerido' });
+  db.run('INSERT INTO remolques (numero) VALUES (?)', [numero.trim()], function (err) {
+    if (err) {
+      if (err.message.includes('UNIQUE')) return res.status(400).json({ error: 'Este número de remolque ya existe' });
+      return res.status(500).json({ error: err.message });
+    }
+    res.json({ id: this.lastID });
+  });
+});
+
+app.delete('/api/remolques/:id', (req, res) => {
+  db.run('DELETE FROM remolques WHERE id = ?', [req.params.id], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ changes: this.changes });
+  });
+});
+
+app.post('/api/remolques/:id/asignar', (req, res) => {
+  const { vehicle_id, vehicle_name } = req.body;
+  if (!vehicle_id) return res.status(400).json({ error: 'vehicle_id es requerido' });
+  db.serialize(() => {
+    db.run('UPDATE remolque_asignaciones SET activa = 0, fecha_fin = CURRENT_TIMESTAMP WHERE remolque_id = ? AND activa = 1', [req.params.id]);
+    db.run('INSERT INTO remolque_asignaciones (remolque_id, vehicle_id, vehicle_name) VALUES (?, ?, ?)', [req.params.id, vehicle_id, vehicle_name || ''], function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ id: this.lastID });
+    });
+  });
+});
+
+app.post('/api/remolques/:id/desasignar', (req, res) => {
+  db.run('UPDATE remolque_asignaciones SET activa = 0, fecha_fin = CURRENT_TIMESTAMP WHERE remolque_id = ? AND activa = 1', [req.params.id], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ changes: this.changes });
+  });
+});
+
+app.get('/api/remolques/:id/historial', (req, res) => {
+  db.all('SELECT * FROM remolque_asignaciones WHERE remolque_id = ? ORDER BY created_at DESC', [req.params.id], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows || []);
+  });
+});
+
+app.get('/api/remolques/asignaciones/activas', (req, res) => {
+  db.all('SELECT ra.*, r.numero as remolque_numero FROM remolque_asignaciones ra JOIN remolques r ON r.id = ra.remolque_id WHERE ra.activa = 1', [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows || []);
+  });
+});
+
+// ============ SEGUIMIENTO ============
+
+app.get('/api/seguimiento', (req, res) => {
+  db.all('SELECT * FROM seguimiento ORDER BY id ASC', [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows || []);
+  });
+});
+
+app.post('/api/seguimiento', (req, res) => {
+  const fields = ['unidad','operador','remolque','ruta','origen','destino','cita_carga','cita_descarga','hora_llegada','hora_liberacion','estatus','ubicacion_samsara','comentarios_cliente','comentarios_monitoreo','grupo'];
+  const data = fields.reduce((acc, f) => { acc[f] = req.body[f] || ''; return acc; }, {});
+  data.fecha_actualizacion = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  const cols = Object.keys(data).join(', ');
+  const placeholders = Object.keys(data).map(() => '?').join(', ');
+  db.run(`INSERT INTO seguimiento (${cols}) VALUES (${placeholders})`, Object.values(data), function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ id: this.lastID });
+  });
+});
+
+app.put('/api/seguimiento/:id', (req, res) => {
+  db.get('SELECT * FROM seguimiento WHERE id = ?', [req.params.id], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.status(404).json({ error: 'No encontrado' });
+    const fields = ['unidad','operador','remolque','ruta','origen','destino','cita_carga','cita_descarga','hora_llegada','hora_liberacion','estatus','ubicacion_samsara','comentarios_cliente','comentarios_monitoreo','grupo'];
+    const updates = [];
+    const values = [];
+    fields.forEach(f => {
+      const newVal = req.body[f] !== undefined ? req.body[f] : row[f];
+      if (String(newVal) !== String(row[f])) {
+        db.run('INSERT INTO seguimiento_historial (seguimiento_id, campo, valor_anterior, valor_nuevo) VALUES (?, ?, ?, ?)', [req.params.id, f, row[f] || '', newVal || '']);
+      }
+      updates.push(`${f} = ?`);
+      values.push(newVal || '');
+    });
+    updates.push("fecha_actualizacion = datetime('now')");
+    values.push(req.params.id);
+    db.run(`UPDATE seguimiento SET ${updates.join(', ')} WHERE id = ?`, values, function (err2) {
+      if (err2) return res.status(500).json({ error: err2.message });
+      res.json({ changes: this.changes });
+    });
+  });
+});
+
+app.delete('/api/seguimiento/:id', (req, res) => {
+  db.get('SELECT * FROM seguimiento WHERE id = ?', [req.params.id], (err, row) => {
+    if (row) {
+      const fields = ['unidad','operador','remolque','ruta','origen','destino','cita_carga','cita_descarga','hora_llegada','hora_liberacion','estatus','ubicacion_samsara','comentarios_cliente','comentarios_monitoreo','grupo'];
+      fields.forEach(f => {
+        db.run('INSERT INTO seguimiento_historial (seguimiento_id, campo, valor_anterior, valor_nuevo, usuario) VALUES (?, ?, ?, ?, ?)', [req.params.id, f, row[f] || '', '', 'Eliminado']);
+      });
+    }
+    db.run('DELETE FROM seguimiento WHERE id = ?', [req.params.id], function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ changes: this.changes });
+    });
+  });
+});
+
+app.get('/api/seguimiento/:id/historial', (req, res) => {
+  db.all('SELECT * FROM seguimiento_historial WHERE seguimiento_id = ? ORDER BY fecha_cambio DESC', [req.params.id], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows || []);
+  });
+});
+
+app.get('/api/seguimiento/historial/todas', (req, res) => {
+  db.all('SELECT sh.*, s.unidad FROM seguimiento_historial sh LEFT JOIN seguimiento s ON s.id = sh.seguimiento_id ORDER BY sh.fecha_cambio DESC LIMIT 500', [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows || []);
+  });
+});
+
+app.post('/api/seguimiento/import', (req, res) => {
+  const items = req.body;
+  if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'Array de registros requerido' });
+  let imported = 0;
+  db.serialize(() => {
+    db.run('DELETE FROM seguimiento');
+    items.forEach(item => {
+      const data = {
+        unidad: item.UNIDAD || '',
+        operador: item.OPERADOR || '',
+        remolque: item.REMOLQUE || '',
+        ruta: item.RUTA || '',
+        origen: item.ORIGEN || '',
+        destino: item.DESTINO || '',
+        cita_carga: item['CITA CARGA'] || '',
+        cita_descarga: item['CITA DESCARGA'] || '',
+        hora_llegada: item['HORA LLEGADA CON CLIENTE'] || '',
+        hora_liberacion: item['HORA LIBERACION CLIENTE'] || '',
+        estatus: item.ESTATUS || 'Disponible',
+        ubicacion_samsara: item['UBICACION SAMSARA'] || '',
+        comentarios_cliente: item['COMENTARIOS CLIENTE'] || '',
+        comentarios_monitoreo: item['COMENTARIOS MONITOREO'] || '',
+        grupo: item.GRUPO || '',
+        fecha_actualizacion: item['HORA ACTUALIZACION'] || new Date().toISOString().replace('T', ' ').substring(0, 19),
+      };
+      const cols = Object.keys(data).join(', ');
+      const placeholders = Object.keys(data).map(() => '?').join(', ');
+      db.run(`INSERT INTO seguimiento (${cols}) VALUES (${placeholders})`, Object.values(data));
+      imported++;
+    });
+  }, () => { res.json({ imported }); });
+});
+
+// ============ RISK ZONES ============
+
+app.get('/api/risk-zones', (req, res) => {
+  db.all('SELECT * FROM risk_zones ORDER BY created_at DESC', [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+app.post('/api/risk-zones', (req, res) => {
+  const { name, description, severity, lat, lng, radius } = req.body;
+  if (!name || lat == null || lng == null) {
+    return res.status(400).json({ error: 'name, lat, lng son requeridos' });
+  }
+  db.run(
+    'INSERT INTO risk_zones (name, description, severity, lat, lng, radius) VALUES (?, ?, ?, ?, ?, ?)',
+    [name, description || '', severity || 'high', lat, lng, radius || 5000],
+    function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ id: this.lastID, name, severity, lat, lng, radius });
+    }
+  );
+});
+
+app.delete('/api/risk-zones/:id', (req, res) => {
+  db.run('DELETE FROM risk_zones WHERE id = ?', [req.params.id], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ deleted: this.changes });
+  });
+});
+
+// ============ UNIDADES MANUALES ============
+
+app.get('/api/unidades', (req, res) => {
+  db.all('SELECT * FROM unidades ORDER BY created_at DESC', [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+app.post('/api/unidades', (req, res) => {
+  const { nombre, estatus, notas, tipo, samsara_id } = req.body;
+  if (!nombre) return res.status(400).json({ error: 'Nombre es requerido' });
+  db.run(
+    'INSERT INTO unidades (nombre, estatus, notas, tipo, samsara_id) VALUES (?, ?, ?, ?, ?)',
+    [nombre, estatus || 'Activa', notas || '', tipo || 'manual', samsara_id || ''],
+    function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ id: this.lastID, nombre, estatus: estatus || 'Activa', notas: notas || '', tipo: tipo || 'manual', samsara_id: samsara_id || '' });
+    }
+  );
+});
+
+app.put('/api/unidades/:id', (req, res) => {
+  const { nombre, estatus, notas, tipo, samsara_id } = req.body;
+  db.run(
+    `UPDATE unidades SET nombre = ?, estatus = ?, notas = ?, tipo = ?, samsara_id = ?, updated_at = datetime('now') WHERE id = ?`,
+    [nombre, estatus, notas, tipo, samsara_id || '', req.params.id],
+    function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ updated: this.changes });
+    }
+  );
+});
+
+app.delete('/api/unidades/:id', (req, res) => {
+  db.run('DELETE FROM unidades WHERE id = ?', [req.params.id], function (err) {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ deleted: this.changes });
   });

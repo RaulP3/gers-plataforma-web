@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import dynamic from 'next/dynamic';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 
 const MapaUnidades = dynamic(() => import('../components/MapaUnidades'), { ssr: false });
 const RouteMap = dynamic(() => import('../components/RouteMap'), { ssr: false });
@@ -20,24 +22,88 @@ export default function Home() {
 
   const [nuevaOp, setNuevaOp] = useState({ codigo: '', descripcion: '', origen: '', destino: '' });
   const [filtroReporte, setFiltroReporte] = useState({ tipo: 'operaciones', fecha_inicio: '', fecha_fin: '', vehicle_id: '' });
-  const [formViaje, setFormViaje] = useState({ vehicle_id: '', vehicle_name: '', origen: '', destino: '', conductor: '', fecha_inicio: '', fecha_fin: '', notas: '' });
+  const [formViaje, setFormViaje] = useState({ vehicle_id: '', vehicle_name: '', origen: '', destino: '', conductor: '', telefono: '', fecha_inicio: '', fecha_fin: '', notas: '' });
   const [vehicleFilter, setVehicleFilter] = useState('');
-  const [nuevoComentario, setNuevoComentario] = useState({ vehicle_id: '', vehicle_name: '', autor: '', tipo: 'seguimiento', titulo: '', contenido: '', kilometraje: '' });
+  const [nuevoComentario, setNuevoComentario] = useState({ vehicle_id: '', vehicle_name: '', autor: '', tipo: 'seguimiento', titulo: '', contenido: '', estatus: '', remolque: '', grupo: '', origen: '', destino: '' });
+  const [clientes, setClientes] = useState([]);
+  const [clienteSeleccionado, setClienteSeleccionado] = useState('');
+  const [showClienteMsg, setShowClienteMsg] = useState(false);
+  const [msgFormato, setMsgFormato] = useState('whatsapp');
+  const [remolques, setRemolques] = useState([]);
+  const [historialRemolque, setHistorialRemolque] = useState([]);
+  const [selectedRemolque, setSelectedRemolque] = useState(null);
+  const [seguimiento, setSeguimiento] = useState([]);
+  const [seguimientoEdit, setSeguimientoEdit] = useState({});
+  const [historialSeguimiento, setHistorialSeguimiento] = useState([]);
+  const [selectedSeguimiento, setSelectedSeguimiento] = useState(null);
+  const [seguimientoFilter, setSeguimientoFilter] = useState('');
   const [selectedVehicle, setSelectedVehicle] = useState(null);
-  const [comentarioRapido, setComentarioRapido] = useState({ autor: '', tipo: 'seguimiento', titulo: '', contenido: '', kilometraje: '' });
+  const [comentarioRapido, setComentarioRapido] = useState({ autor: '', tipo: 'seguimiento', titulo: '', contenido: '' });
+  const [destinoInput, setDestinoInput] = useState('');
+  const [etaData, setEtaData] = useState(null);
+  const [calculandoEta, setCalculandoEta] = useState(false);
+  const [viajeEta, setViajeEta] = useState(null);
+  const [viajeEtaError, setViajeEtaError] = useState('');
+  const [calculandoViajeEta, setCalculandoViajeEta] = useState(false);
   const [operadores, setOperadores] = useState({});
   const [samsaraDrivers, setSamsaraDrivers] = useState([]);
   const [filtroOperador, setFiltroOperador] = useState('');
   const [geofences, setGeofences] = useState([]);
   const [geofenceEvents, setGeofenceEvents] = useState([]);
+  const [samsaraAddresses, setSamsaraAddresses] = useState([]);
+  const [geofenceCat, setGeofenceCat] = useState('todas');
+  const geofenceCategories = [
+    { key: 'todas', label: 'Todas', icon: '📋' },
+    { key: 'samsara', label: 'Samsara', icon: '☁️' },
+    { key: 'planta', label: 'Plantas GERS', icon: '🏭' },
+    { key: 'logistica', label: 'Zonas Logísticas', icon: '📦' },
+    { key: 'puerto', label: 'Puertos', icon: '🚢' },
+    { key: 'aduana', label: 'Aduanas', icon: '🛃' },
+    { key: 'custom', label: 'Mis Geocercas', icon: '📍' },
+  ];
+  const allGeofences = useMemo(() => {
+    const local = geofences.map(g => ({ ...g, source: 'local' }));
+    const sam = samsaraAddresses.map(a => ({ ...a, source: 'samsara', activa: 1 }));
+    return [...sam, ...local];
+  }, [geofences, samsaraAddresses]);
   const [formGeofence, setFormGeofence] = useState({ nombre: '', latitud: '', longitud: '', radio_metros: '500', descripcion: '', color: '#3b82f6' });
   const [filtroAlertas, setFiltroAlertas] = useState('');
+  const [busquedaUnidades, setBusquedaUnidades] = useState('');
+  const [filtroUnidades, setFiltroUnidades] = useState('todas');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [routeHistory, setRouteHistory] = useState([]);
   const [routeDates, setRouteDates] = useState([]);
   const [routeVehicleId, setRouteVehicleId] = useState('');
   const [routeDate, setRouteDate] = useState('');
   const [routeLoading, setRouteLoading] = useState(false);
+  const [dashTab, setDashTab] = useState('unidades');
+  const [dashSearch, setDashSearch] = useState('');
+  const [customRiskZones, setCustomRiskZones] = useState([]);
+  const [placingZone, setPlacingZone] = useState(false);
+  const [showZoneModal, setShowZoneModal] = useState(false);
+  const [newZone, setNewZone] = useState({ name: '', description: '', severity: 'high', lat: '', lng: '', radius: 5000 });
+  const [unidadesLocales, setUnidadesLocales] = useState([]);
+  const [showUnidadModal, setShowUnidadModal] = useState(false);
+  const [editUnidad, setEditUnidad] = useState(null);
+  const [formUnidad, setFormUnidad] = useState({ nombre: '', estatus: 'Activa', notas: '', tipo: 'manual', samsara_id: '' });
+
+  const defaultZonesList = [
+    { name: 'Tamaulipas - Zona Norte', severity: 'critical', lat: 25.8811, lng: -97.4981 },
+    { name: 'Guerrero - Costa Grande', severity: 'critical', lat: 17.0732, lng: -100.1004 },
+    { name: 'Zacatecas - Carreteras', severity: 'high', lat: 23.0629, lng: -103.3429 },
+    { name: 'Michoacán - Tierra Caliente', severity: 'critical', lat: 18.8500, lng: -102.1800 },
+    { name: 'Nuevo León - Periferia', severity: 'high', lat: 25.6866, lng: -100.3161 },
+    { name: 'Jalisco - Zona Metropolitana', severity: 'medium', lat: 20.6597, lng: -103.3496 },
+    { name: 'Baja California - Frontera', severity: 'high', lat: 32.5149, lng: -116.9983 },
+    { name: 'Sinaloa - Los Mochis', severity: 'critical', lat: 25.7900, lng: -109.0000 },
+    { name: 'Sonora - Frontera Sur', severity: 'high', lat: 31.2500, lng: -110.9600 },
+    { name: 'Coahuila - Ruta Minera', severity: 'medium', lat: 27.5100, lng: -103.0300 },
+    { name: 'Chihuahua - Ciudad Juárez', severity: 'critical', lat: 31.6904, lng: -106.4245 },
+    { name: 'Veracruz - Zona Sur', severity: 'high', lat: 18.1500, lng: -94.5000 },
+    { name: 'Tamaulipas - Matamoros', severity: 'critical', lat: 25.8699, lng: -97.5111 },
+    { name: 'Guerrero - Acapulco', severity: 'critical', lat: 16.8531, lng: -99.8237 },
+    { name: 'Oaxaca - Istmo', severity: 'medium', lat: 16.7500, lng: -95.2000 },
+  ];
 
   useEffect(() => {
     setApiUrl(process.env.NEXT_PUBLIC_API_URL || `http://${window.location.hostname}:3001/api`);
@@ -47,10 +113,54 @@ export default function Home() {
     if (apiUrl) loadAll();
   }, [apiUrl]);
 
+  useEffect(() => {
+    if (!apiUrl) return;
+    const interval = setInterval(() => {
+      fetch(`${apiUrl}/samsara/vehicles`).then(r => r.json()).then(v => {
+        setVehiculos(Array.isArray(v) ? v : (v.data || v.vehicles || []));
+      }).catch(() => {});
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [apiUrl]);
+
+  useEffect(() => {
+    if (!destinoInput.trim() || !selectedVehicle?.location) { setEtaData(null); return; }
+    const vehicle = selectedVehicle;
+    const timer = setTimeout(() => calcularETA(destinoInput, vehicle), 1500);
+    return () => clearTimeout(timer);
+  }, [destinoInput, selectedVehicle?.id]);
+
+  useEffect(() => {
+    if (!selectedVehicle) { setDestinoInput(''); setEtaData(null); }
+  }, [selectedVehicle]);
+
+  useEffect(() => {
+    if (!formViaje.destino.trim() || !formViaje.vehicle_id) { setViajeEta(null); setViajeEtaError(''); return; }
+    const v = vehiculos.find(vh => String(vh.id) === formViaje.vehicle_id);
+    if (!v?.location) { setViajeEta(null); setViajeEtaError('Vehiculo sin ubicacion GPS'); return; }
+    setViajeEtaError('');
+    const timer = setTimeout(() => calcularViajeETA(formViaje.destino, v), 1500);
+    return () => clearTimeout(timer);
+  }, [formViaje.destino, formViaje.vehicle_id]);
+
+  useEffect(() => {
+    if (viajeEta && formViaje.fecha_inicio) {
+      const inicio = new Date(formViaje.fecha_inicio);
+      const fin = new Date(inicio.getTime() + viajeEta.duracionSegundos * 1000);
+      setFormViaje(prev => ({ ...prev, fecha_fin: fin.toISOString().slice(0, 16) }));
+    }
+  }, [viajeEta, formViaje.fecha_inicio]);
+
+  const parseFecha = (str) => {
+    if (!str) return null;
+    if (str.endsWith('Z') || str.includes('+')) return new Date(str);
+    return new Date(str + 'Z');
+  };
+
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [statsRes, opsRes, viajesRes, alertasRes, vehiculosRes, comentariosRes, operadoresRes, driversRes, geofencesRes, eventsRes] = await Promise.allSettled([
+      const [statsRes, opsRes, viajesRes, alertasRes, vehiculosRes, comentariosRes, operadoresRes, driversRes, geofencesRes, eventsRes, riskZonesRes, samsaraAddrRes, clientesRes, remolquesRes, seguimientoRes, unidadesRes] = await Promise.allSettled([
         fetch(`${apiUrl}/reportes/resumen`).then(r => r.json()),
         fetch(`${apiUrl}/operaciones`).then(r => r.json()),
         fetch(`${apiUrl}/viajes`).then(r => r.json()),
@@ -61,6 +171,12 @@ export default function Home() {
         fetch(`${apiUrl}/samsara/drivers`).then(r => r.json()),
         fetch(`${apiUrl}/geofences`).then(r => r.json()),
         fetch(`${apiUrl}/geofence-events?limit=100`).then(r => r.json()),
+        fetch(`${apiUrl}/risk-zones`).then(r => r.json()),
+        fetch(`${apiUrl}/samsara/addresses`).then(r => r.json()),
+        fetch(`${apiUrl}/clientes`).then(r => r.json()),
+        fetch(`${apiUrl}/remolques`).then(r => r.json()),
+        fetch(`${apiUrl}/seguimiento`).then(r => r.json()),
+        fetch(`${apiUrl}/unidades`).then(r => r.json()),
       ]);
 
       if (statsRes.status === 'fulfilled') setStats(statsRes.value);
@@ -71,10 +187,16 @@ export default function Home() {
       if (driversRes.status === 'fulfilled') setSamsaraDrivers(driversRes.value || []);
       if (geofencesRes.status === 'fulfilled') setGeofences(geofencesRes.value || []);
       if (eventsRes.status === 'fulfilled') setGeofenceEvents(eventsRes.value || []);
+      if (riskZonesRes.status === 'fulfilled') setCustomRiskZones(riskZonesRes.value || []);
+      if (samsaraAddrRes.status === 'fulfilled') setSamsaraAddresses(samsaraAddrRes.value || []);
+      if (clientesRes.status === 'fulfilled') setClientes(clientesRes.value || []);
+      if (remolquesRes.status === 'fulfilled') setRemolques(remolquesRes.value || []);
+      if (seguimientoRes.status === 'fulfilled') setSeguimiento(seguimientoRes.value || []);
+      if (unidadesRes.status === 'fulfilled') setUnidadesLocales(unidadesRes.value || []);
       if (operadoresRes.status === 'fulfilled') {
         const map = {};
         for (const op of (operadoresRes.value || [])) {
-          map[op.vehicle_id] = op.operator_name;
+          map[op.vehicle_id] = { nombre: op.operator_name, telefono: op.telefono || '' };
         }
         setOperadores(map);
       }
@@ -110,12 +232,27 @@ export default function Home() {
 
   const crearViaje = async (e) => {
     e.preventDefault();
-    await fetch(`${apiUrl}/viajes`, {
+    const res = await fetch(`${apiUrl}/viajes`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(formViaje),
     });
-    setFormViaje({ vehicle_id: '', vehicle_name: '', origen: '', destino: '', conductor: '', fecha_inicio: '', fecha_fin: '', notas: '' });
+    if (formViaje.conductor && formViaje.vehicle_id) {
+      await fetch(`${apiUrl}/vehicle-operators/${formViaje.vehicle_id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vehicle_name: formViaje.vehicle_name, operator_name: formViaje.conductor, telefono: formViaje.telefono || '' }),
+      });
+      setOperadores(prev => ({ ...prev, [formViaje.vehicle_id]: { nombre: formViaje.conductor, telefono: formViaje.telefono || '' } }));
+    }
+    if (formViaje.telefono) {
+      const tel = formViaje.telefono.replace(/[^0-9+]/g, '');
+      const inicio = formViaje.fecha_inicio ? new Date(formViaje.fecha_inicio + (formViaje.fecha_inicio.includes('Z') ? '' : 'Z')).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' }) : 'Por definir';
+      const fin = formViaje.fecha_fin ? new Date(formViaje.fecha_fin + (formViaje.fecha_fin.includes('Z') ? '' : 'Z')).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' }) : 'Por definir';
+      const msg = encodeURIComponent(`Hola ${formViaje.conductor || 'Operador'}, se te ha asignado un viaje:\n\nVehiculo: ${formViaje.vehicle_name || formViaje.vehicle_id}\nOrigen: ${formViaje.origen}\nDestino: ${formViaje.destino}\nInicio: ${inicio}\nFin: ${fin}${formViaje.notas ? '\nNotas: ' + formViaje.notas : ''}`);
+      window.open(`https://wa.me/${tel}?text=${msg}`, '_blank');
+    }
+    setFormViaje({ vehicle_id: '', vehicle_name: '', origen: '', destino: '', conductor: '', telefono: '', fecha_inicio: '', fecha_fin: '', notas: '' });
     loadAll();
   };
 
@@ -145,6 +282,144 @@ export default function Home() {
     loadAll();
   };
 
+  const crearCliente = async (e) => {
+    e.preventDefault();
+    const nombre = prompt('Nombre del cliente:');
+    if (!nombre) return;
+    await fetch(`${apiUrl}/clientes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nombre }),
+    });
+    loadAll();
+  };
+
+  const eliminarCliente = async (id) => {
+    if (confirm('Eliminar este cliente?')) {
+      await fetch(`${apiUrl}/clientes/${id}`, { method: 'DELETE' });
+      loadAll();
+    }
+  };
+
+  const crearRemolque = async () => {
+    const numero = prompt('Número del remolque:');
+    if (!numero) return;
+    const res = await fetch(`${apiUrl}/remolques`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ numero }),
+    });
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+    loadAll();
+  };
+
+  const eliminarRemolque = async (id) => {
+    if (confirm('Eliminar este remolque?')) {
+      await fetch(`${apiUrl}/remolques/${id}`, { method: 'DELETE' });
+      loadAll();
+    }
+  };
+
+  const asignarRemolque = async (remolqueId, vehicleId, vehicleName) => {
+    await fetch(`${apiUrl}/remolques/${remolqueId}/asignar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vehicle_id: vehicleId, vehicle_name: vehicleName }),
+    });
+    loadAll();
+  };
+
+  const desasignarRemolque = async (remolqueId) => {
+    await fetch(`${apiUrl}/remolques/${remolqueId}/desasignar`, { method: 'POST' });
+    loadAll();
+  };
+
+  const cargarHistorialRemolque = async (remolqueId) => {
+    setSelectedRemolque(remolqueId);
+    const res = await fetch(`${apiUrl}/remolques/${remolqueId}/historial`);
+    setHistorialRemolque(await res.json());
+  };
+
+  const guardarSeguimiento = async (id, campo, valor) => {
+    const row = seguimiento.find(s => s.id === id);
+    if (!row) return;
+    await fetch(`${apiUrl}/seguimiento/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...row, [campo]: valor }),
+    });
+    loadAll();
+  };
+
+  const cargarHistorialSeguimiento = async (id) => {
+    setSelectedSeguimiento(id);
+    const res = await fetch(`${apiUrl}/seguimiento/${id}/historial`);
+    setHistorialSeguimiento(await res.json());
+  };
+
+  const eliminarSeguimiento = async (id) => {
+    if (confirm('Eliminar este registro del seguimiento?')) {
+      await fetch(`${apiUrl}/seguimiento/${id}`, { method: 'DELETE' });
+      loadAll();
+    }
+  };
+
+  const agregarFilaSeguimiento = async () => {
+    const res = await fetch(`${apiUrl}/seguimiento`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ unidad: 'NUEVA', estatus: 'Disponible' }),
+    });
+    const data = await res.json();
+    if (data.id) loadAll();
+  };
+
+  const generarMensajeCliente = () => {
+    const v = vehiculos.find(vh => String(vh.id) === String(nuevoComentario.vehicle_id));
+    const c = clientes.find(cl => String(cl.id) === String(clienteSeleccionado));
+    if (!c) return '';
+    const now = new Date();
+    const fecha = now.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const hora = now.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+    const unidad = v?.name || 'N/A';
+    const titulo = nuevoComentario.titulo || '';
+    const contenido = nuevoComentario.contenido || '';
+    const monitorista = nuevoComentario.autor || 'N/A';
+    const operador = operadores[String(nuevoComentario.vehicle_id)]?.nombre || 'N/A';
+
+    if (msgFormato === 'corto') {
+      return `${c.nombre} | ${unidad} | ${titulo ? titulo + ': ' : ''}${contenido}`;
+    }
+
+    if (msgFormato === 'estructurado') {
+      return `REPORTE DE UNIDAD\n` +
+        `━━━━━━━━━━━━━━━━━━━\n` +
+        `Cliente:     ${c.nombre}\n` +
+        `Unidad:      ${unidad}\n` +
+        `Operador:    ${operador}\n` +
+        `Monitorista: ${monitorista}\n` +
+        `Fecha:       ${fecha} ${hora}\n` +
+        `━━━━━━━━━━━━━━━━━━━\n` +
+        `${titulo ? `Asunto: ${titulo}\n` : ''}` +
+        `${contenido}`;
+    }
+
+    if (msgFormato === 'whatsapp') {
+      let msg = `Hola ${c.nombre} 👋\n\n`;
+      msg += `Le compartimos el reporte de su unidad *${unidad}*:\n\n`;
+      if (titulo) msg += `📌 *${titulo}*\n`;
+      if (contenido) msg += `${contenido}\n\n`;
+      msg += `👤 Operador: ${operador}\n`;
+      msg += `🕐 ${fecha} ${hora}\n`;
+      msg += `📝 Monitorista: ${monitorista}\n\n`;
+      msg += `_GERS Logistics_ 🚛`;
+      return msg;
+    }
+
+    return '';
+  };
+
   const crearComentario = async (e) => {
     e.preventDefault();
     await fetch(`${apiUrl}/comentarios`, {
@@ -152,7 +427,9 @@ export default function Home() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(nuevoComentario),
     });
-    setNuevoComentario({ vehicle_id: '', vehicle_name: '', autor: '', tipo: 'seguimiento', titulo: '', contenido: '', kilometraje: '' });
+    setNuevoComentario({ vehicle_id: '', vehicle_name: '', autor: '', tipo: 'seguimiento', titulo: '', contenido: '', estatus: '', remolque: '', grupo: '', origen: '', destino: '' });
+    setClienteSeleccionado('');
+    setShowClienteMsg(false);
     loadAll();
   };
 
@@ -161,6 +438,28 @@ export default function Home() {
       await fetch(`${apiUrl}/comentarios/${id}`, { method: 'DELETE' });
       loadAll();
     }
+  };
+
+  const guardarUnidad = async (e) => {
+    e.preventDefault();
+    if (!formUnidad.nombre.trim()) return;
+    if (editUnidad) {
+      await fetch(`${apiUrl}/unidades/${editUnidad.localId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formUnidad),
+      });
+    } else {
+      await fetch(`${apiUrl}/unidades`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formUnidad),
+      });
+    }
+    setShowUnidadModal(false);
+    setEditUnidad(null);
+    setFormUnidad({ nombre: '', estatus: 'Activa', notas: '', tipo: 'manual', samsara_id: '' });
+    loadAll();
   };
 
   const guardarComentarioRapido = async () => {
@@ -174,21 +473,22 @@ export default function Home() {
         autor: comentarioRapido.autor || 'Sistema',
         tipo: comentarioRapido.tipo,
         titulo: comentarioRapido.titulo || `Seguimiento ${selectedVehicle.name}`,
-        contenido: comentarioRapido.contenido,
-        kilometraje: comentarioRapido.kilometraje ? Number(comentarioRapido.kilometraje) : null
+        contenido: comentarioRapido.contenido
       }),
     });
-    setComentarioRapido({ autor: '', tipo: 'seguimiento', titulo: '', contenido: '', kilometraje: '' });
+    setComentarioRapido({ autor: '', tipo: 'seguimiento', titulo: '', contenido: '' });
+    setDestinoInput('');
+    setEtaData(null);
     loadAll();
   };
 
-  const guardarOperador = async (vehicleId, vehicleName, nombre) => {
+  const guardarOperador = async (vehicleId, vehicleName, nombre, telefono) => {
     await fetch(`${apiUrl}/vehicle-operators/${vehicleId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vehicle_name: vehicleName, operator_name: nombre }),
+      body: JSON.stringify({ vehicle_name: vehicleName, operator_name: nombre, telefono }),
     });
-    setOperadores(prev => ({ ...prev, [vehicleId]: nombre }));
+    setOperadores(prev => ({ ...prev, [vehicleId]: { nombre, telefono } }));
   };
 
   const crearGeofence = async (e) => {
@@ -225,6 +525,21 @@ export default function Home() {
     loadAll();
   };
 
+  const toggleGeofencesBulk = async (ids, activa) => {
+    if (!ids.length) return;
+    await fetch(`${apiUrl}/geofences/toggle`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, activa }),
+    });
+    loadAll();
+  };
+
+  const toggleGeofencesByCategory = async (categoria, activa) => {
+    const ids = geofences.filter(g => g.categoria === categoria).map(g => g.id);
+    if (ids.length > 0) await toggleGeofencesBulk(ids, activa);
+  };
+
   const ejecutarCheckGeofences = async () => {
     await fetch(`${apiUrl}/check-geofences`, { method: 'POST' });
     loadAll();
@@ -233,6 +548,65 @@ export default function Home() {
   const ejecutarCheckFuel = async () => {
     await fetch(`${apiUrl}/check-fuel`, { method: 'POST' });
     loadAll();
+  };
+
+  const calcularRuta = async (destino, latOrigen, lonOrigen) => {
+    if (!destino.trim() || !latOrigen || !lonOrigen) return null;
+    try {
+      const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(destino)}&limit=1&accept-language=es`, {
+        headers: { 'User-Agent': 'GERS-Plataforma/1.0' }
+      });
+      const geoData = await geoRes.json();
+      if (!geoData.length) return null;
+      const destLat = parseFloat(geoData[0].lat);
+      const destLon = parseFloat(geoData[0].lon);
+      const routeRes = await fetch(`https://router.project-osrm.org/route/v1/driving/${lonOrigen},${latOrigen};${destLon},${destLat}?overview=false`);
+      const routeData = await routeRes.json();
+      if (routeData.code === 'Ok' && routeData.routes.length) {
+        const route = routeData.routes[0];
+        const factorTracto = 1.35;
+        const duracionTruck = route.duration * factorTracto;
+        const horas = Math.floor(duracionTruck / 3600);
+        const minutos = Math.round((duracionTruck % 3600) / 60);
+        const distanciaKm = (route.distance / 1000).toFixed(1);
+        const llegada = new Date(Date.now() + duracionTruck * 1000);
+        return {
+          duracion: `${horas > 0 ? horas + 'h ' : ''}${minutos}min`,
+          distancia: `${distanciaKm} km`,
+          distanciaMetros: route.distance,
+          duracionSegundos: duracionTruck,
+          horaLlegada: llegada.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }),
+          horaLlegadaISO: llegada.toISOString().slice(0, 16),
+          destinoNombre: geoData[0].display_name.split(',').slice(0, 3).join(',')
+        };
+      }
+    } catch (e) {
+      console.error('Error calculando ruta:', e);
+    }
+    return null;
+  };
+
+  const calcularETA = async (destino, vehicle) => {
+    if (!destino.trim() || !vehicle?.location) return;
+    setCalculandoEta(true);
+    const eta = await calcularRuta(destino, vehicle.location.latitude, vehicle.location.longitude);
+    if (eta) {
+      setEtaData(eta);
+      setComentarioRapido(prev => ({ ...prev, titulo: `ETA ${eta.horaLlegada} | ${eta.distancia}` }));
+    } else {
+      setEtaData(null);
+    }
+    setCalculandoEta(false);
+  };
+
+  const calcularViajeETA = async (destino, vehicle) => {
+    if (!destino.trim() || !vehicle?.location) { setViajeEta(null); setViajeEtaError(vehicle?.location ? '' : 'Vehiculo sin ubicacion GPS'); return; }
+    setCalculandoViajeEta(true);
+    setViajeEtaError('');
+    const eta = await calcularRuta(destino, vehicle.location.latitude, vehicle.location.longitude);
+    setViajeEta(eta);
+    if (!eta) setViajeEtaError('No se pudo calcular la ruta. Intenta con una ciudad o direccion mas especifica.');
+    setCalculandoViajeEta(false);
   };
 
   const cargarHistorialRuta = async () => {
@@ -267,19 +641,101 @@ export default function Home() {
     setReportes(data);
   };
 
+  const generarPDF = () => {
+    if (!reportes.length) return;
+    const doc = new jsPDF({ orientation: 'landscape' });
+    const tipoLabel = { operaciones: 'Operaciones', viajes: 'Viajes', seguimiento: 'Seguimiento / Comentarios' };
+    doc.setFontSize(18);
+    doc.text(`Reporte: ${tipoLabel[filtroReporte.tipo] || filtroReporte.tipo}`, 14, 20);
+    doc.setFontSize(10);
+    const filtros = [];
+    if (filtroReporte.fecha_inicio) filtros.push(`Desde: ${filtroReporte.fecha_inicio}`);
+    if (filtroReporte.fecha_fin) filtros.push(`Hasta: ${filtroReporte.fecha_fin}`);
+    if (filtroReporte.vehicle_id) {
+      const v = vehiculos.find(vh => String(vh.id) === filtroReporte.vehicle_id);
+      filtros.push(`Unidad: ${v?.name || filtroReporte.vehicle_id}`);
+    }
+    doc.text(filtros.join('  |  ') || 'Sin filtros de fecha', 14, 28);
+    doc.text(`Registros: ${reportes.length}  |  Generado: ${new Date().toLocaleString('es-MX')}`, 14, 34);
+    const headers = Object.keys(reportes[0]).filter(k => k !== 'id');
+    const rows = reportes.map(row => headers.map(h => row[h] !== null && row[h] !== undefined ? String(row[h]) : '-'));
+    doc.autoTable({
+      startY: 40,
+      head: [headers.map(h => h.replace(/_/g, ' ').toUpperCase())],
+      body: rows,
+      theme: 'grid',
+      styles: { fontSize: 7, cellPadding: 2 },
+      headStyles: { fillColor: [0, 255, 65], textColor: [0, 0, 0], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [240, 240, 240] },
+    });
+    doc.save(`Reporte_${filtroReporte.tipo}_${filtroReporte.fecha_inicio || 'todo'}_${filtroReporte.fecha_fin || 'todo'}.pdf`);
+  };
+
+  const handleZonePlaced = (lat, lng) => {
+    setPlacingZone(false);
+    setNewZone(prev => ({ ...prev, lat: lat.toFixed(6), lng: lng.toFixed(6) }));
+    setShowZoneModal(true);
+  };
+
+  const crearZonaRiesgo = async (e) => {
+    e.preventDefault();
+    await fetch(`${apiUrl}/risk-zones`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...newZone, lat: parseFloat(newZone.lat), lng: parseFloat(newZone.lng), radius: parseInt(newZone.radius) }),
+    });
+    setShowZoneModal(false);
+    setNewZone({ name: '', description: '', severity: 'high', lat: '', lng: '', radius: 5000 });
+    loadAll();
+  };
+
+  const eliminarZonaRiesgo = async (id) => {
+    if (!confirm('¿Eliminar esta zona de riesgo?')) return;
+    await fetch(`${apiUrl}/risk-zones/${id}`, { method: 'DELETE' });
+    loadAll();
+  };
+
   const vehiculosOnline = vehiculos.filter(v => v.isOnline);
   const vehiculosOffline = vehiculos.filter(v => !v.isOnline);
   const alertasNoLeidas = alertas.filter(a => !a.leida);
   const vehiculosEnMovimiento = useMemo(() => vehiculos.filter(v => v.location?.speed > 1), [vehiculos]);
 
+  const todasLasUnidades = useMemo(() => {
+    const samsaraMapped = vehiculos.map(v => ({
+      ...v,
+      isLocal: false,
+      nombre: v.name,
+      estatus: v.isOnline ? (v.location?.speed > 1 ? 'En Movimiento' : 'Detenida') : 'Sin Señal',
+    }));
+    const localMapped = unidadesLocales.map(u => ({
+      id: `local-${u.id}`,
+      name: u.nombre,
+      isOnline: false,
+      isLocal: true,
+      localId: u.id,
+      nombre: u.nombre,
+      estatus: u.estatus,
+      notas: u.notas,
+      tipo: u.tipo,
+      samsara_id: u.samsara_id,
+      location: null,
+      fuelLevelPercent: null,
+      lastSeen: null,
+    }));
+    return [...samsaraMapped, ...localMapped];
+  }, [vehiculos, unidadesLocales]);
+
   const menuItems = [
     { key: 'dashboard', label: 'Dashboard', icon: '📊' },
+    { key: 'unidades', label: 'Unidades', icon: '🚛', badge: todasLasUnidades.length },
     { key: 'monitoreo', label: 'Monitoreo', icon: '🗺️' },
-    { key: 'seguimiento', label: 'Seguimiento', icon: '📝' },
+    { key: 'notas', label: 'Notas', icon: '📝' },
     { key: 'alertas', label: 'Alertas', icon: '🔔', badge: alertasNoLeidas.length },
     { key: 'operaciones', label: 'Operaciones', icon: '📋' },
     { key: 'viajes', label: 'Viajes', icon: '🚚' },
     { key: 'operadores', label: 'Operadores', icon: '👤' },
+    { key: 'remolques', label: 'Remolques', icon: '🚛' },
+    { key: 'seguimiento', label: 'Seguimiento', icon: '📊' },
     { key: 'geocercas', label: 'Geocercas', icon: '⭕' },
     { key: 'rutas', label: 'Historial Rutas', icon: '🛤️' },
     { key: 'reportes', label: 'Reportes', icon: '📈' },
@@ -295,20 +751,25 @@ export default function Home() {
     main: { flex: 1, padding: '1.5rem 2rem', overflow: 'auto' },
     card: { background: '#111111', borderRadius: '12px', padding: '1.5rem', boxShadow: '0 0 15px rgba(0, 255, 65, 0.05), 0 1px 3px rgba(0,0,0,0.3)', border: '1px solid #1a3d1a' },
     statCard: (color, icon) => ({ background: `linear-gradient(135deg, #0d0d0d, #1a1a1a)`, color: '#00ff41', borderRadius: '12px', padding: '1.25rem', display: 'flex', alignItems: 'center', gap: '1rem', border: `1px solid ${color}33`, boxShadow: `0 0 20px ${color}15` }),
-    input: { padding: '0.6rem 0.8rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.875rem', outline: 'none', width: '100%', transition: 'border-color 0.2s', background: '#0d0d0d', color: '#e0e0e0' },
+    input: { padding: '0.6rem 0.8rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.875rem', outline: 'none', width: '100%', transition: 'border-color 0.2s', background: '#ffffff', color: '#000000' },
     button: (color = '#00ff41') => ({ background: 'transparent', color: color, border: `1px solid ${color}`, padding: '0.55rem 1rem', borderRadius: '8px', cursor: 'pointer', fontSize: '0.875rem', fontWeight: '500', transition: 'all 0.2s' }),
     table: { width: '100%', borderCollapse: 'collapse' },
     th: { textAlign: 'left', padding: '0.75rem 0.75rem', borderBottom: '1px solid #1a3d1a', color: '#00ff41', fontSize: '0.75rem', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' },
     td: { padding: '0.75rem', borderBottom: '1px solid #0d1f0d', fontSize: '0.875rem', color: '#c0c0c0' },
     badge: (color) => ({ background: color + '15', color: color, padding: '0.2rem 0.6rem', borderRadius: '20px', fontSize: '0.75rem', fontWeight: '600', border: `1px solid ${color}33` }),
-    select: { padding: '0.55rem 0.8rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.875rem', outline: 'none', background: '#0d0d0d', cursor: 'pointer', color: '#e0e0e0' },
+    select: { padding: '0.55rem 0.8rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.875rem', outline: 'none', background: '#ffffff', cursor: 'pointer', color: '#000000' },
     label: { display: 'block', marginBottom: '0.3rem', fontSize: '0.8rem', fontWeight: '500', color: '#6a9b6a' },
   };
 
   const estadoColors = {
     pendiente: '#f59e0b', en_curso: '#3b82f6', completada: '#10b981', cancelada: '#ef4444',
     programado: '#8b5cf6', 'en Curso': '#3b82f6', completado: '#10b981', cancelado: '#ef4444',
+    en_resguardo: '#f97316', 'en Resguardo': '#f97316',
   };
+
+  const thStyle = { padding: '0.5rem 0.6rem', color: '#4a8a4a', fontWeight: 700, textAlign: 'left', whiteSpace: 'nowrap', borderBottom: '2px solid #1a3d1a', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.5px', background: '#0d1a0d', position: 'sticky', top: 0, zIndex: 2 };
+  const tdStyle = { padding: '0.3rem 0.5rem', borderBottom: '1px solid #141414', whiteSpace: 'nowrap', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis' };
+  const inputStyle = { width: '100%', background: 'transparent', border: '1px solid transparent', borderRadius: '4px', color: '#ffffff', fontSize: '0.75rem', padding: '3px 6px', outline: 'none', fontFamily: 'inherit', transition: 'border-color 0.15s, background 0.15s' };
 
   return (
     <div style={s.container}>
@@ -347,126 +808,364 @@ export default function Home() {
         )}
       </aside>
 
-      <main style={s.main}>
+      <main style={{ ...s.main, overflow: activeTab === 'dashboard' ? 'hidden' : 'auto' }}>
         {activeTab === 'dashboard' && (
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-              <div>
-                <h2 style={{ margin: 0, fontSize: '1.5rem', color: '#e0e0e0' }}>Dashboard</h2>
-                <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>Vista general de la plataforma</p>
-              </div>
-              <button onClick={loadAll} style={s.button()}>Actualizar</button>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 3rem)', margin: '-1.5rem -2rem', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', padding: '0.75rem 1.5rem', background: '#111111', borderBottom: '1px solid #1a3d1a', flexShrink: 0 }}>
+              <span style={{ fontSize: '1.1rem', fontWeight: 700, color: '#e0e0e0', marginRight: '0.5rem' }}>GERS</span>
               {[
-                { label: 'Unidades Totales', value: vehiculos.length, icon: '🚛', color: '#3b82f6' },
-                { label: 'En Movimiento', value: vehiculosEnMovimiento.length, icon: '🟢', color: '#10b981' },
-                { label: 'Detenidas', value: vehiculosOnline.filter(v => v.location?.speed <= 1).length, icon: '🔴', color: '#ef4444' },
-                { label: 'Sin Señal', value: vehiculosOffline.length, icon: '⚠️', color: '#f59e0b' },
-              ].map((card) => (
-                <div key={card.label} style={s.statCard(card.color)}>
-                  <span style={{ fontSize: '2rem' }}>{card.icon}</span>
-                  <div>
-                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{card.value}</div>
-                    <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>{card.label}</div>
-                  </div>
+                { label: 'Unidades', value: vehiculos.length, icon: '🚛', color: '#3b82f6' },
+                { label: 'Activas', value: vehiculosOnline.filter(v => v.location?.speed > 1).length, dot: '#4ade80' },
+                { label: 'Detenidas', value: vehiculosOnline.filter(v => v.location?.speed <= 1).length, dot: '#60a5fa' },
+                { label: 'Sin Señal', value: vehiculosOffline.length, dot: '#facc15' },
+              ].map((item, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
+                  {item.icon && <span>{item.icon}</span>}
+                  {item.dot && <span style={{ width: 8, height: 8, borderRadius: '50%', background: item.dot, flexShrink: 0 }} />}
+                  <span style={{ fontWeight: 700, fontSize: '16px', color: '#e0e0e0' }}>{item.value}</span>
+                  <span style={{ color: '#6a9b6a', fontSize: '11px' }}>{item.label}</span>
                 </div>
               ))}
+              <div style={{ width: 1, height: 30, background: '#1a3d1a' }} />
+              {[
+                { label: 'Alertas', value: alertasNoLeidas.length, color: '#ef4444' },
+                { label: 'Diesel Bajo', value: vehiculos.filter(v => v.fuelLevelPercent !== null && v.fuelLevelPercent < 0.25).length, color: '#f59e0b' },
+                { label: 'Viajes', value: viajes.filter(v => v.estado === 'en_curso').length, color: '#6366f1' },
+              ].map((item, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: item.color, flexShrink: 0 }} />
+                  <span style={{ fontWeight: 700, fontSize: '16px', color: '#e0e0e0' }}>{item.value}</span>
+                  <span style={{ color: '#6a9b6a', fontSize: '11px' }}>{item.label}</span>
+                </div>
+              ))}
+              <div style={{ flex: 1 }} />
+              <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#8b5cf6', flexShrink: 0 }} />
+                <span style={{ fontWeight: 700, fontSize: '16px', color: '#e0e0e0' }}>{customRiskZones.length}</span>
+                <span style={{ color: '#6a9b6a', fontSize: '11px' }}>Zonas</span>
+              </span>
+              <button onClick={() => { setPlacingZone(true); }} style={{ padding: '6px 14px', background: placingZone ? '#ef4444' : 'transparent', color: placingZone ? '#fff' : '#f87171', border: `1px solid #f87171`, borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>
+                {placingZone ? '✕ Cancelar' : '➕ Zona'}
+              </button>
+              <button onClick={loadAll} style={{ padding: '6px 14px', background: '#00ff41', color: '#0d0d0d', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>Actualizar</button>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
-              {[
-                { label: 'Alertas Sin Leer', value: alertasNoLeidas.length, icon: '🔔', color: '#ef4444', onClick: () => setActiveTab('alertas') },
-                { label: 'Combustible Bajo (<25%)', value: vehiculos.filter(v => v.fuelLevelPercent !== null && v.fuelLevelPercent < 0.25).length, icon: '⛽', color: '#f59e0b' },
-                { label: 'Geocercas Activas', value: geofences.filter(g => g.activa).length, icon: '⭕', color: '#8b5cf6', onClick: () => setActiveTab('geocercas') },
-                { label: 'Viajes En Curso', value: viajes.filter(v => v.estado === 'en_curso').length, icon: '🚚', color: '#6366f1', onClick: () => setActiveTab('viajes') },
-              ].map((card) => (
-                <div key={card.label} onClick={card.onClick} style={{ ...s.card, borderLeft: `4px solid ${card.color}`, cursor: card.onClick ? 'pointer' : 'default', transition: 'transform 0.15s' }}
-                  onMouseEnter={e => card.onClick && (e.currentTarget.style.transform = 'translateY(-2px)')}
-                  onMouseLeave={e => card.onClick && (e.currentTarget.style.transform = 'none')}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                    <span style={{ fontSize: '1.75rem' }}>{card.icon}</span>
-                    <div>
-                      <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: card.color }}>{card.value}</div>
-                      <div style={{ fontSize: '0.8rem', color: '#6a9b6a' }}>{card.label}</div>
+            <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+              <div style={{ width: '320px', background: '#111111', borderRight: '1px solid #1a3d1a', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+                <div style={{ display: 'flex', borderBottom: '1px solid #1a3d1a' }}>
+                  {[
+                    { key: 'unidades', label: 'Unidades', icon: '🚛' },
+                    { key: 'alertas', label: 'Alertas', icon: '🔔' },
+                    { key: 'viajes', label: 'Viajes', icon: '🚚' },
+                    { key: 'zonas', label: 'Zonas', icon: '⚠️' },
+                  ].map(tab => (
+                    <button key={tab.key} onClick={() => setDashTab(tab.key)} style={{
+                      flex: 1, padding: '10px', background: 'none', border: 'none', color: dashTab === tab.key ? '#00ff41' : '#6a9b6a',
+                      cursor: 'pointer', fontSize: '12px', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
+                      borderBottom: dashTab === tab.key ? '2px solid #00ff41' : '2px solid transparent', transition: 'all 0.2s'
+                    }}>
+                      <span>{tab.icon}</span> {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {dashTab === 'unidades' && (
+                  <>
+                    <div style={{ padding: '12px', position: 'relative' }}>
+                      <input value={dashSearch} onChange={e => setDashSearch(e.target.value)} placeholder="Buscar unidad..."
+                        style={{ width: '100%', padding: '10px 12px 10px 36px', background: '#1a1a1a', border: '1px solid #1a3d1a', borderRadius: '8px', color: '#e0e0e0', fontSize: '13px', outline: 'none' }} />
+                      <span style={{ position: 'absolute', left: 24, top: '50%', transform: 'translateY(-50%)', color: '#6a9b6a', fontSize: '13px' }}>🔍</span>
                     </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+                    <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 12px' }}>
+                      {vehiculos.filter(v => !dashSearch || v.name.toLowerCase().includes(dashSearch.toLowerCase()) || (operadores[String(v.id)]?.nombre || '').toLowerCase().includes(dashSearch.toLowerCase())).map(v => {
+                        const isMoving = v.location?.speed > 1;
+                        const statusColor = v.isOnline ? (isMoving ? '#4ade80' : '#60a5fa') : '#facc15';
+                        const statusLabel = v.isOnline ? (isMoving ? 'Movimiento' : 'Detenida') : 'Sin señal';
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
-              <div style={{ ...s.card, padding: 0, overflow: 'hidden', height: '300px' }}>
-                <MapaUnidades vehiculos={vehiculosEnMovimiento} />
-              </div>
-              <div style={{ ...s.card, overflow: 'auto' }}>
-                <h3 style={{ marginTop: 0, marginBottom: '1rem', fontSize: '1rem' }}>Unidades en Movimiento ({vehiculosEnMovimiento.length})</h3>
-                <table style={s.table}>
-                  <thead>
-                    <tr>
-                      <th style={s.th}>Unidad</th>
-                      <th style={s.th}>Operador</th>
-                      <th style={s.th}>Diesel</th>
-                      <th style={s.th}>Vel.</th>
-                      <th style={s.th}>Estado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {vehiculosEnMovimiento.slice(0, 15).map(v => (
-                      <tr key={v.id} onClick={() => { setSelectedVehicle(v); }} style={{ cursor: 'pointer' }}
-                        onMouseEnter={e => e.currentTarget.style.background = '#152015'}
-                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                        <td style={{ ...s.td, fontWeight: '600' }}>{v.name}</td>
-                        <td style={{ ...s.td, fontSize: '0.8rem', color: '#6a9b6a' }}>{operadores[String(v.id)] || '-'}</td>
-                        <td style={s.td}>
-                          {v.fuelLevelPercent !== null ? (
-                            <span style={{ color: v.fuelLevelPercent > 0.25 ? '#10b981' : '#ef4444', fontWeight: '600' }}>
-                              {Math.round(v.fuelLevelPercent * 100)}%
-                            </span>
-                          ) : <span style={{ color: '#4a8a4a' }}>N/D</span>}
-                        </td>
-                        <td style={s.td}>{v.location ? `${Math.round(v.location.speed || 0)}` : '-'}</td>
-                        <td style={s.td}>
-                          <span style={s.badge(v.isOnline ? (v.location?.speed > 1 ? '#10b981' : '#3b82f6') : '#f59e0b')}>
-                            {v.isOnline ? (v.location?.speed > 1 ? 'Movimiento' : 'Detenida') : 'Sin señal'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {vehiculosEnMovimiento.length > 15 && (
-                  <div style={{ textAlign: 'center', padding: '0.75rem', fontSize: '0.8rem', color: '#6a9b6a', cursor: 'pointer' }}
-                    onClick={() => setActiveTab('monitoreo')}>
-                    Ver todas las unidades →
+  return (
+                          <div key={v.id} onClick={() => setSelectedVehicle(v)} style={{ background: '#1a1a1a', borderRadius: '8px', padding: '12px', marginBottom: '8px', cursor: 'pointer', border: '1px solid transparent', transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: '10px' }}
+                            onMouseEnter={e => { e.currentTarget.style.borderColor = '#00ff41'; e.currentTarget.style.transform = 'translateX(2px)'; }}
+                            onMouseLeave={e => { e.currentTarget.style.borderColor = 'transparent'; e.currentTarget.style.transform = 'none'; }}>
+                            <div style={{ width: 36, height: 36, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0, background: `${statusColor}15`, color: statusColor }}>🚛</div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 600, fontSize: '13px', color: '#e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{v.name}</div>
+                              <div style={{ fontSize: '11px', color: '#6a9b6a', display: 'flex', gap: '8px', marginTop: 2 }}>
+                                <span>👤 {operadores[String(v.id)]?.nombre || 'Sin op.'}</span>
+                                {v.location && <span>🏎 {Math.round(v.location.speed || 0)} km/h</span>}
+                              </div>
+                            </div>
+                            <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', flexShrink: 0, background: `${statusColor}15`, color: statusColor }}>{statusLabel}</span>
+                          </div>
+                        );
+                    })}
+                    </div>
+                  </>
+                )}
+
+                {dashTab === 'zonas' && (
+                  <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+                    <div style={{ marginBottom: '12px' }}>
+                      <button onClick={() => { setPlacingZone(true); }} style={{ width: '100%', padding: '10px', background: placingZone ? '#7f1d1d' : 'transparent', color: '#f87171', border: '1px dashed #f87171', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>
+                        {placingZone ? '✕ Cancelar' : '➕ Agregar zona (clic en mapa)'}
+                      </button>
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#6a9b6a', marginBottom: '8px' }}>Zonas de riesgo de México (predefinidas): {defaultZonesList.length}</div>
+                    {defaultZonesList.map((z, i) => {
+                      const zColor = { critical: '#f87171', high: '#fb923c', medium: '#facc15' }[z.severity] || '#fb923c';
+                      const zLabel = { critical: 'Crítica', high: 'Alta', medium: 'Media' }[z.severity];
+                      return (
+                        <div key={i} style={{ background: '#1a1a1a', borderRadius: '8px', padding: '10px', marginBottom: '6px', borderLeft: `3px solid ${zColor}` }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontWeight: 600, fontSize: '12px', color: '#e0e0e0' }}>{z.name}</span>
+                            <span style={{ padding: '2px 6px', borderRadius: 10, fontSize: 9, fontWeight: 700, textTransform: 'uppercase', background: `${zColor}15`, color: zColor }}>{zLabel}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {customRiskZones.length > 0 && (
+                      <>
+                        <div style={{ fontSize: '11px', color: '#6a9b6a', marginTop: '12px', marginBottom: '8px' }}>Zonas propias: {customRiskZones.length}</div>
+                        {customRiskZones.map(z => {
+                          const zColor = { critical: '#f87171', high: '#fb923c', medium: '#facc15' }[z.severity] || '#fb923c';
+                           const zLabel = { critical: 'Crítica', high: 'Alta', medium: 'Media' }[z.severity];
+                          return (
+                            <div key={z.id} style={{ background: '#1a1a1a', borderRadius: '8px', padding: '10px', marginBottom: '6px', borderLeft: `3px solid ${zColor}` }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontWeight: 600, fontSize: '12px', color: '#e0e0e0' }}>{z.name}</span>
+                                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                  <span style={{ padding: '2px 6px', borderRadius: 10, fontSize: 9, fontWeight: 700, textTransform: 'uppercase', background: `${zColor}15`, color: zColor }}>{zLabel}</span>
+                                  <button onClick={() => eliminarZonaRiesgo(z.id)} style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '11px', opacity: 0.7 }} onMouseEnter={e => e.target.style.opacity = 1} onMouseLeave={e => e.target.style.opacity = 0.7}>✕</button>
+                                </div>
+                              </div>
+                              <div style={{ fontSize: '10px', color: '#4a8a4a', marginTop: 2 }}>{z.description || 'Sin descripción'}</div>
+                            </div>
+                          );
+                        })}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {dashTab === 'alertas' && (
+                  <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+                    {alertasNoLeidas.length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '40px 20px', color: '#6a9b6a' }}>
+                        <div style={{ fontSize: '2rem', marginBottom: '8px', opacity: 0.3 }}>🔔</div>
+                        <p style={{ fontSize: '13px' }}>No hay alertas sin leer</p>
+                      </div>
+                    ) : alertasNoLeidas.slice(0, 50).map(a => {
+                      const borderColor = a.tipo === 'geocerca' ? '#8b5cf6' : a.tipo === 'combustible_bajo' ? '#f59e0b' : '#3b82f6';
+                      return (
+                        <div key={a.id} style={{ background: '#1a1a1a', borderRadius: '8px', padding: '12px', marginBottom: '8px', borderLeft: `3px solid ${borderColor}` }}>
+                          <div style={{ fontSize: '12px', fontWeight: 500, color: '#e0e0e0' }}>
+                            <span style={{ marginRight: '6px' }}>{a.tipo === 'geocerca' ? '⭕' : a.tipo === 'combustible_bajo' ? '⛽' : '⚠️'}</span>
+                            {a.vehicle_name || a.vehicle_id}
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#6a9b6a', marginTop: 4 }}>{a.mensaje}</div>
+                          <div style={{ fontSize: '10px', color: '#4a8a4a', marginTop: 4 }}>{parseFecha(a.timestamp)?.toLocaleTimeString()}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {dashTab === 'viajes' && (
+                  <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+                    {viajes.filter(v => v.estado === 'en_curso' || v.estado === 'programado').length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '40px 20px', color: '#6a9b6a' }}>
+                        <div style={{ fontSize: '2rem', marginBottom: '8px', opacity: 0.3 }}>🚚</div>
+                        <p style={{ fontSize: '13px' }}>No hay viajes activos</p>
+                      </div>
+                    ) : viajes.filter(v => v.estado === 'en_curso' || v.estado === 'programado').map(v => {
+                      const viajeColor = v.estado === 'en_curso' ? '#3b82f6' : '#8b5cf6';
+                      const viajeLabel = v.estado === 'en_curso' ? 'En Curso' : 'Programado';
+                      return (
+                        <div key={v.id} style={{ background: '#1a1a1a', borderRadius: '8px', padding: '12px', marginBottom: '8px', borderLeft: `3px solid ${viajeColor}` }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                            <span style={{ fontWeight: 600, fontSize: '13px', color: '#e0e0e0' }}>{v.vehicle_name || v.vehicle_id}</span>
+                            <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', background: `${viajeColor}15`, color: viajeColor }}>{viajeLabel}</span>
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#6a9b6a' }}>📍 {v.origen || '?'} → {v.destino || '?'}</div>
+                          <div style={{ fontSize: '11px', color: '#4a8a4a', marginTop: 2 }}>👤 {v.conductor || 'Sin asignar'}</div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
-            </div>
 
-            {alertasNoLeidas.length > 0 && (
-              <div style={s.card}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                  <h3 style={{ margin: 0, fontSize: '1rem' }}>Alertas Recientes ({alertasNoLeidas.length})</h3>
-                  <span style={{ cursor: 'pointer', fontSize: '0.8rem', color: '#3b82f6' }} onClick={() => setActiveTab('alertas')}>Ver todas →</span>
+              <div style={{ flex: 1, position: 'relative' }}>
+                {placingZone && <div style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', background: 'rgba(15,23,42,0.9)', backdropFilter: 'blur(10px)', padding: '10px 20px', borderRadius: '8px', fontSize: '13px', color: '#e0e0e0', zIndex: 1000, border: '1px solid #f87171', pointerEvents: 'none' }}>
+                  🎯 Haz clic en el mapa para colocar la zona de riesgo
+                </div>}
+                <MapaUnidades vehiculos={vehiculos} geofences={geofences} customRiskZones={customRiskZones} placingZone={placingZone} onZonePlaced={handleZonePlaced} />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'unidades' && (() => {
+          const unidadesFiltradas = todasLasUnidades.filter(v => {
+            const coincideBusqueda = !busquedaUnidades ||
+              v.name.toLowerCase().includes(busquedaUnidades.toLowerCase()) ||
+              (operadores[String(v.id)]?.nombre || '').toLowerCase().includes(busquedaUnidades.toLowerCase()) ||
+              String(v.id).includes(busquedaUnidades);
+            const coincideFiltro = filtroUnidades === 'todas' ||
+              (filtroUnidades === 'online' && v.isOnline) ||
+              (filtroUnidades === 'offline' && !v.isOnline && !v.isLocal) ||
+              (filtroUnidades === 'movimiento' && v.location?.speed > 1) ||
+              (filtroUnidades === 'detenida' && v.isOnline && (v.location?.speed || 0) <= 1) ||
+              (filtroUnidades === 'bajo_diesel' && v.fuelLevelPercent !== null && v.fuelLevelPercent < 0.25) ||
+              (filtroUnidades === 'manual' && v.isLocal);
+            return coincideBusqueda && coincideFiltro;
+          });
+          return (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: '1.5rem', color: '#e0e0e0' }}>Unidades</h2>
+                  <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>
+                    {todasLasUnidades.length} unidades · {vehiculos.length} Samsara · {unidadesLocales.length} locales · {vehiculosOnline.length} en línea
+                  </p>
                 </div>
-                {alertasNoLeidas.slice(0, 5).map(a => (
-                  <div key={a.id} style={{ padding: '0.6rem 0', borderBottom: '1px solid #0d1f0d', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                  <button onClick={() => { setEditUnidad(null); setFormUnidad({ nombre: '', estatus: 'Activa', notas: '', tipo: 'manual', samsara_id: '' }); setShowUnidadModal(true); }}
+                    style={{ ...s.button('#00ff41'), background: '#00ff4120', border: '1px solid #00ff41', color: '#00ff41', padding: '0.5rem 1rem' }}>
+                    + Agregar Unidad
+                  </button>
+                  <button onClick={loadAll} style={s.button()}>Actualizar</button>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
+                {[
+                  { label: 'Total', value: todasLasUnidades.length, icon: '🚛', color: '#3b82f6', filter: 'todas' },
+                  { label: 'Samsara', value: vehiculos.length, icon: '☁️', color: '#8b5cf6', filter: 'samsara' },
+                  { label: 'Locales', value: unidadesLocales.length, icon: '📌', color: '#00ff41', filter: 'manual' },
+                  { label: 'En Línea', value: vehiculosOnline.length, icon: '🟢', color: '#10b981', filter: 'online' },
+                  { label: 'Sin Señal', value: vehiculosOffline.length, icon: '🔴', color: '#ef4444', filter: 'offline' },
+                  { label: 'Diesel Bajo', value: vehiculos.filter(v => v.fuelLevelPercent !== null && v.fuelLevelPercent < 0.25).length, icon: '⛽', color: '#f59e0b', filter: 'bajo_diesel' },
+                ].map((card) => (
+                  <div key={card.label} onClick={() => setFiltroUnidades(card.filter)}
+                    style={{ ...s.statCard(card.color), cursor: 'pointer', opacity: filtroUnidades === card.filter ? 1 : 0.7, transition: 'opacity 0.2s' }}
+                    onMouseEnter={e => e.currentTarget.style.opacity = '1'}
+                    onMouseLeave={e => e.currentTarget.style.opacity = filtroUnidades === card.filter ? '1' : '0.7'}>
+                    <span style={{ fontSize: '1.5rem' }}>{card.icon}</span>
                     <div>
-                      <span style={s.badge(a.tipo === 'geocerca' ? '#8b5cf6' : a.tipo === 'combustible_bajo' ? '#f59e0b' : '#3b82f6')}>
-                        {a.tipo === 'geocerca' ? '⭕ Geocerca' : a.tipo === 'combustible_bajo' ? '⛽ Combustible' : a.tipo}
-                      </span>
-                      <span style={{ marginLeft: '0.5rem', fontWeight: '500', fontSize: '0.85rem' }}>{a.vehicle_name || a.vehicle_id}</span>
-                      <span style={{ marginLeft: '0.5rem', fontSize: '0.8rem', color: '#6a9b6a' }}>{a.mensaje}</span>
+                      <div style={{ fontSize: '1.25rem', fontWeight: 'bold' }}>{card.value}</div>
+                      <div style={{ fontSize: '0.75rem', opacity: 0.85 }}>{card.label}</div>
                     </div>
-                    <span style={{ fontSize: '0.75rem', color: '#4a8a4a' }}>{new Date(a.timestamp).toLocaleTimeString()}</span>
                   </div>
                 ))}
               </div>
-            )}
-          </div>
-        )}
+
+              <div style={{ ...s.card, marginBottom: '1.5rem', padding: '1rem 1.5rem' }}>
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                  <input
+                    placeholder="Buscar por nombre, operador o ID..."
+                    value={busquedaUnidades}
+                    onChange={e => setBusquedaUnidades(e.target.value)}
+                    style={{ ...s.input, maxWidth: '400px' }}
+                  />
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    {[
+                      { key: 'todas', label: 'Todas' },
+                      { key: 'online', label: 'En Línea' },
+                      { key: 'offline', label: 'Sin Señal' },
+                      { key: 'movimiento', label: 'Movimiento' },
+                      { key: 'detenida', label: 'Detenida' },
+                      { key: 'bajo_diesel', label: 'Diesel Bajo' },
+                      { key: 'manual', label: 'Locales' },
+                    ].map(f => (
+                      <button key={f.key} onClick={() => setFiltroUnidades(f.key)}
+                        style={{ padding: '0.4rem 0.75rem', borderRadius: '8px', border: `1px solid ${filtroUnidades === f.key ? '#00ff41' : '#1a3d1a'}`, background: filtroUnidades === f.key ? '#00ff4115' : 'transparent', color: filtroUnidades === f.key ? '#00ff41' : '#6a9b6a', cursor: 'pointer', fontSize: '0.8rem', transition: 'all 0.2s' }}>
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                  <span style={{ marginLeft: 'auto', fontSize: '0.8rem', color: '#4a8a4a' }}>
+                    {unidadesFiltradas.length} resultados
+                  </span>
+                </div>
+              </div>
+
+              <div style={s.card}>
+                {todasLasUnidades.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '3rem', color: '#4a8a4a' }}>
+                    <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>🚛</div>
+                    <p style={{ fontSize: '1rem' }}>No hay unidades disponibles</p>
+                    <p style={{ fontSize: '0.85rem', marginTop: '0.25rem' }}>Agrega una unidad o verifica la conexión con Samsara</p>
+                  </div>
+                ) : (
+                  <table style={s.table}>
+                    <thead>
+                      <tr>
+                        <th style={s.th}>Unidad</th>
+                        <th style={s.th}>Operador</th>
+                        <th style={s.th}>Estado</th>
+                        <th style={s.th}>Ubicación</th>
+                        <th style={s.th}>Velocidad</th>
+                        <th style={s.th}>Diesel</th>
+                        <th style={s.th}>Última Señal</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {unidadesFiltradas.length === 0 ? (
+                        <tr><td colSpan="7" style={{ ...s.td, textAlign: 'center', color: '#4a8a4a', padding: '2rem' }}>
+                          No se encontraron unidades con los filtros aplicados
+                        </td></tr>
+                      ) : unidadesFiltradas.map((v) => (
+                        <tr key={v.id} onClick={() => !v.isLocal && setSelectedVehicle(v)} style={{ cursor: v.isLocal ? 'default' : 'pointer' }}
+                          onMouseEnter={e => e.currentTarget.style.background = '#152015'}
+                          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                          <td style={{ ...s.td, fontWeight: '600', color: v.isLocal ? '#f59e0b' : '#00ff41' }}>
+                            <div>{v.isLocal ? '📌' : '🚛'} {v.name}</div>
+                            <div style={{ fontSize: '0.7rem', color: '#4a8a4a', fontWeight: '400' }}>{v.isLocal ? `Local #${v.localId}` : `Samsara ID: ${v.id}`}</div>
+                          </td>
+                          <td style={s.td}>{v.isLocal ? <span style={{ color: '#6a9b6a' }}>{v.estatus || '-'}</span> : (operadores[String(v.id)]?.nombre || <span style={{ color: '#4a8a4a' }}>Sin asignar</span>)}</td>
+                          <td style={s.td}>
+                            {v.isLocal ? (
+                              <span style={s.badge(v.estatus === 'Activa' ? '#10b981' : v.estatus === 'Siniestrada' ? '#ef4444' : v.estatus === 'No disponible' ? '#6b7280' : '#f59e0b')}>
+                                {v.estatus || 'Sin estatus'}
+                              </span>
+                            ) : (
+                              <span style={s.badge(v.isOnline ? (v.location?.speed > 1 ? '#10b981' : '#3b82f6') : '#ef4444')}>
+                                {v.isOnline ? (v.location?.speed > 1 ? 'Movimiento' : 'Detenida') : 'Sin señal'}
+                              </span>
+                            )}
+                          </td>
+                          <td style={{ ...s.td, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.8rem' }}>
+                            {v.isLocal ? (v.notas || <span style={{ color: '#4a8a4a' }}>Sin notas</span>) : (v.location?.location || <span style={{ color: '#4a8a4a' }}>Sin ubicación</span>)}
+                          </td>
+                          <td style={s.td}>
+                            {v.isLocal ? <span style={{ color: '#6a9b6a' }}>-</span> : (v.location ? <span>{Math.round(v.location.speed || 0)} mph</span> : <span style={{ color: '#4a8a4a' }}>-</span>)}
+                          </td>
+                          <td style={s.td}>
+                            {v.isLocal ? <span style={{ color: '#6a9b6a' }}>-</span> : (v.fuelLevelPercent !== null ? (
+                              <span style={{ color: v.fuelLevelPercent > 0.25 ? '#10b981' : v.fuelLevelPercent > 0.10 ? '#f59e0b' : '#ef4444', fontWeight: '600' }}>
+                                {Math.round(v.fuelLevelPercent * 100)}%
+                              </span>
+                            ) : <span style={{ color: '#4a8a4a' }}>N/D</span>)}
+                          </td>
+                          <td style={{ ...s.td, fontSize: '0.8rem', color: '#6a9b6a' }}>
+                            {v.isLocal ? (
+                              <div style={{ display: 'flex', gap: '0.3rem' }}>
+                                <button onClick={(e) => { e.stopPropagation(); setEditUnidad(v); setFormUnidad({ nombre: v.nombre, estatus: v.estatus, notas: v.notas, tipo: v.tipo, samsara_id: v.samsara_id || '' }); setShowUnidadModal(true); }}
+                                  style={{ padding: '0.2rem 0.5rem', borderRadius: '6px', border: '1px solid #3b82f6', background: '#3b82f620', color: '#3b82f6', cursor: 'pointer', fontSize: '0.7rem' }}>Editar</button>
+                                <button onClick={async (e) => { e.stopPropagation(); if (confirm('Eliminar esta unidad?')) { await fetch(`${apiUrl}/unidades/${v.localId}`, { method: 'DELETE' }); loadAll(); } }}
+                                  style={{ padding: '0.2rem 0.5rem', borderRadius: '6px', border: '1px solid #ef4444', background: '#ef444420', color: '#ef4444', cursor: 'pointer', fontSize: '0.7rem' }}>X</button>
+                              </div>
+                            ) : (v.lastSeen !== null && v.lastSeen !== undefined ? `hace ${v.lastSeen}min` : '-')}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
         {activeTab === 'monitoreo' && (
           <div>
@@ -481,7 +1180,7 @@ export default function Home() {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '1rem' }}>
               <div style={{ ...s.card, padding: 0, overflow: 'hidden', height: 'calc(100vh - 180px)' }}>
-                <MapaUnidades vehiculos={vehiculos} />
+                <MapaUnidades vehiculos={vehiculos} geofences={allGeofences} />
               </div>
               <div style={{ ...s.card, overflow: 'auto', maxHeight: 'calc(100vh - 180px)' }}>
                 <h3 style={{ marginTop: 0, fontSize: '1rem', marginBottom: '1rem' }}>Unidades ({vehiculos.length})</h3>
@@ -492,7 +1191,7 @@ export default function Home() {
                     <div>
                       <div style={{ fontWeight: '600', fontSize: '0.85rem' }}>{v.name}</div>
                       <div style={{ fontSize: '0.75rem', color: '#6a9b6a' }}>
-                        {operadores[String(v.id)] || 'Sin operador'}
+                        {operadores[String(v.id)]?.nombre || 'Sin operador'}
                       </div>
                       <div style={{ fontSize: '0.75rem', color: '#4a8a4a' }}>
                         {v.location ? `${Math.round(v.location.speed || 0)} mph` : 'Sin ubicación'}
@@ -510,11 +1209,11 @@ export default function Home() {
           </div>
         )}
 
-        {activeTab === 'seguimiento' && (
+        {activeTab === 'notas' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <div>
-                <h2 style={{ margin: 0, fontSize: '1.5rem' }}>Seguimiento por Unidad</h2>
+                <h2 style={{ margin: 0, fontSize: '1.5rem' }}>Notas por Unidad</h2>
                 <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>Comentarios y notas para reportes de clientes</p>
               </div>
               <button onClick={loadAll} style={s.button()}>Actualizar</button>
@@ -536,26 +1235,97 @@ export default function Home() {
                       </select>
                     </div>
                     <div>
-                      <label style={s.label}>Autor</label>
-                      <input style={s.input} placeholder="Nombre del operador" value={nuevoComentario.autor} onChange={(e) => setNuevoComentario({ ...nuevoComentario, autor: e.target.value })} />
+                      <label style={s.label}>Monitorista</label>
+                      <input style={s.input} placeholder="Nombre del monitorista" value={nuevoComentario.autor} onChange={(e) => setNuevoComentario({ ...nuevoComentario, autor: e.target.value })} />
+                    </div>
+                  </div>
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <label style={s.label}>Tipo</label>
+                    <select style={s.select} value={nuevoComentario.tipo} onChange={(e) => setNuevoComentario({ ...nuevoComentario, tipo: e.target.value })}>
+                      <option value="seguimiento">Seguimiento</option>
+                      <option value="mantenimiento">Mantenimiento</option>
+                      <option value="incidente">Incidente</option>
+                      <option value="entrega">Entrega</option>
+                      <option value="cliente">Nota para Cliente</option>
+                    </select>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                    <div>
+                      <label style={s.label}>Estatus</label>
+                      <select style={s.select} value={nuevoComentario.estatus} onChange={(e) => setNuevoComentario({ ...nuevoComentario, estatus: e.target.value })}>
+                        <option value="">Seleccionar...</option>
+                        <option value="Disponible">Disponible</option>
+                        <option value="En ruta cargado">En ruta cargado</option>
+                        <option value="En ruta vacio">En ruta vacío</option>
+                        <option value="En proceso de carga">En proceso de carga</option>
+                        <option value="En proceso de descarga">En proceso de descarga</option>
+                        <option value="En resguardo">En resguardo</option>
+                        <option value="Programado">Programado</option>
+                        <option value="No disponible">No disponible</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={s.label}>Remolque</label>
+                      <input style={s.input} placeholder="Núm. remolque" value={nuevoComentario.remolque} onChange={(e) => setNuevoComentario({ ...nuevoComentario, remolque: e.target.value })} />
+                    </div>
+                    <div>
+                      <label style={s.label}>Grupo</label>
+                      <input style={s.input} placeholder="Ej: BACHOCO" value={nuevoComentario.grupo} onChange={(e) => setNuevoComentario({ ...nuevoComentario, grupo: e.target.value })} />
                     </div>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
                     <div>
-                      <label style={s.label}>Tipo</label>
-                      <select style={s.select} value={nuevoComentario.tipo} onChange={(e) => setNuevoComentario({ ...nuevoComentario, tipo: e.target.value })}>
-                        <option value="seguimiento">Seguimiento</option>
-                        <option value="mantenimiento">Mantenimiento</option>
-                        <option value="incidente">Incidente</option>
-                        <option value="entrega">Entrega</option>
-                        <option value=" cliente">Nota para Cliente</option>
-                      </select>
+                      <label style={s.label}>Origen</label>
+                      <input style={s.input} placeholder="Punto de origen" value={nuevoComentario.origen} onChange={(e) => setNuevoComentario({ ...nuevoComentario, origen: e.target.value })} />
                     </div>
                     <div>
-                      <label style={s.label}>Kilometraje</label>
-                      <input style={s.input} type="number" placeholder="km actuales" value={nuevoComentario.kilometraje} onChange={(e) => setNuevoComentario({ ...nuevoComentario, kilometraje: e.target.value })} />
+                      <label style={s.label}>Destino</label>
+                      <input style={s.input} placeholder="Punto de destino" value={nuevoComentario.destino} onChange={(e) => setNuevoComentario({ ...nuevoComentario, destino: e.target.value })} />
                     </div>
                   </div>
+                  {nuevoComentario.tipo === 'cliente' && (
+                    <div style={{ marginBottom: '0.75rem', padding: '0.75rem', background: '#0a1a0a', border: '1px solid #1a3d1a', borderRadius: '8px' }}>
+                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        <div style={{ flex: 1 }}>
+                          <label style={s.label}>Cliente *</label>
+                          <select style={s.select} value={clienteSeleccionado} onChange={(e) => setClienteSeleccionado(e.target.value)} required>
+                            <option value="">Seleccionar cliente...</option>
+                            {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                          </select>
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.25rem', paddingTop: '1.2rem' }}>
+                          <button type="button" onClick={crearCliente} style={{ ...s.button('#3b82f6'), padding: '0.3rem 0.6rem', fontSize: '0.75rem' }}>+ Nuevo</button>
+                        </div>
+                      </div>
+                      {clienteSeleccionado && nuevoComentario.contenido && (
+                        <div style={{ marginTop: '0.75rem' }}>
+                          <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.5rem' }}>
+                            {[
+                              { key: 'whatsapp', label: '💬 WhatsApp' },
+                              { key: 'corto', label: '⚡ Corto' },
+                              { key: 'estructurado', label: '📋 Datos' },
+                            ].map(f => (
+                              <button key={f.key} type="button" onClick={() => setMsgFormato(f.key)}
+                                style={{ padding: '0.3rem 0.6rem', borderRadius: '6px', border: msgFormato === f.key ? '1px solid #00ff41' : '1px solid #1a3d1a', background: msgFormato === f.key ? '#0d2b0d' : 'transparent', color: msgFormato === f.key ? '#00ff41' : '#6a9b6a', cursor: 'pointer', fontSize: '0.7rem', fontWeight: msgFormato === f.key ? '600' : '400' }}>
+                                {f.label}
+                              </button>
+                            ))}
+                          </div>
+                          <label style={s.label}>Vista previa</label>
+                          <div style={{ background: '#0d1f0d', border: '1px solid #1a3d1a', borderRadius: '8px', padding: '0.75rem', fontSize: '0.8rem', color: '#e0e0e0', whiteSpace: 'pre-wrap', lineHeight: '1.5', fontFamily: 'monospace' }}>
+                            {generarMensajeCliente()}
+                          </div>
+                          <button type="button" onClick={() => {
+                            navigator.clipboard.writeText(generarMensajeCliente());
+                            setShowClienteMsg(true);
+                            setTimeout(() => setShowClienteMsg(false), 2000);
+                          }} style={{ ...s.button(showClienteMsg ? '#10b981' : '#00ff41'), width: '100%', marginTop: '0.5rem', color: '#0d0d0d', fontWeight: '600' }}>
+                            {showClienteMsg ? '¡Copiado!' : '📋 Copiar Mensaje'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div style={{ marginBottom: '0.75rem' }}>
                     <label style={s.label}>Título</label>
                     <input style={s.input} placeholder="Resumen del comentario" value={nuevoComentario.titulo} onChange={(e) => setNuevoComentario({ ...nuevoComentario, titulo: e.target.value })} />
@@ -607,11 +1377,17 @@ export default function Home() {
                           <button onClick={() => eliminarComentario(c.id)} style={{ ...s.button('#ef4444'), padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}>X</button>
                         </div>
                         {c.titulo && <div style={{ fontWeight: '600', fontSize: '0.85rem', marginBottom: '0.25rem' }}>{c.titulo}</div>}
+                        <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                          {c.estatus && <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: '#003311', color: '#00ff41', border: '1px solid #00ff4133' }}>{c.estatus}</span>}
+                          {c.remolque && <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: '#332200', color: '#f59e0b', border: '1px solid #f59e0b33' }}>🚛 {c.remolque}</span>}
+                          {c.grupo && <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: '#0d1a33', color: '#60a5fa', border: '1px solid #60a5fa33' }}>{c.grupo}</span>}
+                          {c.origen && <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: '#1a0d33', color: '#a78bfa', border: '1px solid #a78bfa33' }}>📍 {c.origen}</span>}
+                          {c.destino && <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: '#1a3322', color: '#34d399', border: '1px solid #34d39933' }}>🏁 {c.destino}</span>}
+                        </div>
                         <div style={{ fontSize: '0.85rem', color: '#c0c0c0', marginBottom: '0.5rem', whiteSpace: 'pre-wrap' }}>{c.contenido}</div>
                         <div style={{ fontSize: '0.75rem', color: '#4a8a4a', display: 'flex', gap: '1rem' }}>
                           <span>{c.autor}</span>
-                          {c.kilometraje && <span>{Number(c.kilometraje).toLocaleString()} km</span>}
-                          <span>{new Date(c.created_at).toLocaleString()}</span>
+                          <span>{parseFecha(c.created_at)?.toLocaleString()}</span>
                         </div>
                       </div>
                     ))
@@ -658,7 +1434,7 @@ export default function Home() {
                           <strong>{a.vehicle_name || a.vehicle_id}</strong>
                         </div>
                         <div style={{ fontSize: '0.85rem', color: '#6a9b6a', marginTop: '0.25rem' }}>{a.mensaje}</div>
-                        <div style={{ fontSize: '0.75rem', color: '#4a8a4a', marginTop: '0.25rem' }}>{new Date(a.timestamp).toLocaleString()}</div>
+                        <div style={{ fontSize: '0.75rem', color: '#4a8a4a', marginTop: '0.25rem' }}>{parseFecha(a.timestamp)?.toLocaleString()}</div>
                       </div>
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
                         {!a.leida && <button onClick={() => marcarAlertaLeida(a.id)} style={s.button('#10b981')}>Leída</button>}
@@ -746,20 +1522,40 @@ export default function Home() {
               <div style={s.card}>
                 <h3 style={{ marginTop: 0, marginBottom: '1rem', fontSize: '1rem', color: '#e0e0e0' }}>Nuevo Viaje</h3>
                 <form onSubmit={crearViaje}>
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <label style={s.label}>Vehiculo</label>
+                    <select style={s.select} value={formViaje.vehicle_id} onChange={(e) => {
+                      const v = vehiculos.find(vh => String(vh.id) === e.target.value);
+                      const op = operadores[e.target.value];
+                      setFormViaje({
+                        ...formViaje,
+                        vehicle_id: e.target.value,
+                        vehicle_name: v?.name || '',
+                        origen: v?.location?.location || formViaje.origen,
+                        conductor: op?.nombre || '',
+                        telefono: op?.telefono || '',
+                      });
+                    }}>
+                      <option value="">Seleccionar...</option>
+                      {vehiculos.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                    </select>
+                  </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
                     <div>
-                      <label style={s.label}>Vehículo</label>
-                      <select style={s.select} value={formViaje.vehicle_id} onChange={(e) => {
-                        const v = vehiculos.find(vh => String(vh.id) === e.target.value);
-                        setFormViaje({ ...formViaje, vehicle_id: e.target.value, vehicle_name: v?.name || '', origen: v?.location?.location || formViaje.origen });
+                      <label style={s.label}>Conductor</label>
+                      <select style={s.select} value={formViaje.conductor} onChange={(e) => {
+                        const driver = samsaraDrivers.find(d => d.name === e.target.value);
+                        setFormViaje({ ...formViaje, conductor: e.target.value, telefono: driver?.phone || formViaje.telefono });
                       }}>
                         <option value="">Seleccionar...</option>
-                        {vehiculos.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                        {samsaraDrivers.filter(d => d.status === 'active').sort((a, b) => a.name.localeCompare(b.name)).map(d => (
+                          <option key={d.id} value={d.name}>{d.name}</option>
+                        ))}
                       </select>
                     </div>
                     <div>
-                      <label style={s.label}>Conductor</label>
-                      <input style={s.input} placeholder="Nombre" value={formViaje.conductor} onChange={(e) => setFormViaje({ ...formViaje, conductor: e.target.value })} />
+                      <label style={s.label}>Telefono (WhatsApp)</label>
+                      <input style={s.input} placeholder="Auto-del conductor" value={formViaje.telefono} onChange={(e) => setFormViaje({ ...formViaje, telefono: e.target.value })} />
                     </div>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
@@ -798,16 +1594,47 @@ export default function Home() {
                     <div style={{ fontSize: '0.85rem' }}>
                       <div style={{ padding: '0.75rem', background: '#111', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
                         <div style={{ fontWeight: '600', color: '#00ff41', fontSize: '1rem', marginBottom: '0.5rem' }}>{v.name}</div>
-                        <div style={{ color: '#c0c0c0' }}>Operador: {operadores[String(v.id)] || 'Sin asignar'}</div>
+                        <div style={{ color: '#c0c0c0' }}>Operador: {operadores[String(v.id)]?.nombre || 'Sin asignar'}</div>
                         <div style={{ color: '#c0c0c0' }}>Ubicación: {v.location?.location || 'Sin datos'}</div>
                         <div style={{ color: '#c0c0c0' }}>Diesel: {v.fuelLevelPercent !== null ? `${Math.round(v.fuelLevelPercent * 100)}%` : 'N/D'}</div>
                         <div style={{ color: v.isOnline ? '#00ff41' : '#f59e0b' }}>Estado: {v.isOnline ? 'Online' : 'Sin señal'}</div>
                       </div>
+                      {calculandoViajeEta && (
+                        <div style={{ marginTop: '0.75rem', padding: '0.6rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #f59e0b33', fontSize: '0.85rem', color: '#f59e0b', textAlign: 'center' }}>
+                          Calculando ETA...
+                        </div>
+                      )}
+                      {viajeEta && !calculandoViajeEta && (
+                        <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #10b98133' }}>
+                          <div style={{ fontWeight: '600', fontSize: '0.8rem', color: '#10b981', marginBottom: '0.5rem', textTransform: 'uppercase' }}>ETA Calculado (Tractocamión)</div>
+                          <div style={{ display: 'flex', justifyContent: 'space-around', textAlign: 'center' }}>
+                            <div>
+                              <div style={{ fontSize: '0.65rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Llegada</div>
+                              <div style={{ fontSize: '1.1rem', fontWeight: '700', color: '#10b981' }}>{viajeEta.horaLlegada}</div>
+                            </div>
+                            <div>
+                              <div style={{ fontSize: '0.65rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Tiempo</div>
+                              <div style={{ fontSize: '1rem', fontWeight: '600' }}>{viajeEta.duracion}</div>
+                            </div>
+                            <div>
+                              <div style={{ fontSize: '0.65rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Distancia</div>
+                              <div style={{ fontSize: '1rem', fontWeight: '600' }}>{viajeEta.distancia}</div>
+                            </div>
+                          </div>
+                          <div style={{ fontSize: '0.7rem', color: '#4a8a4a', marginTop: '0.5rem', textAlign: 'center' }}>{viajeEta.destinoNombre}</div>
+                          <div style={{ fontSize: '0.7rem', color: '#6a9b6a', marginTop: '0.25rem', textAlign: 'center' }}>Fecha fin auto-llenada</div>
+                        </div>
+                      )}
+                      {viajeEtaError && !calculandoViajeEta && !viajeEta && (
+                        <div style={{ marginTop: '0.75rem', padding: '0.6rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #ef444433', fontSize: '0.82rem', color: '#ef4444' }}>
+                          {viajeEtaError}
+                        </div>
+                      )}
                     </div>
                   );
                 })() : (
                   <div style={{ textAlign: 'center', padding: '2rem', color: '#4a8a4a' }}>
-                    <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🚗</div>
+                    <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🚚</div>
                     <p>Selecciona un vehículo para ver sus datos</p>
                     <p style={{ fontSize: '0.8rem', marginTop: '0.5rem' }}>El origen se auto-llenará con la ubicación actual</p>
                   </div>
@@ -830,18 +1657,26 @@ export default function Home() {
                 <tbody>
                   {viajes.length === 0 ? (
                     <tr><td colSpan="7" style={{ ...s.td, textAlign: 'center', color: '#4a8a4a', padding: '2rem' }}>No hay viajes programados</td></tr>
-                  ) : viajes.map((v) => (
+                  ) : [...viajes].sort((a, b) => {
+                    const ordenEstado = { en_curso: 0, en_resguardo: 1, programado: 2, completado: 3, cancelado: 4 };
+                    const oe = (ordenEstado[a.estado] ?? 4) - (ordenEstado[b.estado] ?? 4);
+                    if (oe !== 0) return oe;
+                    const fa = a.fecha_inicio ? new Date(parseFecha(a.fecha_inicio)).getTime() : 0;
+                    const fb = b.fecha_inicio ? new Date(parseFecha(b.fecha_inicio)).getTime() : 0;
+                    return fa - fb;
+                  }).map((v) => (
                     <tr key={v.id}>
                       <td style={s.td}><strong style={{ color: '#00ff41' }}>{v.vehicle_name || v.vehicle_id}</strong></td>
                       <td style={s.td}>{v.conductor}</td>
                       <td style={s.td}>{v.origen} → {v.destino}</td>
-                      <td style={s.td}>{v.fecha_inicio ? new Date(v.fecha_inicio).toLocaleDateString() : '-'}</td>
-                      <td style={s.td}>{v.fecha_fin ? new Date(v.fecha_fin).toLocaleDateString() : '-'}</td>
+                      <td style={s.td}>{v.fecha_inicio ? parseFecha(v.fecha_inicio)?.toLocaleDateString() : '-'}</td>
+                      <td style={s.td}>{v.fecha_fin ? parseFecha(v.fecha_fin)?.toLocaleDateString() : '-'}</td>
                       <td style={s.td}><span style={s.badge(estadoColors[v.estado] || '#6a9b6a')}>{v.estado}</span></td>
                       <td style={s.td}>
                         <select style={{ ...s.select, marginRight: '0.5rem' }} value={v.estado} onChange={(e) => actualizarEstadoViaje(v.id, e.target.value)}>
                           <option value="programado">Programado</option>
                           <option value="en_curso">En Curso</option>
+                          <option value="en_resguardo">En Resguardo</option>
                           <option value="completado">Completado</option>
                           <option value="cancelado">Cancelado</option>
                         </select>
@@ -902,21 +1737,229 @@ export default function Home() {
           </div>
         )}
 
+        {activeTab === 'remolques' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h2 style={{ color: '#e0e0e0', margin: 0 }}>Remolques</h2>
+              <button onClick={crearRemolque} style={{ padding: '0.5rem 1rem', background: '#00ff41', color: '#000', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 700 }}>+ Nuevo</button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.75rem' }}>
+              {remolques.map(r => (
+                <div key={r.id} onClick={() => cargarHistorialRemolque(r.id)}
+                  style={{ background: selectedRemolque === r.id ? '#1a3d1a' : '#111', border: `1px solid ${selectedRemolque === r.id ? '#00ff41' : '#1a3d1a'}`, borderRadius: '10px', padding: '1rem', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ color: '#00ff41', fontWeight: 700, fontSize: '1.1rem' }}>#{r.numero}</span>
+                    <button onClick={(e) => { e.stopPropagation(); eliminarRemolque(r.id); }} style={{ background: 'none', border: 'none', color: '#ff4444', cursor: 'pointer', fontSize: '0.9rem' }}>✕</button>
+                  </div>
+                  {r.unidad_asignada ? (
+                    <div style={{ fontSize: '0.85rem', color: '#00ff41', background: '#002200', padding: '0.3rem 0.6rem', borderRadius: '6px', display: 'inline-block', alignSelf: 'flex-start' }}>
+                      🚛 {r.unidad_asignada}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '0.85rem', color: '#888', fontStyle: 'italic' }}>Sin asignar</div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {selectedRemolque && historialRemolque.length > 0 && (
+              <div style={{ background: '#111', border: '1px solid #1a3d1a', borderRadius: '10px', padding: '1rem' }}>
+                <h3 style={{ color: '#e0e0e0', margin: '0 0 0.75rem 0', fontSize: '0.95rem' }}>Historial de asignaciones</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {historialRemolque.map((h, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.6rem 0.75rem', background: h.activa ? '#002200' : '#1a1a1a', borderRadius: '8px', border: `1px solid ${h.activa ? '#00ff4133' : '#333'}` }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                        <span style={{ color: h.activa ? '#00ff41' : '#ccc', fontWeight: 600 }}>🚛 {h.vehicle_name || h.vehicle_id}</span>
+                        <span style={{ color: '#888', fontSize: '0.8rem' }}>
+                          {h.fecha_inicio ? `Inicio: ${parseFecha(h.fecha_inicio).toLocaleDateString('es-MX')}` : ''}
+                          {h.fecha_fin ? ` — Fin: ${parseFecha(h.fecha_fin).toLocaleDateString('es-MX')}` : h.activa ? ' — Activa' : ''}
+                        </span>
+                      </div>
+                      {h.activa && (
+                        <button onClick={() => desasignarRemolque(h.remolque_id)} style={{ background: '#ff444433', color: '#ff4444', border: '1px solid #ff444455', padding: '0.3rem 0.75rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>Desasignar</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'seguimiento' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0', height: '100%', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, padding: '0 0.5rem 0.75rem 0', borderBottom: '1px solid #1a3d1a' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                <h2 style={{ color: '#e0e0e0', margin: 0, fontSize: '1.1rem' }}>Seguimiento de Unidades</h2>
+                <span style={{ color: '#4a8a4a', fontSize: '0.8rem', background: '#0d1a0d', padding: '0.25rem 0.6rem', borderRadius: '12px', border: '1px solid #1a3d1a' }}>{seguimiento.length} unidades</span>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <div style={{ position: 'relative' }}>
+                  <span style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', color: '#4a8a4a', fontSize: '0.8rem' }}>🔍</span>
+                  <input
+                    placeholder="Buscar unidad, operador..."
+                    value={seguimientoFilter}
+                    onChange={e => setSeguimientoFilter(e.target.value)}
+                    style={{ padding: '0.45rem 0.75rem 0.45rem 1.8rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.8rem', background: '#ffffff', color: '#000', width: '200px' }}
+                  />
+                </div>
+                <button onClick={agregarFilaSeguimiento} style={{ padding: '0.45rem 0.85rem', background: '#00ff41', color: '#000', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem' }}>+ Fila</button>
+              </div>
+            </div>
+
+            <div style={{ flex: 1, overflow: 'auto', background: '#0a0a0a', borderRadius: '0 0 8px 8px' }}>
+              <table className="seg-table" style={{ width: 'max-content', minWidth: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
+                <thead>
+                  <tr style={{ background: '#0d1a0d', position: 'sticky', top: 0, zIndex: 2 }}>
+                    <th style={{ ...thStyle, width: '28px', textAlign: 'center' }}>#</th>
+                    <th style={{ ...thStyle, width: '90px' }}>UNIDAD</th>
+                    <th style={{ ...thStyle, width: '150px' }}>OPERADOR</th>
+                    <th style={{ ...thStyle, width: '80px' }}>REMOLQUE</th>
+                    <th style={{ ...thStyle, width: '90px' }}>RUTA</th>
+                    <th style={{ ...thStyle, width: '130px' }}>ORIGEN</th>
+                    <th style={{ ...thStyle, width: '130px' }}>DESTINO</th>
+                    <th style={{ ...thStyle, width: '90px' }}>CITA CARGA</th>
+                    <th style={{ ...thStyle, width: '90px' }}>CITA DESCARGA</th>
+                    <th style={{ ...thStyle, width: '90px' }}>LLEGADA</th>
+                    <th style={{ ...thStyle, width: '90px' }}>LIBERACION</th>
+                    <th style={{ ...thStyle, width: '110px' }}>ESTATUS</th>
+                    <th style={{ ...thStyle, width: '160px' }}>UBICACION</th>
+                    <th style={{ ...thStyle, width: '160px' }}>COMENT. CLIENTE</th>
+                    <th style={{ ...thStyle, width: '160px' }}>COMENT. MONITOREO</th>
+                    <th style={{ ...thStyle, width: '100px' }}>GRUPO</th>
+                    <th style={{ ...thStyle, width: '60px', textAlign: 'center' }}>ACC</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {seguimiento.filter(row => !seguimientoFilter || row.unidad?.toLowerCase().includes(seguimientoFilter.toLowerCase()) || row.operador?.toLowerCase().includes(seguimientoFilter.toLowerCase())).map((row, idx) => {
+                    const est = (row.estatus || '').toLowerCase();
+                    const isSiniestrado = est.includes('siniestr') || est === 'no disponible';
+                    const isEnRuta = est.includes('en ruta') || est.includes('circulando');
+                    const isEnProceso = est.includes('proceso') || est.includes('descarga') || est.includes('carga');
+                    const isDisponible = est === 'disponible';
+                    const isProgramado = est === 'programado';
+                    const isResguardo = est.includes('resguardo');
+                    const isActive = isEnRuta || isEnProceso;
+                    const rowBg = idx % 2 === 0 ? '#0d0d0d' : '#111111';
+
+                    return (
+                      <tr key={row.id} style={{ background: rowBg, borderBottom: '1px solid #1a1a1a' }}>
+                        <td style={{ ...tdStyle, textAlign: 'center', color: '#4a8a4a', fontSize: '0.7rem' }}>{idx + 1}</td>
+                        <td style={{ ...tdStyle, fontWeight: 700, color: '#00ff41', fontSize: '0.8rem' }}>
+                          <input value={row.unidad || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, unidad: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'unidad', e.target.value)} style={inputStyle} />
+                        </td>
+                        <td style={{ ...tdStyle, color: '#e0e0e0' }}>
+                          <input value={row.operador || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, operador: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'operador', e.target.value)} style={inputStyle} />
+                        </td>
+                        <td style={{ ...tdStyle, color: '#f59e0b', textAlign: 'center' }}>
+                          <input value={row.remolque || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, remolque: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'remolque', e.target.value)} style={{ ...inputStyle, textAlign: 'center' }} />
+                        </td>
+                        <td style={{ ...tdStyle, color: '#8b5cf6', fontWeight: 600, fontSize: '0.72rem' }}>
+                          <input value={row.ruta || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, ruta: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'ruta', e.target.value)} style={{ ...inputStyle, fontWeight: 600, color: '#8b5cf6' }} />
+                        </td>
+                        <td style={tdStyle}>
+                          <input value={row.origen || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, origen: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'origen', e.target.value)} style={inputStyle} />
+                        </td>
+                        <td style={tdStyle}>
+                          <input value={row.destino || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, destino: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'destino', e.target.value)} style={inputStyle} />
+                        </td>
+                        <td style={{ ...tdStyle, color: '#60a5fa', fontSize: '0.72rem' }}>
+                          <input value={row.cita_carga || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, cita_carga: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'cita_carga', e.target.value)} style={{ ...inputStyle, color: '#60a5fa' }} />
+                        </td>
+                        <td style={{ ...tdStyle, color: '#60a5fa', fontSize: '0.72rem' }}>
+                          <input value={row.cita_descarga || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, cita_descarga: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'cita_descarga', e.target.value)} style={{ ...inputStyle, color: '#60a5fa' }} />
+                        </td>
+                        <td style={{ ...tdStyle, color: '#10b981', fontSize: '0.72rem' }}>
+                          <input value={row.hora_llegada || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, hora_llegada: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'hora_llegada', e.target.value)} style={{ ...inputStyle, color: '#10b981' }} />
+                        </td>
+                        <td style={{ ...tdStyle, color: '#10b981', fontSize: '0.72rem' }}>
+                          <input value={row.hora_liberacion || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, hora_liberacion: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'hora_liberacion', e.target.value)} style={{ ...inputStyle, color: '#10b981' }} />
+                        </td>
+                        <td style={tdStyle}>
+                          <div style={{
+                            display: 'inline-block', padding: '3px 10px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: 700, whiteSpace: 'nowrap',
+                            background: isSiniestrado ? '#3a1111' : isEnRuta ? '#003311' : isEnProceso ? '#332200' : isResguardo ? '#2a1a00' : isProgramado ? '#0d1a33' : isDisponible ? '#111' : '#1a1a1a',
+                            color: isSiniestrado ? '#ef4444' : isEnRuta ? '#00ff41' : isEnProceso ? '#f59e0b' : isResguardo ? '#f97316' : isProgramado ? '#60a5fa' : isDisponible ? '#6b7280' : '#888',
+                            border: `1px solid ${isSiniestrado ? '#ef444433' : isEnRuta ? '#00ff4133' : isEnProceso ? '#f59e0b33' : isResguardo ? '#f9731633' : isProgramado ? '#60a5fa33' : '#333333'}`
+                          }}>
+                            <input value={row.estatus || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, estatus: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'estatus', e.target.value)} style={{ ...inputStyle, fontWeight: 700, color: isSiniestrado ? '#ef4444' : isEnRuta ? '#00ff41' : isEnProceso ? '#f59e0b' : isResguardo ? '#f97316' : isProgramado ? '#60a5fa' : isDisponible ? '#6b7280' : '#888', background: 'transparent', textAlign: 'center' }} />
+                          </div>
+                        </td>
+                        <td style={tdStyle}>
+                          <input value={row.ubicacion_samsara || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, ubicacion_samsara: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'ubicacion_samsara', e.target.value)} style={{ ...inputStyle, color: '#94a3b8' }} />
+                        </td>
+                        <td style={tdStyle}>
+                          <input value={row.comentarios_cliente || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, comentarios_cliente: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'comentarios_cliente', e.target.value)} style={{ ...inputStyle, color: '#fbbf24', fontStyle: 'italic' }} />
+                        </td>
+                        <td style={tdStyle}>
+                          <input value={row.comentarios_monitoreo || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, comentarios_monitoreo: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'comentarios_monitoreo', e.target.value)} style={{ ...inputStyle, color: '#a78bfa' }} />
+                        </td>
+                        <td style={{ ...tdStyle, color: '#06b6d4', fontWeight: 600, fontSize: '0.72rem' }}>
+                          <input value={row.grupo || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, grupo: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'grupo', e.target.value)} style={{ ...inputStyle, color: '#06b6d4', fontWeight: 600 }} />
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: 'center', whiteSpace: 'nowrap' }}>
+                          <button onClick={() => cargarHistorialSeguimiento(row.id)} style={{ background: 'none', border: '1px solid #1a3d1a', color: '#4a8a4a', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem', padding: '2px 5px', marginRight: '3px' }}>📜</button>
+                          <button onClick={() => eliminarSeguimiento(row.id)} style={{ background: 'none', border: '1px solid #3a1a1a', color: '#ef4444', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem', padding: '2px 5px' }}>✕</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {selectedSeguimiento && historialSeguimiento.length > 0 && (
+              <div style={{ background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '8px', padding: '0.85rem', maxHeight: '200px', overflow: 'auto', flexShrink: 0, marginTop: '0.5rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <h3 style={{ color: '#e0e0e0', margin: 0, fontSize: '0.85rem' }}>
+                    📜 Historial — <span style={{ color: '#00ff41' }}>{seguimiento.find(s => s.id === selectedSeguimiento)?.unidad}</span>
+                  </h3>
+                  <button onClick={() => { setSelectedSeguimiento(null); setHistorialSeguimiento([]); }} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: '0.8rem' }}>✕</button>
+                </div>
+                {historialSeguimiento.map((h, i) => (
+                  <div key={i} style={{ padding: '0.35rem 0.6rem', background: i % 2 === 0 ? '#111' : '#0d0d0d', borderRadius: '4px', marginBottom: '2px', fontSize: '0.75rem', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                    <span style={{ color: '#555', minWidth: '110px', fontSize: '0.7rem' }}>{h.fecha_cambio}</span>
+                    <span style={{ color: '#00ff41', fontWeight: 600, minWidth: '110px', textTransform: 'uppercase', fontSize: '0.7rem' }}>{h.campo}</span>
+                    <span style={{ color: '#ef4444', textDecoration: 'line-through', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.valor_anterior || '—'}</span>
+                    <span style={{ color: '#444' }}>→</span>
+                    <span style={{ color: '#10b981', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.valor_nuevo || '—'}</span>
+                    <span style={{ color: '#444', marginLeft: 'auto', fontSize: '0.7rem' }}>{h.usuario}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {activeTab === 'geocercas' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <div>
-                <h2 style={{ margin: 0, fontSize: '1.5rem' }}>Geocercas</h2>
-                <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>{geofences.length} geocercas configuradas</p>
+                <h2 style={{ margin: 0, fontSize: '1.5rem' }}>Catálogo de Geocercas</h2>
+                <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>{allGeofences.filter(g => g.activa).length} activas de {allGeofences.length} totales</p>
               </div>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <button onClick={ejecutarCheckGeofences} style={s.button('#f59e0b')}>Verificar Geocercas</button>
-                <button onClick={ejecutarCheckFuel} style={s.button('#ef4444')}>Verificar Diesel</button>
+                <button onClick={() => toggleGeofencesBulk(geofences.map(g => g.id), 1)} style={s.button('#10b981')}>Activar Todas</button>
+                <button onClick={() => toggleGeofencesBulk(geofences.map(g => g.id), 0)} style={s.button('#ef4444')}>Desactivar Todas</button>
                 <button onClick={loadAll} style={s.button()}>Actualizar</button>
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+              {geofenceCategories.map(cat => {
+                const count = cat.key === 'todas' ? allGeofences.length : allGeofences.filter(g => g.categoria === cat.key).length;
+                const activeCount = cat.key === 'todas' ? allGeofences.filter(g => g.activa).length : allGeofences.filter(g => g.categoria === cat.key && g.activa).length;
+                return (
+                  <button key={cat.key} onClick={() => setGeofenceCat(cat.key)}
+                    style={{ padding: '0.5rem 1rem', borderRadius: '8px', border: geofenceCat === cat.key ? '2px solid #00ff41' : '1px solid #1a3d1a', background: geofenceCat === cat.key ? '#0d2b0d' : '#0a150a', color: geofenceCat === cat.key ? '#00ff41' : '#6a9b6a', cursor: 'pointer', fontSize: '0.85rem', fontWeight: geofenceCat === cat.key ? '600' : '400', transition: 'all 0.2s' }}>
+                    {cat.icon} {cat.label} <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>({activeCount}/{count})</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '350px 1fr', gap: '1.5rem' }}>
               <div style={s.card}>
                 <h3 style={{ marginTop: 0, marginBottom: '1rem', fontSize: '1rem' }}>Nueva Geocerca</h3>
                 <form onSubmit={crearGeofence}>
@@ -953,34 +1996,41 @@ export default function Home() {
               </div>
 
               <div style={{ ...s.card, overflow: 'auto', maxHeight: 'calc(100vh - 200px)' }}>
-                <h3 style={{ marginTop: 0, marginBottom: '1rem', fontSize: '1rem' }}>Geocercas Activas</h3>
-                {geofences.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '2rem', color: '#4a8a4a' }}>
-                    <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>⭕</div>
-                    <p>No hay geocercas configuradas</p>
-                  </div>
-                ) : geofences.map(g => (
-                  <div key={g.id} style={{ padding: '0.75rem', borderBottom: '1px solid #0d1f0d', opacity: g.activa ? 1 : 0.5 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ fontWeight: '600', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <span style={{ width: '12px', height: '12px', borderRadius: '50%', background: g.color, display: 'inline-block' }}></span>
-                          {g.nombre}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '0.75rem' }}>
+                  {allGeofences
+                    .filter(g => geofenceCat === 'todas' || g.categoria === geofenceCat)
+                    .sort((a, b) => (b.activa - a.activa) || a.nombre.localeCompare(b.nombre))
+                    .map(g => (
+                    <div key={g.id} style={{ padding: '0.75rem', border: g.activa ? '1px solid #1a3d1a' : '1px solid #0d120d', borderRadius: '10px', background: g.activa ? '#0a1a0a' : '#060d06', opacity: g.activa ? 1 : 0.55, transition: 'all 0.2s' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: '600', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: g.color, display: 'inline-block', boxShadow: g.activa ? `0 0 6px ${g.color}` : 'none' }}></span>
+                            {g.nombre}
+                          </div>
+                          <div style={{ fontSize: '0.7rem', color: '#4a8a4a', marginTop: '0.2rem' }}>
+                            {g.latitud.toFixed(5)}, {g.longitud.toFixed(5)} · {g.radio_metros}m
+                          </div>
+                          {g.descripcion && <div style={{ fontSize: '0.78rem', color: '#6a9b6a', marginTop: '0.25rem' }}>{g.descripcion}</div>}
+                          <div style={{ fontSize: '0.65rem', color: g.source === 'samsara' ? '#8b5cf6' : '#3a6a3a', marginTop: '0.2rem', textTransform: 'uppercase' }}>{g.source === 'samsara' ? 'samsara' : g.categoria || 'custom'}</div>
                         </div>
-                        <div style={{ fontSize: '0.75rem', color: '#4a8a4a', marginTop: '0.25rem' }}>
-                          {g.latitud.toFixed(5)}, {g.longitud.toFixed(5)} · Radio: {g.radio_metros}m
+                        {g.source !== 'samsara' ? (
+                        <div style={{ display: 'flex', gap: '0.35rem', marginLeft: '0.5rem', flexShrink: 0 }}>
+                          <button onClick={() => toggleGeofence(g.id, g.activa)}
+                            style={{ width: '36px', height: '20px', borderRadius: '10px', border: 'none', cursor: 'pointer', position: 'relative', background: g.activa ? '#10b981' : '#374151', transition: 'background 0.2s' }}>
+                            <div style={{ width: '16px', height: '16px', borderRadius: '50%', background: '#fff', position: 'absolute', top: '2px', left: g.activa ? '18px' : '2px', transition: 'left 0.2s' }}></div>
+                          </button>
+                          <button onClick={() => eliminarGeofence(g.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.8rem', padding: '2px 4px' }}>✕</button>
                         </div>
-                        {g.descripcion && <div style={{ fontSize: '0.8rem', color: '#6a9b6a', marginTop: '0.25rem' }}>{g.descripcion}</div>}
-                      </div>
-                      <div style={{ display: 'flex', gap: '0.5rem' }}>
-                        <button onClick={() => toggleGeofence(g.id, g.activa)} style={{ ...s.button(g.activa ? '#f59e0b' : '#10b981'), padding: '0.3rem 0.6rem', fontSize: '0.75rem' }}>
-                          {g.activa ? 'Desactivar' : 'Activar'}
-                        </button>
-                        <button onClick={() => eliminarGeofence(g.id)} style={{ ...s.button('#ef4444'), padding: '0.3rem 0.6rem', fontSize: '0.75rem' }}>X</button>
+                        ) : (
+                        <div style={{ marginLeft: '0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.65rem', color: '#8b5cf6', padding: '2px 8px', borderRadius: '4px', background: 'rgba(139,92,246,0.15)' }}>Sync Samsara</span>
+                        </div>
+                        )}
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -1006,7 +2056,7 @@ export default function Home() {
                             {ev.tipo === 'entrada' ? '→ Entró' : '← Salió'}
                           </span>
                         </td>
-                        <td style={s.td}>{new Date(ev.created_at).toLocaleString()}</td>
+                        <td style={s.td}>{parseFecha(ev.created_at)?.toLocaleString()}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1076,14 +2126,14 @@ export default function Home() {
                     <div style={{ marginBottom: '0.75rem', padding: '0.6rem', background: '#111', borderRadius: '8px', border: '1px solid #1a3d1a', fontSize: '0.8rem', color: '#6a9b6a' }}>
                       <strong>{routeHistory.length}</strong> puntos registrados<br/>
                       <span style={{ color: '#4a8a4a' }}>
-                        {new Date(routeHistory[0].recorded_at).toLocaleTimeString()} - {new Date(routeHistory[routeHistory.length - 1].recorded_at).toLocaleTimeString()}
+                        {parseFecha(routeHistory[0].recorded_at)?.toLocaleTimeString()} - {parseFecha(routeHistory[routeHistory.length - 1].recorded_at)?.toLocaleTimeString()}
                       </span>
                     </div>
                     <div style={{ maxHeight: 'calc(100vh - 480px)', overflow: 'auto' }}>
                       {routeHistory.map((p, i) => (
                         <div key={p.id} style={{ padding: '0.5rem 0', borderBottom: '1px solid #0d1f0d', fontSize: '0.8rem' }}>
                           <div style={{ color: '#c0c0c0' }}>
-                            <span style={{ color: '#00ff41', fontWeight: '600' }}>{new Date(p.recorded_at).toLocaleTimeString()}</span>
+                            <span style={{ color: '#00ff41', fontWeight: '600' }}>{parseFecha(p.recorded_at)?.toLocaleTimeString()}</span>
                             {' · '}{Math.round(p.speed || 0)} mph
                           </div>
                           <div style={{ color: '#4a8a4a', fontSize: '0.75rem' }}>{p.location || 'Sin dirección'}</div>
@@ -1128,6 +2178,7 @@ export default function Home() {
                   <input style={s.input} type="date" value={filtroReporte.fecha_fin} onChange={(e) => setFiltroReporte({ ...filtroReporte, fecha_fin: e.target.value })} />
                 </div>
                 <button onClick={cargarReporte} style={s.button('#10b981')}>Generar</button>
+                {reportes.length > 0 && <button onClick={generarPDF} style={s.button('#ef4444')}>Descargar PDF</button>}
               </div>
             </div>
             <div style={s.card}>
@@ -1165,6 +2216,95 @@ export default function Home() {
           </div>
         )}
       </main>
+
+      {showZoneModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}
+          onClick={() => setShowZoneModal(false)}>
+          <div style={{ background: '#0d0d0d', borderRadius: '16px', width: '420px', maxHeight: '85vh', overflow: 'auto', boxShadow: '0 25px 50px rgba(0,0,0,0.5), 0 0 30px rgba(248,113,113,0.1)', border: '1px solid #3d1a1a' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ padding: '1.5rem', borderBottom: '1px solid #3d1a1a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#e0e0e0' }}>⚠️ Nueva Zona de Riesgo</h3>
+              <button onClick={() => setShowZoneModal(false)} style={{ background: 'none', border: 'none', color: '#6a9b6a', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <form onSubmit={crearZonaRiesgo} style={{ padding: '1.5rem' }}>
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={s.label}>Nombre *</label>
+                <input style={s.input} value={newZone.name} onChange={e => setNewZone({ ...newZone, name: e.target.value })} required placeholder="Ej: Carretera Peligrosa" />
+              </div>
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={s.label}>Descripción</label>
+                <textarea style={{ ...s.input, minHeight: '60px', resize: 'vertical' }} value={newZone.description} onChange={e => setNewZone({ ...newZone, description: e.target.value })} placeholder="Describe el tipo de peligro..." />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+                <div>
+                  <label style={s.label}>Latitud</label>
+                  <input style={s.input} value={newZone.lat} readOnly placeholder="Haz clic en el mapa" />
+                </div>
+                <div>
+                  <label style={s.label}>Longitud</label>
+                  <input style={s.input} value={newZone.lng} readOnly placeholder="Haz clic en el mapa" />
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1.5rem' }}>
+                <div>
+                  <label style={s.label}>Severidad</label>
+                  <select style={s.select} value={newZone.severity} onChange={e => setNewZone({ ...newZone, severity: e.target.value })}>
+                    <option value="critical">Crítica</option>
+                    <option value="high">Alta</option>
+                    <option value="medium">Media</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={s.label}>Radio (m)</label>
+                  <input style={s.input} type="number" min="100" max="200000" value={newZone.radius} onChange={e => setNewZone({ ...newZone, radius: e.target.value })} />
+                </div>
+              </div>
+              <button type="submit" disabled={!newZone.lat || !newZone.lng} style={{ width: '100%', padding: '0.7rem', background: (!newZone.lat || !newZone.lng) ? '#333' : '#f87171', color: '#fff', border: 'none', borderRadius: '8px', cursor: (!newZone.lat || !newZone.lng) ? 'not-allowed' : 'pointer', fontSize: '0.9rem', fontWeight: 600 }}>
+                ⚠️ Crear Zona de Riesgo
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showUnidadModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}
+          onClick={() => setShowUnidadModal(false)}>
+          <div style={{ background: '#0d0d0d', borderRadius: '16px', width: '440px', maxHeight: '85vh', overflow: 'auto', boxShadow: '0 25px 50px rgba(0,0,0,0.5), 0 0 30px rgba(0,255,65,0.1)', border: '1px solid #1a3d1a' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ padding: '1.5rem', borderBottom: '1px solid #1a3d1a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#e0e0e0' }}>{editUnidad ? '✏️ Editar Unidad' : '➕ Nueva Unidad'}</h3>
+              <button onClick={() => setShowUnidadModal(false)} style={{ background: 'none', border: 'none', color: '#6a9b6a', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <form onSubmit={guardarUnidad} style={{ padding: '1.5rem' }}>
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={s.label}>Nombre *</label>
+                <input style={s.input} value={formUnidad.nombre} onChange={e => setFormUnidad({ ...formUnidad, nombre: e.target.value })} required placeholder="Ej: GERS-001" />
+              </div>
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={s.label}>Estatus</label>
+                <select style={s.select} value={formUnidad.estatus} onChange={e => setFormUnidad({ ...formUnidad, estatus: e.target.value })}>
+                  <option value="Activa">Activa</option>
+                  <option value="No disponible">No disponible</option>
+                  <option value="Siniestrada">Siniestrada</option>
+                  <option value="En mantenimiento">En mantenimiento</option>
+                </select>
+              </div>
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={s.label}>Notas</label>
+                <textarea style={{ ...s.input, minHeight: '70px', resize: 'vertical' }} value={formUnidad.notas} onChange={e => setFormUnidad({ ...formUnidad, notas: e.target.value })} placeholder="Descripción, detalles..." />
+              </div>
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={s.label}>ID Samsara (opcional)</label>
+                <input style={s.input} value={formUnidad.samsara_id} onChange={e => setFormUnidad({ ...formUnidad, samsara_id: e.target.value })} placeholder="Vincular con ID de Samsara" />
+              </div>
+              <button type="submit" style={{ width: '100%', padding: '0.7rem', background: '#00ff41', color: '#000', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600 }}>
+                {editUnidad ? 'Guardar Cambios' : 'Crear Unidad'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {selectedVehicle && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
@@ -1204,20 +2344,107 @@ export default function Home() {
 
               <div style={{ background: '#1a1a1a', borderRadius: '10px', padding: '1rem', marginBottom: '1.5rem' }}>
                 <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.5rem' }}>Operador Asignado</div>
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <select
+                    value={operadores[String(selectedVehicle.id)]?.nombre || ''}
+                    onChange={e => {
+                      const nombre = e.target.value;
+                      const driver = samsaraDrivers.find(d => d.name === nombre);
+                      setOperadores(prev => ({ ...prev, [String(selectedVehicle.id)]: { nombre, telefono: driver?.phone || prev[String(selectedVehicle.id)]?.telefono || '' } }));
+                    }}
+                    style={{ flex: 1, padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem', background: '#ffffff', color: '#000000' }}
+                  >
+                    <option value="">Seleccionar operador...</option>
+                    {samsaraDrivers.filter(d => d.status === 'active').sort((a, b) => a.name.localeCompare(b.name)).map(d => (
+                      <option key={d.id} value={d.name}>{d.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
                   <input
-                    placeholder="Nombre del operador..."
-                    value={operadores[String(selectedVehicle.id)] || ''}
-                    onChange={e => setOperadores(prev => ({ ...prev, [String(selectedVehicle.id)]: e.target.value }))}
-                    style={{ flex: 1, padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem' }}
+                    placeholder="Telefono WhatsApp (521XXXXXXXXXX)"
+                    value={operadores[String(selectedVehicle.id)]?.telefono || ''}
+                    onChange={e => setOperadores(prev => ({ ...prev, [String(selectedVehicle.id)]: { ...(prev[String(selectedVehicle.id)] || {}), telefono: e.target.value } }))}
+                    style={{ flex: 1, padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem', background: '#ffffff', color: '#000000' }}
                   />
                   <button
-                    onClick={() => guardarOperador(selectedVehicle.id, selectedVehicle.name, operadores[String(selectedVehicle.id)] || '')}
+                    onClick={() => guardarOperador(selectedVehicle.id, selectedVehicle.name, operadores[String(selectedVehicle.id)]?.nombre || '', operadores[String(selectedVehicle.id)]?.telefono || '')}
                     style={{ padding: '0.55rem 0.75rem', background: '#10b981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600', whiteSpace: 'nowrap' }}>
                     Asignar
                   </button>
                 </div>
               </div>
+
+              <div style={{ background: '#1a1a1a', borderRadius: '10px', padding: '1rem', marginBottom: '1.5rem' }}>
+                <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.5rem' }}>Remolque Asignado</div>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <select
+                    value={remolques.find(r => r.vehicle_id_asignado === String(selectedVehicle.id))?.id || ''}
+                    onChange={e => {
+                      const remolqueId = e.target.value;
+                      const vName = selectedVehicle.name;
+                      if (remolqueId) {
+                        asignarRemolque(remolqueId, String(selectedVehicle.id), vName);
+                      } else {
+                        const actual = remolques.find(r => r.vehicle_id_asignado === String(selectedVehicle.id));
+                        if (actual) desasignarRemolque(actual.id);
+                      }
+                    }}
+                    style={{ flex: 1, padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem', background: '#ffffff', color: '#000000' }}
+                  >
+                    <option value="">Sin remolque</option>
+                    {remolques.map(r => (
+                      <option key={r.id} value={r.id} disabled={r.vehicle_id_asignado && r.vehicle_id_asignado !== String(selectedVehicle.id)}>#{r.numero}{r.unidad_asignada ? ` (${r.unidad_asignada})` : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {(() => {
+                const viajesVehiculo = viajes.filter(v => String(v.vehicle_id) === String(selectedVehicle.id)).sort((a, b) => {
+                  const ordenEstado = { en_transito: 0, en_curso: 0, en_resguardo: 1, programado: 2, completado: 3, cancelado: 4 };
+                  const oe = (ordenEstado[a.estado] ?? 4) - (ordenEstado[b.estado] ?? 4);
+                  if (oe !== 0) return oe;
+                  const fa = a.fecha_inicio ? new Date(parseFecha(a.fecha_inicio)).getTime() : 0;
+                  const fb = b.fecha_inicio ? new Date(parseFecha(b.fecha_inicio)).getTime() : 0;
+                  return fa - fb;
+                });
+                const viajeActivo = viajesVehiculo.find(v => v.estado === 'en_transito' || v.estado === 'en_curso' || v.estado === 'enCurso' || v.estado === 'en_resguardo');
+                const viajesProgramados = viajesVehiculo.filter(v => v.estado === 'programado' || v.estado === 'Programado');
+                if (!viajeActivo && viajesProgramados.length === 0) return null;
+                return (
+                  <div style={{ background: '#1a1a1a', borderRadius: '10px', padding: '1rem', marginBottom: '1.5rem' }}>
+                    <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.75rem' }}>Viajes</div>
+                    {viajeActivo && (
+                      <div style={{ padding: '0.75rem', background: viajeActivo.estado === 'en_resguardo' ? '#2a1a0d' : '#0d2e0d', borderRadius: '8px', border: `1px solid ${viajeActivo.estado === 'en_resguardo' ? '#f97316' : '#10b981'}`, marginBottom: viajesProgramados.length > 0 ? '0.75rem' : 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
+                          <span style={{ fontSize: '0.65rem', background: viajeActivo.estado === 'en_resguardo' ? '#f97316' : '#10b981', color: '#000', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: '700', textTransform: 'uppercase' }}>{viajeActivo.estado === 'en_resguardo' ? 'En Resguardo' : 'En Curso'}</span>
+                        </div>
+                        <div style={{ fontSize: '0.85rem', color: '#e0e0e0' }}>
+                          <strong>{viajeActivo.origen}</strong> → <strong>{viajeActivo.destino}</strong>
+                        </div>
+                        {viajeActivo.conductor && <div style={{ fontSize: '0.75rem', color: '#6a9b6a', marginTop: '0.25rem' }}>Conductor: {viajeActivo.conductor}</div>}
+                        <div style={{ fontSize: '0.7rem', color: '#4a8a4a', marginTop: '0.25rem' }}>Inicio: {parseFecha(viajeActivo.fecha_inicio).toLocaleString('es-MX')}</div>
+                      </div>
+                    )}
+                    {viajesProgramados.map(v => (
+                      <div key={v.id} style={{ padding: '0.6rem 0.75rem', background: '#111', borderRadius: '8px', border: '1px solid #f59e0b33', marginBottom: '0.5rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.3rem' }}>
+                          <span style={{ fontSize: '0.65rem', background: '#f59e0b', color: '#000', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: '700', textTransform: 'uppercase' }}>Programado</span>
+                          <span style={{ fontSize: '0.7rem', color: '#6a9b6a' }}>{parseFecha(v.fecha_inicio).toLocaleDateString('es-MX')}</span>
+                        </div>
+                        <div style={{ fontSize: '0.82rem', color: '#e0e0e0' }}>
+                          <strong>{v.origen}</strong> → <strong>{v.destino}</strong>
+                        </div>
+                        {v.conductor && <div style={{ fontSize: '0.72rem', color: '#6a9b6a', marginTop: '0.15rem' }}>Conductor: {v.conductor}</div>}
+                        <div style={{ fontSize: '0.7rem', color: '#4a8a4a', marginTop: '0.15rem' }}>
+                          {parseFecha(v.fecha_inicio).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })} - {parseFecha(v.fecha_fin).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
 
               {selectedVehicle.location && (
                 <div style={{ background: '#1a1a1a', borderRadius: '10px', padding: '1rem', marginBottom: '1.5rem' }}>
@@ -1238,12 +2465,6 @@ export default function Home() {
                         <div style={{ fontSize: '1rem', fontWeight: '600' }}>hace {selectedVehicle.lastSeen}min</div>
                       </div>
                     )}
-                    {selectedVehicle.odometerMeters && (
-                      <div>
-                        <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Kilometraje</div>
-                        <div style={{ fontSize: '1rem', fontWeight: '600' }}>{(selectedVehicle.odometerMeters / 1000).toFixed(0)} km</div>
-                      </div>
-                    )}
                   </div>
                 </div>
               )}
@@ -1252,23 +2473,46 @@ export default function Home() {
                 <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem', color: '#e0e0e0' }}>Agregar Comentario</h3>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
                   <input placeholder="Monitorista" value={comentarioRapido.autor} onChange={e => setComentarioRapido({...comentarioRapido, autor: e.target.value})}
-                    style={{ padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem' }} />
+                    style={{ padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem', background: '#ffffff', color: '#000000' }} />
                   <select value={comentarioRapido.tipo} onChange={e => setComentarioRapido({...comentarioRapido, tipo: e.target.value})}
-                    style={{ padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem' }}>
+                    style={{ padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem', background: '#ffffff', color: '#000000' }}>
                     <option value="seguimiento">Seguimiento</option>
                     <option value="mantenimiento">Mantenimiento</option>
                     <option value="alerta">Alerta</option>
                     <option value="general">General</option>
                   </select>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                  <input placeholder="ETA (hora estimada llegada)" value={comentarioRapido.titulo} onChange={e => setComentarioRapido({...comentarioRapido, titulo: e.target.value})}
-                    style={{ padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem' }} />
-                  <input placeholder="Kilometraje" type="number" value={comentarioRapido.kilometraje} onChange={e => setComentarioRapido({...comentarioRapido, kilometraje: e.target.value})}
-                    style={{ padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem' }} />
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <label style={{ ...s.label, display: 'block', marginBottom: '0.3rem' }}>Destino</label>
+                  <input placeholder="Escribe el destino para calcular ETA..." value={destinoInput} onChange={e => setDestinoInput(e.target.value)}
+                    style={{ width: '100%', padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem', background: '#ffffff', color: '#000000' }} />
                 </div>
+                {calculandoEta && (
+                  <div style={{ padding: '0.6rem 0.75rem', background: '#1a1a1a', borderRadius: '8px', marginBottom: '0.75rem', fontSize: '0.85rem', color: '#f59e0b', border: '1px solid #f59e0b33' }}>
+                    Calculando ruta...
+                  </div>
+                )}
+                {etaData && !calculandoEta && (
+                  <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', marginBottom: '0.75rem', border: '1px solid #10b98133' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-around', textAlign: 'center' }}>
+                      <div>
+                        <div style={{ fontSize: '0.65rem', color: '#4a8a4a', textTransform: 'uppercase' }}>ETA</div>
+                        <div style={{ fontSize: '1.1rem', fontWeight: '700', color: '#10b981' }}>{etaData.horaLlegada}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '0.65rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Tiempo</div>
+                        <div style={{ fontSize: '1rem', fontWeight: '600' }}>{etaData.duracion}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '0.65rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Distancia</div>
+                        <div style={{ fontSize: '1rem', fontWeight: '600' }}>{etaData.distancia}</div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '0.7rem', color: '#4a8a4a', marginTop: '0.5rem', textAlign: 'center' }}>{etaData.destino}</div>
+                  </div>
+                )}
                 <textarea placeholder="Escribe el mensaje de seguimiento..." value={comentarioRapido.contenido} onChange={e => setComentarioRapido({...comentarioRapido, contenido: e.target.value})}
-                  style={{ width: '100%', padding: '0.6rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem', minHeight: '80px', resize: 'vertical', boxSizing: 'border-box' }} />
+                  style={{ width: '100%', padding: '0.6rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem', minHeight: '80px', resize: 'vertical', boxSizing: 'border-box', background: '#ffffff', color: '#000000' }} />
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.75rem' }}>
                   <button onClick={guardarComentarioRapido}
                     style={{ background: '#3b82f6', color: 'white', border: 'none', padding: '0.55rem 1.25rem', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600' }}>
