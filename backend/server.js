@@ -331,9 +331,11 @@ db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS remolques (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     numero TEXT NOT NULL UNIQUE,
+    categoria TEXT DEFAULT 'Caja Seca',
     status TEXT DEFAULT 'disponible',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+  db.run("ALTER TABLE remolques ADD COLUMN categoria TEXT DEFAULT 'Caja Seca'", [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS remolque_asignaciones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -647,6 +649,17 @@ app.post('/api/turnos/entregar', async (req, res) => {
   } catch (err) {
     console.error('Error al generar entrega de turno:', err);
     res.status(500).json({ error: 'Error al generar entrega de turno' });
+  }
+});
+
+app.post('/api/turnos/resumen', async (req, res) => {
+  try {
+    const { horas = 8, turno = '', observaciones = '' } = req.body || {};
+    const summary = await getTurnoSummary(horas, turno, observaciones);
+    res.json({ summary });
+  } catch (err) {
+    console.error('Error al generar resumen de turno:', err);
+    res.status(500).json({ error: 'Error al generar resumen de turno' });
   }
 });
 
@@ -1150,7 +1163,7 @@ app.get('/api/pendientes/:id/comentarios', (req, res) => {
 });
 
 app.post('/api/pendientes/:id/comentarios', (req, res) => {
-  const { autor, contenido } = req.body;
+  const { contenido } = req.body;
   if (!contenido) return res.status(400).json({ error: 'Contenido es requerido' });
   const userName = actorFromReq(req);
   const userId = req.user?.id || null;
@@ -1189,7 +1202,7 @@ app.get('/api/comentarios', (req, res) => {
 });
 
 app.post('/api/comentarios', (req, res) => {
-  const { vehicle_id, vehicle_name, autor, tipo, titulo, contenido, kilometraje } = req.body;
+  const { vehicle_id, vehicle_name, tipo, titulo, contenido, kilometraje } = req.body;
   const userName = actorFromReq(req);
   const userId = req.user?.id || null;
   db.run(
@@ -1223,7 +1236,7 @@ app.delete('/api/comentarios/:id', (req, res) => {
 
 app.get('/api/reportes/seguimiento', (req, res) => {
   const { vehicle_id, fecha_inicio, fecha_fin } = req.query;
-  let query = 'SELECT * FROM comentarios WHERE 1=1';
+  let query = "SELECT * FROM comentarios WHERE tipo IN ('seguimiento', 'incidente', 'mantenimiento')";
   const params = [];
   if (vehicle_id) {
     query += ' AND vehicle_id = ?';
@@ -1418,9 +1431,9 @@ app.get('/api/remolques', (req, res) => {
 });
 
 app.post('/api/remolques', (req, res) => {
-  const { numero } = req.body;
+  const { numero, categoria = 'Caja Seca' } = req.body;
   if (!numero) return res.status(400).json({ error: 'numero es requerido' });
-  db.run('INSERT INTO remolques (numero) VALUES (?)', [numero.trim()], function (err) {
+  db.run('INSERT INTO remolques (numero, categoria) VALUES (?, ?)', [numero.trim(), categoria || 'Caja Seca'], function (err) {
     if (err) {
       if (err.message.includes('UNIQUE')) return res.status(400).json({ error: 'Este número de remolque ya existe' });
       return res.status(500).json({ error: err.message });

@@ -38,18 +38,13 @@ export default function Home() {
   const [filtroReporte, setFiltroReporte] = useState({ tipo: 'pendientes', fecha_inicio: '', fecha_fin: '', vehicle_id: '' });
   const [formViaje, setFormViaje] = useState({ vehicle_id: '', vehicle_name: '', origen: '', destino: '', conductor: '', telefono: '', fecha_inicio: '', fecha_fin: '', notas: '', remolque: '' });
   const [vehicleFilter, setVehicleFilter] = useState('');
-  const [nuevoComentario, setNuevoComentario] = useState({ vehicle_id: '', vehicle_name: '', autor: '', tipo: 'seguimiento', titulo: '', contenido: '', estatus: '', remolque: '', grupo: '', origen: '', destino: '' });
-  const [clientes, setClientes] = useState([]);
-  const [clienteSeleccionado, setClienteSeleccionado] = useState('');
-  const [showClienteMsg, setShowClienteMsg] = useState(false);
-  const [msgFormato, setMsgFormato] = useState('whatsapp');
+  const [nuevoComentario, setNuevoComentario] = useState({ vehicle_id: '', vehicle_name: '', tipo: 'seguimiento', titulo: '', contenido: '', estatus: '', remolque: '', grupo: '', origen: '', destino: '' });
   const [remolques, setRemolques] = useState([]);
+  const [showRemolqueModal, setShowRemolqueModal] = useState(false);
+  const [formRemolque, setFormRemolque] = useState({ numero: '', categoria: 'Caja Seca' });
   const [historialRemolque, setHistorialRemolque] = useState([]);
   const [selectedRemolque, setSelectedRemolque] = useState(null);
   const [seguimiento, setSeguimiento] = useState([]);
-  const [seguimientoEdit, setSeguimientoEdit] = useState({});
-  const [historialSeguimiento, setHistorialSeguimiento] = useState([]);
-  const [selectedSeguimiento, setSelectedSeguimiento] = useState(null);
   const [seguimientoFilter, setSeguimientoFilter] = useState('');
   const [showMensajeModal, setShowMensajeModal] = useState(false);
   const [mensajeCliente, setMensajeCliente] = useState('');
@@ -58,6 +53,7 @@ export default function Home() {
   const [turnoForm, setTurnoForm] = useState({ turno: '', horas: 8, observaciones: '' });
   const [turnoSummary, setTurnoSummary] = useState(null);
   const [turnoLoading, setTurnoLoading] = useState(false);
+  const [turnoSaving, setTurnoSaving] = useState(false);
 
   const generarMensajeSeguimiento = (grupo) => {
     const filas = seguimiento.filter(row => row.grupo === grupo);
@@ -94,8 +90,9 @@ export default function Home() {
   };
 
   const gruposUnicos = [...new Set(seguimiento.map(row => row.grupo).filter(Boolean))];
+  const seguimientoNotas = comentarios.filter(c => ['seguimiento', 'incidente', 'mantenimiento'].includes((c.tipo || '').toLowerCase()));
   const [selectedVehicle, setSelectedVehicle] = useState(null);
-  const [comentarioRapido, setComentarioRapido] = useState({ autor: '', tipo: 'seguimiento', titulo: '', contenido: '' });
+  const [comentarioRapido, setComentarioRapido] = useState({ tipo: 'seguimiento', titulo: '', contenido: '' });
   const [destinoInput, setDestinoInput] = useState('');
   const [etaData, setEtaData] = useState(null);
   const [calculandoEta, setCalculandoEta] = useState(false);
@@ -104,6 +101,8 @@ export default function Home() {
   const [calculandoViajeEta, setCalculandoViajeEta] = useState(false);
   const [operadores, setOperadores] = useState({});
   const [samsaraDrivers, setSamsaraDrivers] = useState([]);
+  const [hiddenDrivers, setHiddenDrivers] = useState([]);
+  const [driverPhoneOverrides, setDriverPhoneOverrides] = useState({});
   const [filtroOperador, setFiltroOperador] = useState('');
   const [geofences, setGeofences] = useState([]);
   const [geofenceEvents, setGeofenceEvents] = useState([]);
@@ -188,6 +187,27 @@ export default function Home() {
   useEffect(() => {
     setApiUrl(process.env.NEXT_PUBLIC_API_URL || `http://${window.location.hostname}:3001/api`);
   }, []);
+
+  useEffect(() => {
+    try {
+      setHiddenDrivers(JSON.parse(localStorage.getItem('gers_hidden_drivers') || '[]'));
+    } catch {
+      setHiddenDrivers([]);
+    }
+    try {
+      setDriverPhoneOverrides(JSON.parse(localStorage.getItem('gers_driver_phone_overrides') || '{}'));
+    } catch {
+      setDriverPhoneOverrides({});
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('gers_hidden_drivers', JSON.stringify(hiddenDrivers));
+  }, [hiddenDrivers]);
+
+  useEffect(() => {
+    localStorage.setItem('gers_driver_phone_overrides', JSON.stringify(driverPhoneOverrides));
+  }, [driverPhoneOverrides]);
 
   useEffect(() => {
     if (!apiUrl) return;
@@ -284,18 +304,39 @@ export default function Home() {
     e.preventDefault();
     setTurnoLoading(true);
     try {
-      const res = await fetch(`${apiUrl}/turnos/entregar`, {
+      const res = await fetch(`${apiUrl}/turnos/resumen`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(turnoForm),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'No se pudo generar el reporte');
-      setTurnoSummary(data);
+      setTurnoSummary({ ...data, saved: false });
     } catch (err) {
       alert(err.message || 'Error al generar el reporte');
     } finally {
       setTurnoLoading(false);
+    }
+  };
+
+  const guardarCierreTurno = async () => {
+    setTurnoSaving(true);
+    try {
+      const res = await fetch(`${apiUrl}/turnos/entregar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(turnoForm),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'No se pudo guardar el reporte');
+      setTurnoSummary({ ...data, saved: true });
+      descargarPdfTurno(data, data.report);
+      setShowTurnoModal(false);
+      await handleLogout();
+    } catch (err) {
+      alert(err.message || 'Error al guardar el reporte');
+    } finally {
+      setTurnoSaving(false);
     }
   };
 
@@ -329,14 +370,6 @@ export default function Home() {
     return () => clearTimeout(timer);
   }, [formViaje.destino, formViaje.vehicle_id]);
 
-  useEffect(() => {
-    if (viajeEta && formViaje.fecha_inicio) {
-      const inicio = new Date(formViaje.fecha_inicio);
-      const fin = new Date(inicio.getTime() + viajeEta.duracionSegundos * 1000);
-      setFormViaje(prev => ({ ...prev, fecha_fin: fin.toISOString().slice(0, 16) }));
-    }
-  }, [viajeEta, formViaje.fecha_inicio]);
-
   const parseFecha = (str) => {
     if (!str) return null;
     if (str.endsWith('Z') || str.includes('+')) return new Date(str);
@@ -346,7 +379,7 @@ export default function Home() {
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [statsRes, pendientesRes, viajesRes, alertasRes, vehiculosRes, comentariosRes, operadoresRes, driversRes, geofencesRes, eventsRes, riskZonesRes, samsaraAddrRes, clientesRes, remolquesRes, seguimientoRes, unidadesRes] = await Promise.allSettled([
+      const [statsRes, pendientesRes, viajesRes, alertasRes, vehiculosRes, comentariosRes, operadoresRes, driversRes, geofencesRes, eventsRes, riskZonesRes, samsaraAddrRes, remolquesRes, seguimientoRes, unidadesRes] = await Promise.allSettled([
         fetch(`${apiUrl}/reportes/resumen`).then(r => r.json()),
         fetch(`${apiUrl}/pendientes`).then(r => r.json()),
         fetch(`${apiUrl}/viajes`).then(r => r.json()),
@@ -359,7 +392,6 @@ export default function Home() {
         fetch(`${apiUrl}/geofence-events?limit=100`).then(r => r.json()),
         fetch(`${apiUrl}/risk-zones`).then(r => r.json()),
         fetch(`${apiUrl}/samsara/addresses`).then(r => r.json()),
-        fetch(`${apiUrl}/clientes`).then(r => r.json()),
         fetch(`${apiUrl}/remolques`).then(r => r.json()),
         fetch(`${apiUrl}/seguimiento`).then(r => r.json()),
         fetch(`${apiUrl}/unidades`).then(r => r.json()),
@@ -375,7 +407,6 @@ export default function Home() {
       if (eventsRes.status === 'fulfilled') setGeofenceEvents(eventsRes.value || []);
       if (riskZonesRes.status === 'fulfilled') setCustomRiskZones(riskZonesRes.value || []);
       if (samsaraAddrRes.status === 'fulfilled') setSamsaraAddresses(samsaraAddrRes.value || []);
-      if (clientesRes.status === 'fulfilled') setClientes(clientesRes.value || []);
       if (remolquesRes.status === 'fulfilled') setRemolques(remolquesRes.value || []);
       if (seguimientoRes.status === 'fulfilled') setSeguimiento(seguimientoRes.value || []);
       if (unidadesRes.status === 'fulfilled') setUnidadesLocales(unidadesRes.value || []);
@@ -443,7 +474,7 @@ export default function Home() {
     await fetch(`${apiUrl}/pendientes/${pendienteId}/comentarios`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contenido, autor: 'Monitorista' }),
+      body: JSON.stringify({ contenido }),
     });
     setNuevoComentarioPendiente('');
     const comentarios = await fetch(`${apiUrl}/pendientes/${pendienteId}/comentarios`).then(r => r.json());
@@ -541,35 +572,17 @@ export default function Home() {
     loadAll();
   };
 
-  const crearCliente = async (e) => {
-    e.preventDefault();
-    const nombre = prompt('Nombre del cliente:');
-    if (!nombre) return;
-    await fetch(`${apiUrl}/clientes`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nombre }),
-    });
-    loadAll();
-  };
-
-  const eliminarCliente = async (id) => {
-    if (confirm('Eliminar este cliente?')) {
-      await fetch(`${apiUrl}/clientes/${id}`, { method: 'DELETE' });
-      loadAll();
-    }
-  };
-
   const crearRemolque = async () => {
-    const numero = prompt('Número del remolque:');
-    if (!numero) return;
+    if (!formRemolque.numero.trim()) return;
     const res = await fetch(`${apiUrl}/remolques`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ numero }),
+      body: JSON.stringify(formRemolque),
     });
     const data = await res.json();
     if (data.error) { alert(data.error); return; }
+    setShowRemolqueModal(false);
+    setFormRemolque({ numero: '', categoria: 'Caja Seca' });
     loadAll();
   };
 
@@ -600,85 +613,6 @@ export default function Home() {
     setHistorialRemolque(await res.json());
   };
 
-  const guardarSeguimiento = async (id, campo, valor) => {
-    const row = seguimiento.find(s => s.id === id);
-    if (!row) return;
-    await fetch(`${apiUrl}/seguimiento/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...row, [campo]: valor }),
-    });
-    loadAll();
-  };
-
-  const cargarHistorialSeguimiento = async (id) => {
-    setSelectedSeguimiento(id);
-    const res = await fetch(`${apiUrl}/seguimiento/${id}/historial`);
-    setHistorialSeguimiento(await res.json());
-  };
-
-  const eliminarSeguimiento = async (id) => {
-    if (confirm('Eliminar este registro del seguimiento?')) {
-      await fetch(`${apiUrl}/seguimiento/${id}`, { method: 'DELETE' });
-      loadAll();
-    }
-  };
-
-  const agregarFilaSeguimiento = async () => {
-    const res = await fetch(`${apiUrl}/seguimiento`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ unidad: 'NUEVA', estatus: 'Disponible' }),
-    });
-    const data = await res.json();
-    if (data.id) loadAll();
-  };
-
-  const generarMensajeCliente = () => {
-    const v = vehiculos.find(vh => String(vh.id) === String(nuevoComentario.vehicle_id));
-    const c = clientes.find(cl => String(cl.id) === String(clienteSeleccionado));
-    if (!c) return '';
-    const now = new Date();
-    const fecha = now.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' });
-    const hora = now.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
-    const unidad = v?.name || 'N/A';
-    const titulo = nuevoComentario.titulo || '';
-    const contenido = nuevoComentario.contenido || '';
-    const monitorista = nuevoComentario.autor || 'N/A';
-    const operador = operadores[String(nuevoComentario.vehicle_id)]?.nombre || 'N/A';
-
-    if (msgFormato === 'corto') {
-      return `${c.nombre} | ${unidad} | ${titulo ? titulo + ': ' : ''}${contenido}`;
-    }
-
-    if (msgFormato === 'estructurado') {
-      return `REPORTE DE UNIDAD\n` +
-        `━━━━━━━━━━━━━━━━━━━\n` +
-        `Cliente:     ${c.nombre}\n` +
-        `Unidad:      ${unidad}\n` +
-        `Operador:    ${operador}\n` +
-        `Monitorista: ${monitorista}\n` +
-        `Fecha:       ${fecha} ${hora}\n` +
-        `━━━━━━━━━━━━━━━━━━━\n` +
-        `${titulo ? `Asunto: ${titulo}\n` : ''}` +
-        `${contenido}`;
-    }
-
-    if (msgFormato === 'whatsapp') {
-      let msg = `Hola ${c.nombre} 👋\n\n`;
-      msg += `Le compartimos el reporte de su unidad *${unidad}*:\n\n`;
-      if (titulo) msg += `📌 *${titulo}*\n`;
-      if (contenido) msg += `${contenido}\n\n`;
-      msg += `👤 Operador: ${operador}\n`;
-      msg += `🕐 ${fecha} ${hora}\n`;
-      msg += `📝 Monitorista: ${monitorista}\n\n`;
-      msg += `_GERS Logistics_ 🚛`;
-      return msg;
-    }
-
-    return '';
-  };
-
   const crearComentario = async (e) => {
     e.preventDefault();
     await fetch(`${apiUrl}/comentarios`, {
@@ -686,9 +620,7 @@ export default function Home() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(nuevoComentario),
     });
-    setNuevoComentario({ vehicle_id: '', vehicle_name: '', autor: '', tipo: 'seguimiento', titulo: '', contenido: '', estatus: '', remolque: '', grupo: '', origen: '', destino: '' });
-    setClienteSeleccionado('');
-    setShowClienteMsg(false);
+    setNuevoComentario({ vehicle_id: '', vehicle_name: '', tipo: 'seguimiento', titulo: '', contenido: '', estatus: '', remolque: '', grupo: '', origen: '', destino: '' });
     loadAll();
   };
 
@@ -763,13 +695,12 @@ export default function Home() {
       body: JSON.stringify({
         vehicle_id: String(selectedVehicle.id),
         vehicle_name: selectedVehicle.name,
-        autor: comentarioRapido.autor || 'Sistema',
         tipo: comentarioRapido.tipo,
         titulo: comentarioRapido.titulo || `Seguimiento ${selectedVehicle.name}`,
         contenido: comentarioRapido.contenido
       }),
     });
-    setComentarioRapido({ autor: '', tipo: 'seguimiento', titulo: '', contenido: '' });
+    setComentarioRapido({ tipo: 'seguimiento', titulo: '', contenido: '' });
     setDestinoInput('');
     setEtaData(null);
     loadAll();
@@ -869,6 +800,7 @@ export default function Home() {
           distanciaMetros: route.distance,
           duracionSegundos: duracionTruck,
           horaLlegada: llegada.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }),
+          fechaLlegada: llegada.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }),
           horaLlegadaISO: llegada.toISOString().slice(0, 16),
           destinoNombre: geoData[0].display_name.split(',').slice(0, 3).join(','),
           destLat, destLon
@@ -886,7 +818,7 @@ export default function Home() {
     const eta = await calcularRuta(destino, vehicle.location.latitude, vehicle.location.longitude);
     if (eta) {
       setEtaData(eta);
-      setComentarioRapido(prev => ({ ...prev, titulo: `ETA ${eta.horaLlegada} | ${eta.distancia}` }));
+      setComentarioRapido(prev => ({ ...prev, titulo: `ETA ${eta.fechaLlegada || eta.horaLlegada} | ${eta.distancia}` }));
     } else {
       setEtaData(null);
     }
@@ -962,7 +894,47 @@ export default function Home() {
       headStyles: { fillColor: [0, 255, 65], textColor: [0, 0, 0], fontStyle: 'bold' },
       alternateRowStyles: { fillColor: [240, 240, 240] },
     });
-    doc.save(`Reporte_${filtroReporte.tipo}_${filtroReporte.fecha_inicio || 'todo'}_${filtroReporte.fecha_fin || 'todo'}.pdf`);
+    descargarArchivoPdf(doc, `Reporte_${filtroReporte.tipo}_${filtroReporte.fecha_inicio || 'todo'}_${filtroReporte.fecha_fin || 'todo'}.pdf`);
+  };
+
+  const descargarArchivoPdf = (doc, fileName) => {
+    const blob = doc.output('blob');
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const descargarPdfTurno = (summary, report) => {
+    if (!summary) return;
+    const doc = new jsPDF({ orientation: 'portrait' });
+    const fecha = new Date().toLocaleString('es-MX');
+    doc.setFontSize(18);
+    doc.text('Reporte de Entrega de Turno', 14, 18);
+    doc.setFontSize(10);
+    doc.text(`Generado: ${fecha}`, 14, 26);
+    if (report?.turno || turnoForm.turno) doc.text(`Turno: ${report?.turno || turnoForm.turno}`, 14, 32);
+    if (report?.horas || turnoForm.horas) doc.text(`Horas revisadas: ${report?.horas || turnoForm.horas}`, 14, 38);
+    let y = 48;
+    doc.setFontSize(12);
+    doc.text('Resumen', 14, y);
+    y += 6;
+    doc.setFontSize(9);
+    const lines = String(summary.summary?.texto || '').split('\n');
+    lines.forEach(line => {
+      if (y > 270) {
+        doc.addPage();
+        y = 18;
+      }
+      doc.text(line.slice(0, 190), 14, y);
+      y += 5;
+    });
+    const fileName = `Turno_${(report?.turno || turnoForm.turno || 'reporte').replace(/[^a-z0-9_-]+/gi, '_')}_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.pdf`;
+    descargarArchivoPdf(doc, fileName);
   };
 
   const handleZonePlaced = (lat, lng) => {
@@ -1693,14 +1665,14 @@ export default function Home() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: '1.5rem' }}>Notas por Unidad</h2>
-                <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>Comentarios y notas para reportes de clientes</p>
+                <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>Registra notas de seguimiento, incidente y mantenimiento</p>
               </div>
               <button onClick={loadAll} style={s.button()}>Actualizar</button>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem' }}>
               <div style={s.card}>
-                <h3 style={{ marginTop: 0, marginBottom: '1rem', fontSize: '1rem' }}>Agregar Comentario</h3>
+                <h3 style={{ marginTop: 0, marginBottom: '1rem', fontSize: '1rem' }}>Agregar Nota</h3>
                 <form onSubmit={crearComentario}>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
                     <div>
@@ -1714,20 +1686,21 @@ export default function Home() {
                       </select>
                     </div>
                     <div>
-                      <label style={s.label}>Monitorista</label>
-                      <input style={s.input} placeholder="Nombre del monitorista" value={nuevoComentario.autor} onChange={(e) => setNuevoComentario({ ...nuevoComentario, autor: e.target.value })} />
                     </div>
                   </div>
                   <div style={{ marginBottom: '0.75rem' }}>
                     <label style={s.label}>Tipo</label>
                     <select style={s.select} value={nuevoComentario.tipo} onChange={(e) => setNuevoComentario({ ...nuevoComentario, tipo: e.target.value })}>
                       <option value="seguimiento">Seguimiento</option>
-                      <option value="mantenimiento">Mantenimiento</option>
                       <option value="incidente">Incidente</option>
-                      <option value="entrega">Entrega</option>
-                      <option value="cliente">Nota para Cliente</option>
+                      <option value="mantenimiento">Mantenimiento</option>
                     </select>
                   </div>
+                  {nuevoComentario.tipo === 'mantenimiento' && (
+                    <div style={{ marginBottom: '0.75rem', padding: '0.75rem', background: '#332200', border: '1px solid #f59e0b33', borderRadius: '8px', color: '#fbbf24', fontSize: '0.85rem' }}>
+                      Mantenimiento: registra la falla, servicio requerido o intervención pendiente.
+                    </div>
+                  )}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
                     <div>
                       <label style={s.label}>Estatus</label>
@@ -1762,84 +1735,43 @@ export default function Home() {
                       <input style={s.input} placeholder="Punto de destino" value={nuevoComentario.destino} onChange={(e) => setNuevoComentario({ ...nuevoComentario, destino: e.target.value })} />
                     </div>
                   </div>
-                  {nuevoComentario.tipo === 'cliente' && (
-                    <div style={{ marginBottom: '0.75rem', padding: '0.75rem', background: '#0a1a0a', border: '1px solid #1a3d1a', borderRadius: '8px' }}>
-                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                        <div style={{ flex: 1 }}>
-                          <label style={s.label}>Cliente *</label>
-                          <select style={s.select} value={clienteSeleccionado} onChange={(e) => setClienteSeleccionado(e.target.value)} required>
-                            <option value="">Seleccionar cliente...</option>
-                            {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                          </select>
-                        </div>
-                        <div style={{ display: 'flex', gap: '0.25rem', paddingTop: '1.2rem' }}>
-                          <button type="button" onClick={crearCliente} style={{ ...s.button('#3b82f6'), padding: '0.3rem 0.6rem', fontSize: '0.75rem' }}>+ Nuevo</button>
-                        </div>
-                      </div>
-                      {clienteSeleccionado && nuevoComentario.contenido && (
-                        <div style={{ marginTop: '0.75rem' }}>
-                          <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.5rem' }}>
-                            {[
-                              { key: 'whatsapp', label: '💬 WhatsApp' },
-                              { key: 'corto', label: '⚡ Corto' },
-                              { key: 'estructurado', label: '📋 Datos' },
-                            ].map(f => (
-                              <button key={f.key} type="button" onClick={() => setMsgFormato(f.key)}
-                                style={{ padding: '0.3rem 0.6rem', borderRadius: '6px', border: msgFormato === f.key ? '1px solid #00ff41' : '1px solid #1a3d1a', background: msgFormato === f.key ? '#0d2b0d' : 'transparent', color: msgFormato === f.key ? '#00ff41' : '#6a9b6a', cursor: 'pointer', fontSize: '0.7rem', fontWeight: msgFormato === f.key ? '600' : '400' }}>
-                                {f.label}
-                              </button>
-                            ))}
-                          </div>
-                          <label style={s.label}>Vista previa</label>
-                          <div style={{ background: '#0d1f0d', border: '1px solid #1a3d1a', borderRadius: '8px', padding: '0.75rem', fontSize: '0.8rem', color: '#e0e0e0', whiteSpace: 'pre-wrap', lineHeight: '1.5', fontFamily: 'monospace' }}>
-                            {generarMensajeCliente()}
-                          </div>
-                          <button type="button" onClick={() => {
-                            navigator.clipboard.writeText(generarMensajeCliente());
-                            setShowClienteMsg(true);
-                            setTimeout(() => setShowClienteMsg(false), 2000);
-                          }} style={{ ...s.button(showClienteMsg ? '#10b981' : '#00ff41'), width: '100%', marginTop: '0.5rem', color: '#0d0d0d', fontWeight: '600' }}>
-                            {showClienteMsg ? '¡Copiado!' : '📋 Copiar Mensaje'}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
                   <div style={{ marginBottom: '0.75rem' }}>
                     <label style={s.label}>Título</label>
                     <input style={s.input} placeholder="Resumen del comentario" value={nuevoComentario.titulo} onChange={(e) => setNuevoComentario({ ...nuevoComentario, titulo: e.target.value })} />
                   </div>
                   <div style={{ marginBottom: '1rem' }}>
-                    <label style={s.label}>Comentario *</label>
+                      <label style={s.label}>Nota *</label>
                     <textarea
                       style={{ ...s.input, minHeight: '100px', resize: 'vertical', fontFamily: 'inherit' }}
-                      placeholder="Describe el seguimiento, estado de la unidad, observaciones para el cliente..."
+                      placeholder="Describe la nota, incidente o mantenimiento..."
                       value={nuevoComentario.contenido}
                       onChange={(e) => setNuevoComentario({ ...nuevoComentario, contenido: e.target.value })}
                       required
                     />
                   </div>
-                  <button type="submit" style={{ ...s.button('#10b981'), width: '100%' }}>Guardar Comentario</button>
+                  <button type="submit" style={{ ...s.button('#10b981'), width: '100%' }}>Guardar Nota</button>
                 </form>
               </div>
 
               <div style={{ ...s.card, overflow: 'auto', maxHeight: 'calc(100vh - 200px)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                  <h3 style={{ margin: 0, fontSize: '1rem' }}>Historial ({comentarios.length})</h3>
+                    <h3 style={{ margin: 0, fontSize: '1rem' }}>Historial ({seguimientoNotas.length})</h3>
                   <select style={{ ...s.select, width: 'auto' }} value={vehicleFilter} onChange={(e) => setVehicleFilter(e.target.value)}>
                     <option value="">Todas las unidades</option>
                     {vehiculos.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
                   </select>
                 </div>
                 {comentarios
+                  .filter(c => ['seguimiento', 'incidente', 'mantenimiento'].includes((c.tipo || '').toLowerCase()))
                   .filter(c => !vehicleFilter || c.vehicle_id === vehicleFilter)
                   .length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '2rem', color: '#4a8a4a' }}>
                     <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📝</div>
-                    <p>No hay comentarios registrados</p>
+                    <p>No hay notas registradas</p>
                   </div>
                 ) : (
                   comentarios
+                    .filter(c => ['seguimiento', 'incidente', 'mantenimiento'].includes((c.tipo || '').toLowerCase()))
                     .filter(c => !vehicleFilter || c.vehicle_id === vehicleFilter)
                     .map((c) => (
                       <div key={c.id} style={{ padding: '1rem', borderBottom: '1px solid #0d1f0d' }}>
@@ -2140,7 +2072,7 @@ export default function Home() {
                           <div style={{ display: 'flex', justifyContent: 'space-around', textAlign: 'center' }}>
                             <div>
                               <div style={{ fontSize: '0.65rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Llegada</div>
-                              <div style={{ fontSize: '1.1rem', fontWeight: '700', color: '#10b981' }}>{viajeEta.horaLlegada}</div>
+                              <div style={{ fontSize: '1.1rem', fontWeight: '700', color: '#10b981' }}>{viajeEta.fechaLlegada || viajeEta.horaLlegada}</div>
                             </div>
                             <div>
                               <div style={{ fontSize: '0.65rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Tiempo</div>
@@ -2152,7 +2084,7 @@ export default function Home() {
                             </div>
                           </div>
                           <div style={{ fontSize: '0.7rem', color: '#4a8a4a', marginTop: '0.5rem', textAlign: 'center' }}>{viajeEta.destinoNombre}</div>
-                          <div style={{ fontSize: '0.7rem', color: '#6a9b6a', marginTop: '0.25rem', textAlign: 'center' }}>Fecha fin auto-llenada</div>
+                          <div style={{ fontSize: '0.7rem', color: '#6a9b6a', marginTop: '0.25rem', textAlign: 'center' }}>Llegada: {viajeEta.fechaLlegada || viajeEta.horaLlegada}</div>
                         </div>
                       )}
                       {viajeEtaError && !calculandoViajeEta && !viajeEta && (
@@ -2247,29 +2179,50 @@ export default function Home() {
                 <thead>
                   <tr>
                     <th style={s.th}>Nombre</th>
-                    <th style={s.th}>Username</th>
                     <th style={s.th}>Teléfono</th>
                     <th style={s.th}>Estado</th>
+                    <th style={s.th}>Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
                   {samsaraDrivers
+                    .filter(d => !hiddenDrivers.includes(d.id))
                     .filter(d => !filtroOperador || d.name.toLowerCase().includes(filtroOperador.toLowerCase()) || (d.username && d.username.toLowerCase().includes(filtroOperador.toLowerCase())))
                     .sort((a, b) => a.name.localeCompare(b.name))
                     .map((driver) => (
                       <tr key={driver.id}>
                         <td style={{ ...s.td, fontWeight: '500' }}>{driver.name}</td>
-                        <td style={s.td}>{driver.username || '-'}</td>
-                        <td style={s.td}>{driver.phone || '-'}</td>
+                        <td style={s.td}>
+                          <input
+                            value={driverPhoneOverrides[driver.id] ?? driver.phone ?? ''}
+                            onChange={(e) => setDriverPhoneOverrides(prev => ({ ...prev, [driver.id]: e.target.value }))}
+                            style={{ ...s.input, width: '160px', padding: '0.35rem 0.5rem' }}
+                            placeholder="Teléfono"
+                          />
+                        </td>
                         <td style={s.td}>
                           <span style={s.badge(driver.status === 'active' ? '#10b981' : '#ef4444')}>
                             {driver.status === 'active' ? 'Activo' : 'Inactivo'}
                           </span>
                         </td>
+                        <td style={s.td}>
+                          <button
+                            onClick={() => setHiddenDrivers(prev => prev.includes(driver.id) ? prev : [...prev, driver.id])}
+                            style={{ background: 'none', border: '1px solid #3a1a1a', color: '#ef4444', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', padding: '0.3rem 0.55rem' }}
+                          >
+                            Quitar
+                          </button>
+                        </td>
                       </tr>
                     ))}
                 </tbody>
               </table>
+              {hiddenDrivers.length > 0 && (
+                <div style={{ marginTop: '0.75rem', color: '#6a9b6a', fontSize: '0.8rem' }}>
+                  Operadores ocultos: {hiddenDrivers.length}
+                  <button onClick={() => setHiddenDrivers([])} style={{ marginLeft: '0.75rem', background: 'none', border: 'none', color: '#00ff41', cursor: 'pointer' }}>Restaurar todos</button>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -2278,27 +2231,41 @@ export default function Home() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h2 style={{ color: '#e0e0e0', margin: 0 }}>Remolques</h2>
-              <button onClick={crearRemolque} style={{ padding: '0.5rem 1rem', background: '#00ff41', color: '#000', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 700 }}>+ Nuevo</button>
+              <button onClick={() => { setFormRemolque({ numero: '', categoria: 'Caja Seca' }); setShowRemolqueModal(true); }} style={{ padding: '0.5rem 1rem', background: '#00ff41', color: '#000', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 700 }}>+ Nuevo</button>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.75rem' }}>
-              {remolques.map(r => (
-                <div key={r.id} onClick={() => cargarHistorialRemolque(r.id)}
-                  style={{ background: selectedRemolque === r.id ? '#1a3d1a' : '#111', border: `1px solid ${selectedRemolque === r.id ? '#00ff41' : '#1a3d1a'}`, borderRadius: '10px', padding: '1rem', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ color: '#00ff41', fontWeight: 700, fontSize: '1.1rem' }}>#{r.numero}</span>
-                    <button onClick={(e) => { e.stopPropagation(); eliminarRemolque(r.id); }} style={{ background: 'none', border: 'none', color: '#ff4444', cursor: 'pointer', fontSize: '0.9rem' }}>✕</button>
+            {['Thermo Refrigerado', 'Caja Seca', 'Tanque'].map(cat => {
+              const filas = remolques.filter(r => (r.categoria || 'Caja Seca') === cat);
+              return (
+                <div key={cat} style={{ background: '#111', border: '1px solid #1a3d1a', borderRadius: '10px', padding: '1rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                    <h3 style={{ margin: 0, color: '#00ff41', fontSize: '1rem' }}>{cat}</h3>
+                    <span style={{ color: '#6a9b6a', fontSize: '0.8rem' }}>{filas.length}</span>
                   </div>
-                  {r.unidad_asignada ? (
-                    <div style={{ fontSize: '0.85rem', color: '#00ff41', background: '#002200', padding: '0.3rem 0.6rem', borderRadius: '6px', display: 'inline-block', alignSelf: 'flex-start' }}>
-                      🚛 {r.unidad_asignada}
-                    </div>
-                  ) : (
-                    <div style={{ fontSize: '0.85rem', color: '#888', fontStyle: 'italic' }}>Sin asignar</div>
-                  )}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.75rem' }}>
+                    {filas.length === 0 ? (
+                      <div style={{ color: '#6a9b6a', fontSize: '0.85rem', fontStyle: 'italic' }}>Sin remolques</div>
+                    ) : filas.map(r => (
+                      <div key={r.id} onClick={() => cargarHistorialRemolque(r.id)}
+                        style={{ background: selectedRemolque === r.id ? '#1a3d1a' : '#111', border: `1px solid ${selectedRemolque === r.id ? '#00ff41' : '#1a3d1a'}`, borderRadius: '10px', padding: '1rem', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ color: '#00ff41', fontWeight: 700, fontSize: '1.1rem' }}>#{r.numero}</span>
+                          <button onClick={(e) => { e.stopPropagation(); eliminarRemolque(r.id); }} style={{ background: 'none', border: 'none', color: '#ff4444', cursor: 'pointer', fontSize: '0.9rem' }}>✕</button>
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: '#f59e0b', textTransform: 'uppercase' }}>{r.categoria || 'Caja Seca'}</div>
+                        {r.unidad_asignada ? (
+                          <div style={{ fontSize: '0.85rem', color: '#00ff41', background: '#002200', padding: '0.3rem 0.6rem', borderRadius: '6px', display: 'inline-block', alignSelf: 'flex-start' }}>
+                            🚛 {r.unidad_asignada}
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: '0.85rem', color: '#888', fontStyle: 'italic' }}>Sin asignar</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              ))}
-            </div>
+              );
+            })}
 
             {selectedRemolque && historialRemolque.length > 0 && (
               <div style={{ background: '#111', border: '1px solid #1a3d1a', borderRadius: '10px', padding: '1rem' }}>
@@ -2328,20 +2295,20 @@ export default function Home() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0', height: '100%', overflow: 'hidden' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, padding: '0 0.5rem 0.75rem 0', borderBottom: '1px solid #1a3d1a' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                <h2 style={{ color: '#e0e0e0', margin: 0, fontSize: '1.1rem' }}>Seguimiento de Unidades</h2>
-                <span style={{ color: '#4a8a4a', fontSize: '0.8rem', background: '#0d1a0d', padding: '0.25rem 0.6rem', borderRadius: '12px', border: '1px solid #1a3d1a' }}>{seguimiento.length} unidades</span>
+                <h2 style={{ color: '#e0e0e0', margin: 0, fontSize: '1.1rem' }}>Seguimiento de Notas</h2>
+                <span style={{ color: '#4a8a4a', fontSize: '0.8rem', background: '#0d1a0d', padding: '0.25rem 0.6rem', borderRadius: '12px', border: '1px solid #1a3d1a' }}>{seguimientoNotas.length} notas</span>
               </div>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                 <div style={{ position: 'relative' }}>
                   <span style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', color: '#4a8a4a', fontSize: '0.8rem' }}>🔍</span>
                   <input
-                    placeholder="Buscar unidad, operador..."
+                    placeholder="Buscar unidad, titulo, contenido..."
                     value={seguimientoFilter}
                     onChange={e => setSeguimientoFilter(e.target.value)}
                     style={{ padding: '0.45rem 0.75rem 0.45rem 1.8rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.8rem', background: '#ffffff', color: '#000', width: '200px' }}
                   />
                 </div>
-                <button onClick={agregarFilaSeguimiento} style={{ padding: '0.45rem 0.85rem', background: '#00ff41', color: '#000', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem' }}>+ Fila</button>
+                <button onClick={() => setActiveTab('notas')} style={{ padding: '0.45rem 0.85rem', background: '#00ff41', color: '#000', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem' }}>+ Nota</button>
                 <button onClick={abrirGeneradorMensajes} style={{ padding: '0.45rem 0.85rem', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem' }}>📲 Generar Mensaje</button>
               </div>
             </div>
@@ -2352,125 +2319,47 @@ export default function Home() {
                   <tr style={{ background: '#0d1a0d', position: 'sticky', top: 0, zIndex: 2 }}>
                     <th style={{ ...thStyle, width: '28px', textAlign: 'center' }}>#</th>
                     <th style={{ ...thStyle, width: '90px' }}>UNIDAD</th>
-                    <th style={{ ...thStyle, width: '150px' }}>OPERADOR</th>
-                    <th style={{ ...thStyle, width: '80px' }}>REMOLQUE</th>
-                    <th style={{ ...thStyle, width: '90px' }}>RUTA</th>
+                    <th style={{ ...thStyle, width: '110px' }}>TIPO</th>
+                    <th style={{ ...thStyle, width: '160px' }}>TITULO</th>
+                    <th style={{ ...thStyle, width: '260px' }}>CONTENIDO</th>
+                    <th style={{ ...thStyle, width: '110px' }}>ESTATUS</th>
+                    <th style={{ ...thStyle, width: '100px' }}>REMOLQUE</th>
                     <th style={{ ...thStyle, width: '130px' }}>ORIGEN</th>
                     <th style={{ ...thStyle, width: '130px' }}>DESTINO</th>
-                    <th style={{ ...thStyle, width: '90px' }}>CITA CARGA</th>
-                    <th style={{ ...thStyle, width: '90px' }}>CITA DESCARGA</th>
-                    <th style={{ ...thStyle, width: '90px' }}>LLEGADA</th>
-                    <th style={{ ...thStyle, width: '90px' }}>LIBERACION</th>
-                    <th style={{ ...thStyle, width: '110px' }}>ESTATUS</th>
-                    <th style={{ ...thStyle, width: '160px' }}>UBICACION</th>
-                    <th style={{ ...thStyle, width: '160px' }}>COMENT. CLIENTE</th>
-                    <th style={{ ...thStyle, width: '160px' }}>COMENT. MONITOREO</th>
-                    <th style={{ ...thStyle, width: '100px' }}>GRUPO</th>
                     <th style={{ ...thStyle, width: '120px' }}>USUARIO</th>
+                    <th style={{ ...thStyle, width: '130px' }}>FECHA</th>
                     <th style={{ ...thStyle, width: '60px', textAlign: 'center' }}>ACC</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {seguimiento.filter(row => !seguimientoFilter || row.unidad?.toLowerCase().includes(seguimientoFilter.toLowerCase()) || row.operador?.toLowerCase().includes(seguimientoFilter.toLowerCase())).map((row, idx) => {
-                    const est = (row.estatus || '').toLowerCase();
-                    const isSiniestrado = est.includes('siniestr') || est === 'no disponible';
-                    const isEnRuta = est.includes('en ruta') || est.includes('circulando');
-                    const isEnProceso = est.includes('proceso') || est.includes('descarga') || est.includes('carga');
-                    const isDisponible = est === 'disponible';
-                    const isProgramado = est === 'programado';
-                    const isResguardo = est.includes('resguardo');
-                    const isActive = isEnRuta || isEnProceso;
-                    const rowBg = idx % 2 === 0 ? '#0d0d0d' : '#111111';
-
-                    return (
-                      <tr key={row.id} style={{ background: rowBg, borderBottom: '1px solid #1a1a1a' }}>
-                        <td style={{ ...tdStyle, textAlign: 'center', color: '#4a8a4a', fontSize: '0.7rem' }}>{idx + 1}</td>
-                        <td style={{ ...tdStyle, fontWeight: 700, color: '#00ff41', fontSize: '0.8rem' }}>
-                          <input value={row.unidad || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, unidad: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'unidad', e.target.value)} style={inputStyle} />
-                        </td>
-                        <td style={{ ...tdStyle, color: '#e0e0e0' }}>
-                          <input value={row.operador || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, operador: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'operador', e.target.value)} style={inputStyle} />
-                        </td>
-                        <td style={{ ...tdStyle, color: '#f59e0b', textAlign: 'center' }}>
-                          <input value={row.remolque || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, remolque: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'remolque', e.target.value)} style={{ ...inputStyle, textAlign: 'center' }} />
-                        </td>
-                        <td style={{ ...tdStyle, color: '#8b5cf6', fontWeight: 600, fontSize: '0.72rem' }}>
-                          <input value={row.ruta || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, ruta: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'ruta', e.target.value)} style={{ ...inputStyle, fontWeight: 600, color: '#8b5cf6' }} />
-                        </td>
-                        <td style={tdStyle}>
-                          <input value={row.origen || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, origen: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'origen', e.target.value)} style={inputStyle} />
-                        </td>
-                        <td style={tdStyle}>
-                          <input value={row.destino || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, destino: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'destino', e.target.value)} style={inputStyle} />
-                        </td>
-                        <td style={{ ...tdStyle, color: '#60a5fa', fontSize: '0.72rem' }}>
-                          <input value={row.cita_carga || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, cita_carga: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'cita_carga', e.target.value)} style={{ ...inputStyle, color: '#60a5fa' }} />
-                        </td>
-                        <td style={{ ...tdStyle, color: '#60a5fa', fontSize: '0.72rem' }}>
-                          <input value={row.cita_descarga || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, cita_descarga: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'cita_descarga', e.target.value)} style={{ ...inputStyle, color: '#60a5fa' }} />
-                        </td>
-                        <td style={{ ...tdStyle, color: '#10b981', fontSize: '0.72rem' }}>
-                          <input value={row.hora_llegada || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, hora_llegada: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'hora_llegada', e.target.value)} style={{ ...inputStyle, color: '#10b981' }} />
-                        </td>
-                        <td style={{ ...tdStyle, color: '#10b981', fontSize: '0.72rem' }}>
-                          <input value={row.hora_liberacion || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, hora_liberacion: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'hora_liberacion', e.target.value)} style={{ ...inputStyle, color: '#10b981' }} />
-                        </td>
-                        <td style={tdStyle}>
-                          <div style={{
-                            display: 'inline-block', padding: '3px 10px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: 700, whiteSpace: 'nowrap',
-                            background: isSiniestrado ? '#3a1111' : isEnRuta ? '#003311' : isEnProceso ? '#332200' : isResguardo ? '#2a1a00' : isProgramado ? '#0d1a33' : isDisponible ? '#111' : '#1a1a1a',
-                            color: isSiniestrado ? '#ef4444' : isEnRuta ? '#00ff41' : isEnProceso ? '#f59e0b' : isResguardo ? '#f97316' : isProgramado ? '#60a5fa' : isDisponible ? '#6b7280' : '#888',
-                            border: `1px solid ${isSiniestrado ? '#ef444433' : isEnRuta ? '#00ff4133' : isEnProceso ? '#f59e0b33' : isResguardo ? '#f9731633' : isProgramado ? '#60a5fa33' : '#333333'}`
-                          }}>
-                            <input value={row.estatus || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, estatus: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'estatus', e.target.value)} style={{ ...inputStyle, fontWeight: 700, color: isSiniestrado ? '#ef4444' : isEnRuta ? '#00ff41' : isEnProceso ? '#f59e0b' : isResguardo ? '#f97316' : isProgramado ? '#60a5fa' : isDisponible ? '#6b7280' : '#888', background: 'transparent', textAlign: 'center' }} />
-                          </div>
-                        </td>
-                        <td style={tdStyle}>
-                          <input value={row.ubicacion_samsara || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, ubicacion_samsara: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'ubicacion_samsara', e.target.value)} style={{ ...inputStyle, color: '#94a3b8' }} />
-                        </td>
-                        <td style={tdStyle}>
-                          <input value={row.comentarios_cliente || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, comentarios_cliente: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'comentarios_cliente', e.target.value)} style={{ ...inputStyle, color: '#fbbf24', fontStyle: 'italic' }} />
-                        </td>
-                        <td style={tdStyle}>
-                          <input value={row.comentarios_monitoreo || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, comentarios_monitoreo: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'comentarios_monitoreo', e.target.value)} style={{ ...inputStyle, color: '#a78bfa' }} />
-                        </td>
-                        <td style={{ ...tdStyle, color: '#06b6d4', fontWeight: 600, fontSize: '0.72rem' }}>
-                          <input value={row.grupo || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, grupo: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'grupo', e.target.value)} style={{ ...inputStyle, color: '#06b6d4', fontWeight: 600 }} />
-                        </td>
-                        <td style={{ ...tdStyle, color: '#c084fc', fontWeight: 600, fontSize: '0.72rem' }}>
-                          {row.created_by_username || row.usuario || 'Sistema'}
-                        </td>
-                        <td style={{ ...tdStyle, textAlign: 'center', whiteSpace: 'nowrap' }}>
-                          <button onClick={() => cargarHistorialSeguimiento(row.id)} style={{ background: 'none', border: '1px solid #1a3d1a', color: '#4a8a4a', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem', padding: '2px 5px', marginRight: '3px' }}>📜</button>
-                          <button onClick={() => eliminarSeguimiento(row.id)} style={{ background: 'none', border: '1px solid #3a1a1a', color: '#ef4444', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem', padding: '2px 5px' }}>✕</button>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {seguimientoNotas
+                    .filter(row => !seguimientoFilter || row.vehicle_name?.toLowerCase().includes(seguimientoFilter.toLowerCase()) || row.contenido?.toLowerCase().includes(seguimientoFilter.toLowerCase()) || row.titulo?.toLowerCase().includes(seguimientoFilter.toLowerCase()))
+                    .map((row, idx) => {
+                      const tipo = (row.tipo || 'seguimiento').toLowerCase();
+                      const rowBg = idx % 2 === 0 ? '#0d0d0d' : '#111111';
+                      const tipoColor = tipo === 'incidente' ? '#ef4444' : tipo === 'mantenimiento' ? '#f59e0b' : '#3b82f6';
+                      return (
+                        <tr key={row.id} style={{ background: rowBg, borderBottom: '1px solid #1a1a1a' }}>
+                          <td style={{ ...tdStyle, textAlign: 'center', color: '#4a8a4a', fontSize: '0.7rem' }}>{idx + 1}</td>
+                          <td style={{ ...tdStyle, fontWeight: 700, color: '#00ff41' }}>{row.vehicle_name || row.vehicle_id || '-'}</td>
+                          <td style={tdStyle}><span style={{ color: tipoColor, fontWeight: 700, textTransform: 'uppercase' }}>{tipo}</span></td>
+                          <td style={tdStyle}>{row.titulo || '-'}</td>
+                          <td style={{ ...tdStyle, whiteSpace: 'normal', maxWidth: '320px' }}>{row.contenido || '-'}</td>
+                          <td style={tdStyle}>{row.estatus || '-'}</td>
+                          <td style={tdStyle}>{row.remolque || '-'}</td>
+                          <td style={tdStyle}>{row.origen || '-'}</td>
+                          <td style={tdStyle}>{row.destino || '-'}</td>
+                          <td style={{ ...tdStyle, color: '#c084fc' }}>{row.created_by_username || row.autor || 'Sistema'}</td>
+                          <td style={tdStyle}>{parseFecha(row.created_at)?.toLocaleString('es-MX') || '-'}</td>
+                          <td style={{ ...tdStyle, textAlign: 'center', whiteSpace: 'nowrap' }}>
+                            <button onClick={() => eliminarComentario(row.id)} style={{ background: 'none', border: '1px solid #3a1a1a', color: '#ef4444', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem', padding: '2px 5px' }}>✕</button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                 </tbody>
               </table>
             </div>
-
-            {selectedSeguimiento && historialSeguimiento.length > 0 && (
-              <div style={{ background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '8px', padding: '0.85rem', maxHeight: '200px', overflow: 'auto', flexShrink: 0, marginTop: '0.5rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                  <h3 style={{ color: '#e0e0e0', margin: 0, fontSize: '0.85rem' }}>
-                    📜 Historial — <span style={{ color: '#00ff41' }}>{seguimiento.find(s => s.id === selectedSeguimiento)?.unidad}</span>
-                  </h3>
-                  <button onClick={() => { setSelectedSeguimiento(null); setHistorialSeguimiento([]); }} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: '0.8rem' }}>✕</button>
-                </div>
-                {historialSeguimiento.map((h, i) => (
-                  <div key={i} style={{ padding: '0.35rem 0.6rem', background: i % 2 === 0 ? '#111' : '#0d0d0d', borderRadius: '4px', marginBottom: '2px', fontSize: '0.75rem', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-                    <span style={{ color: '#555', minWidth: '110px', fontSize: '0.7rem' }}>{h.fecha_cambio}</span>
-                    <span style={{ color: '#00ff41', fontWeight: 600, minWidth: '110px', textTransform: 'uppercase', fontSize: '0.7rem' }}>{h.campo}</span>
-                    <span style={{ color: '#ef4444', textDecoration: 'line-through', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.valor_anterior || '—'}</span>
-                    <span style={{ color: '#444' }}>→</span>
-                    <span style={{ color: '#10b981', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.valor_nuevo || '—'}</span>
-                    <span style={{ color: '#444', marginLeft: 'auto', fontSize: '0.7rem' }}>{h.usuario}</span>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         )}
 
@@ -2725,7 +2614,6 @@ export default function Home() {
               <table style={s.table}>
                 <thead>
                   <tr>
-                    <th style={s.th}>Usuario</th>
                     <th style={s.th}>Nombre</th>
                     <th style={s.th}>Rol</th>
                     <th style={s.th}>Estado</th>
@@ -2735,7 +2623,6 @@ export default function Home() {
                 <tbody>
                   {usuarios.map((u) => (
                     <tr key={u.id}>
-                      <td style={s.td}>{u.username}</td>
                       <td style={s.td}>{u.nombre || '-'}</td>
                       <td style={s.td}>{u.rol}</td>
                       <td style={s.td}>{u.activo ? 'Activo' : 'Inactivo'}</td>
@@ -3074,8 +2961,6 @@ export default function Home() {
               <div style={{ borderTop: '1px solid #1a3d1a', paddingTop: '1.25rem' }}>
                 <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem', color: '#e0e0e0' }}>Agregar Comentario</h3>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                  <input placeholder="Monitorista" value={comentarioRapido.autor} onChange={e => setComentarioRapido({...comentarioRapido, autor: e.target.value})}
-                    style={{ padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem', background: '#ffffff', color: '#000000' }} />
                   <select value={comentarioRapido.tipo} onChange={e => setComentarioRapido({...comentarioRapido, tipo: e.target.value})}
                     style={{ padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem', background: '#ffffff', color: '#000000' }}>
                     <option value="seguimiento">Seguimiento</option>
@@ -3099,7 +2984,7 @@ export default function Home() {
                     <div style={{ display: 'flex', justifyContent: 'space-around', textAlign: 'center' }}>
                       <div>
                         <div style={{ fontSize: '0.65rem', color: '#4a8a4a', textTransform: 'uppercase' }}>ETA</div>
-                        <div style={{ fontSize: '1.1rem', fontWeight: '700', color: '#10b981' }}>{etaData.horaLlegada}</div>
+                        <div style={{ fontSize: '1.1rem', fontWeight: '700', color: '#10b981' }}>{etaData.fechaLlegada || etaData.horaLlegada}</div>
                       </div>
                       <div>
                         <div style={{ fontSize: '0.65rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Tiempo</div>
@@ -3451,6 +3336,35 @@ export default function Home() {
         </div>
       )}
 
+      {showRemolqueModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2200 }} onClick={() => setShowRemolqueModal(false)}>
+          <div style={{ background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '16px', width: '520px', maxWidth: '95vw', padding: '1.5rem' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h2 style={{ margin: 0, color: '#00ff41' }}>Nuevo remolque</h2>
+              <button onClick={() => setShowRemolqueModal(false)} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <div style={{ display: 'grid', gap: '0.85rem' }}>
+              <div>
+                <label style={s.label}>Número</label>
+                <input style={s.input} value={formRemolque.numero} onChange={(e) => setFormRemolque({ ...formRemolque, numero: e.target.value })} placeholder="Ej: 12345" />
+              </div>
+              <div>
+                <label style={s.label}>Categoría</label>
+                <select style={s.select} value={formRemolque.categoria} onChange={(e) => setFormRemolque({ ...formRemolque, categoria: e.target.value })}>
+                  <option value="Thermo Refrigerado">Thermo Refrigerado</option>
+                  <option value="Caja Seca">Caja Seca</option>
+                  <option value="Tanque">Tanque</option>
+                </select>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                <button type="button" onClick={() => setShowRemolqueModal(false)} style={s.button('#6b7280')}>Cancelar</button>
+                <button type="button" onClick={crearRemolque} style={s.button('#00ff41')}>Guardar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showTurnoModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2200 }} onClick={() => { setShowTurnoModal(false); setTurnoSummary(null); }}>
           <div style={{ background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '16px', width: '920px', maxWidth: '95vw', maxHeight: '90vh', overflow: 'auto', padding: '1.5rem' }} onClick={(e) => e.stopPropagation()}>
@@ -3478,7 +3392,7 @@ export default function Home() {
                 </div>
                 <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
                   <button type="button" onClick={() => { setShowTurnoModal(false); setTurnoSummary(null); }} style={s.button('#6b7280')}>Cancelar</button>
-                  <button type="submit" disabled={turnoLoading} style={s.button('#1d4ed8')}>{turnoLoading ? 'Generando...' : 'Generar reporte'}</button>
+                  <button type="submit" disabled={turnoLoading} style={s.button('#1d4ed8')}>{turnoLoading ? 'Generando...' : 'Generar resumen'}</button>
                 </div>
               </form>
             ) : (
@@ -3500,7 +3414,9 @@ export default function Home() {
                   <textarea readOnly value={turnoSummary.summary.texto} style={{ width: '100%', minHeight: '420px', resize: 'vertical', background: '#0a0a0a', color: '#e5e7eb', border: '1px solid #1a3d1a', borderRadius: '8px', padding: '0.75rem', fontFamily: 'monospace', fontSize: '0.82rem', whiteSpace: 'pre-wrap' }} />
                   <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', justifyContent: 'flex-end' }}>
                     <button onClick={() => navigator.clipboard.writeText(turnoSummary.summary.texto)} style={s.button('#10b981')}>Copiar</button>
-                    <button onClick={() => { setTurnoSummary(null); }} style={s.button('#1d4ed8')}>Nuevo reporte</button>
+                    <button onClick={() => descargarPdfTurno(turnoSummary, turnoSummary.report)} style={s.button('#f59e0b')}>Descargar PDF</button>
+                    <button onClick={() => { setTurnoSummary(null); }} style={s.button('#1d4ed8')}>Nuevo resumen</button>
+                    <button onClick={guardarCierreTurno} disabled={turnoSaving} style={s.button('#00ff41')}>{turnoSaving ? 'Guardando...' : 'Guardar reporte y cerrar sesión'}</button>
                     <button onClick={() => { setShowTurnoModal(false); setTurnoSummary(null); }} style={s.button('#6b7280')}>Cerrar</button>
                   </div>
                 </div>
