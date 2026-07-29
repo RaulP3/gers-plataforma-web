@@ -2008,6 +2008,7 @@ export default function Home() {
                             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', fontSize: '0.7rem', paddingLeft: '1.2rem' }}>
                               {p.asignado_a && <span style={{ background: '#1a3d1a', color: '#00ff41', padding: '0.15rem 0.5rem', borderRadius: '4px' }}>👤 {p.asignado_a}</span>}
                               {p.turno && <span style={{ background: '#1a2a3d', color: '#60a5fa', padding: '0.15rem 0.5rem', borderRadius: '4px' }}>🕐 {p.turno}</span>}
+                              <span style={{ background: '#2a1a3d', color: '#c084fc', padding: '0.15rem 0.5rem', borderRadius: '4px' }}>👤 {p.created_by_username || p.creado_por || 'Sistema'}</span>
                             </div>
                             {p.notas && <div style={{ fontSize: '0.75rem', color: '#6a9b6a', marginTop: '0.5rem', fontStyle: 'italic', paddingLeft: '1.2rem' }}>📝 {p.notas}</div>}
                             <div style={{ display: 'flex', gap: '0.35rem', marginTop: '0.5rem', justifyContent: 'flex-end' }}>
@@ -2365,6 +2366,7 @@ export default function Home() {
                     <th style={{ ...thStyle, width: '160px' }}>COMENT. CLIENTE</th>
                     <th style={{ ...thStyle, width: '160px' }}>COMENT. MONITOREO</th>
                     <th style={{ ...thStyle, width: '100px' }}>GRUPO</th>
+                    <th style={{ ...thStyle, width: '120px' }}>USUARIO</th>
                     <th style={{ ...thStyle, width: '60px', textAlign: 'center' }}>ACC</th>
                   </tr>
                 </thead>
@@ -2434,6 +2436,9 @@ export default function Home() {
                         </td>
                         <td style={{ ...tdStyle, color: '#06b6d4', fontWeight: 600, fontSize: '0.72rem' }}>
                           <input value={row.grupo || ''} onChange={e => setSeguimiento(prev => prev.map(s => s.id === row.id ? { ...s, grupo: e.target.value } : s))} onBlur={e => guardarSeguimiento(row.id, 'grupo', e.target.value)} style={{ ...inputStyle, color: '#06b6d4', fontWeight: 600 }} />
+                        </td>
+                        <td style={{ ...tdStyle, color: '#c084fc', fontWeight: 600, fontSize: '0.72rem' }}>
+                          {row.created_by_username || row.usuario || 'Sistema'}
                         </td>
                         <td style={{ ...tdStyle, textAlign: 'center', whiteSpace: 'nowrap' }}>
                           <button onClick={() => cargarHistorialSeguimiento(row.id)} style={{ background: 'none', border: '1px solid #1a3d1a', color: '#4a8a4a', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem', padding: '2px 5px', marginRight: '3px' }}>📜</button>
@@ -3380,7 +3385,7 @@ export default function Home() {
                       pendienteEditando.comentarios.map(c => (
                         <div key={c.id} style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '6px', marginBottom: '0.5rem', border: '1px solid #1a3d1a' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                            <span style={{ fontSize: '0.75rem', color: '#00ff41', fontWeight: '600' }}>{c.autor || 'Anónimo'}</span>
+                            <span style={{ fontSize: '0.75rem', color: '#00ff41', fontWeight: '600' }}>{c.created_by_username || c.autor || 'Anónimo'}</span>
                             <span style={{ fontSize: '0.7rem', color: '#4a4a4a' }}>{new Date(c.fecha_creacion).toLocaleString('es-MX')}</span>
                           </div>
                           <div style={{ fontSize: '0.85rem', color: '#e0e0e0', whiteSpace: 'pre-wrap' }}>{c.contenido}</div>

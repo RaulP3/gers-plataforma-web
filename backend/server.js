@@ -71,6 +71,10 @@ function allQuery(sql, params = []) {
   });
 }
 
+function actorFromReq(req) {
+  return req.user?.nombre || req.user?.username || 'Sistema';
+}
+
 function createSessionToken() {
   return crypto.randomBytes(32).toString('hex');
 }
@@ -162,6 +166,8 @@ db.serialize(() => {
     turno TEXT,
     notas TEXT,
     creado_por TEXT,
+    created_by_user_id INTEGER,
+    created_by_username TEXT,
     fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
     fecha_actualizacion DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
@@ -171,6 +177,8 @@ db.serialize(() => {
     pendiente_id INTEGER NOT NULL,
     autor TEXT,
     contenido TEXT NOT NULL,
+    created_by_user_id INTEGER,
+    created_by_username TEXT,
     fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (pendiente_id) REFERENCES pendientes(id)
   )`);
@@ -189,6 +197,8 @@ db.serialize(() => {
     grupo TEXT DEFAULT '',
     origen TEXT DEFAULT '',
     destino TEXT DEFAULT '',
+    created_by_user_id INTEGER,
+    created_by_username TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
@@ -300,6 +310,14 @@ db.serialize(() => {
   db.run("ALTER TABLE comentarios ADD COLUMN grupo TEXT DEFAULT ''", [], () => {});
   db.run("ALTER TABLE comentarios ADD COLUMN origen TEXT DEFAULT ''", [], () => {});
   db.run("ALTER TABLE comentarios ADD COLUMN destino TEXT DEFAULT ''", [], () => {});
+  db.run("ALTER TABLE comentarios ADD COLUMN created_by_user_id INTEGER", [], () => {});
+  db.run("ALTER TABLE comentarios ADD COLUMN created_by_username TEXT", [], () => {});
+  db.run("ALTER TABLE pendientes ADD COLUMN created_by_user_id INTEGER", [], () => {});
+  db.run("ALTER TABLE pendientes ADD COLUMN created_by_username TEXT", [], () => {});
+  db.run("ALTER TABLE comentarios_pendientes ADD COLUMN created_by_user_id INTEGER", [], () => {});
+  db.run("ALTER TABLE comentarios_pendientes ADD COLUMN created_by_username TEXT", [], () => {});
+  db.run("ALTER TABLE seguimiento ADD COLUMN created_by_user_id INTEGER", [], () => {});
+  db.run("ALTER TABLE seguimiento ADD COLUMN created_by_username TEXT", [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS clientes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -345,6 +363,8 @@ db.serialize(() => {
     comentarios_cliente TEXT DEFAULT '',
     comentarios_monitoreo TEXT DEFAULT '',
     grupo TEXT DEFAULT '',
+    created_by_user_id INTEGER,
+    created_by_username TEXT,
     fecha_actualizacion DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
@@ -1091,9 +1111,11 @@ app.get('/api/pendientes', (req, res) => {
 app.post('/api/pendientes', (req, res) => {
   const { titulo, descripcion, prioridad, asignado_a, turno, notas, creado_por } = req.body;
   if (!titulo) return res.status(400).json({ error: 'Título es requerido' });
+  const userName = actorFromReq(req);
+  const userId = req.user?.id || null;
   db.run(
-    'INSERT INTO pendientes (titulo, descripcion, prioridad, asignado_a, turno, notas, creado_por) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [titulo, descripcion || '', prioridad || 'media', asignado_a || '', turno || '', notas || '', creado_por || ''],
+    'INSERT INTO pendientes (titulo, descripcion, prioridad, asignado_a, turno, notas, creado_por, created_by_user_id, created_by_username) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [titulo, descripcion || '', prioridad || 'media', asignado_a || '', turno || '', notas || '', userName, userId, userName],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ id: this.lastID });
@@ -1130,9 +1152,11 @@ app.get('/api/pendientes/:id/comentarios', (req, res) => {
 app.post('/api/pendientes/:id/comentarios', (req, res) => {
   const { autor, contenido } = req.body;
   if (!contenido) return res.status(400).json({ error: 'Contenido es requerido' });
+  const userName = actorFromReq(req);
+  const userId = req.user?.id || null;
   db.run(
-    'INSERT INTO comentarios_pendientes (pendiente_id, autor, contenido) VALUES (?, ?, ?)',
-    [req.params.id, autor || '', contenido],
+    'INSERT INTO comentarios_pendientes (pendiente_id, autor, contenido, created_by_user_id, created_by_username) VALUES (?, ?, ?, ?, ?)',
+    [req.params.id, userName, contenido, userId, userName],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ id: this.lastID });
@@ -1166,9 +1190,11 @@ app.get('/api/comentarios', (req, res) => {
 
 app.post('/api/comentarios', (req, res) => {
   const { vehicle_id, vehicle_name, autor, tipo, titulo, contenido, kilometraje } = req.body;
+  const userName = actorFromReq(req);
+  const userId = req.user?.id || null;
   db.run(
-    'INSERT INTO comentarios (vehicle_id, vehicle_name, autor, tipo, titulo, contenido, kilometraje) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [vehicle_id, vehicle_name, autor || 'Sistema', tipo || 'seguimiento', titulo || null, contenido, kilometraje || null],
+    'INSERT INTO comentarios (vehicle_id, vehicle_name, autor, tipo, titulo, contenido, kilometraje, created_by_user_id, created_by_username) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [vehicle_id, vehicle_name, userName, tipo || 'seguimiento', titulo || null, contenido, kilometraje || null, userId, userName],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ id: this.lastID });
@@ -1455,6 +1481,10 @@ app.get('/api/seguimiento', (req, res) => {
 app.post('/api/seguimiento', (req, res) => {
   const fields = ['unidad','operador','remolque','ruta','origen','destino','cita_carga','cita_descarga','hora_llegada','hora_liberacion','estatus','ubicacion_samsara','comentarios_cliente','comentarios_monitoreo','grupo'];
   const data = fields.reduce((acc, f) => { acc[f] = req.body[f] || ''; return acc; }, {});
+  const userName = actorFromReq(req);
+  const userId = req.user?.id || null;
+  data.created_by_user_id = userId;
+  data.created_by_username = userName;
   data.fecha_actualizacion = new Date().toISOString().replace('T', ' ').substring(0, 19);
   const cols = Object.keys(data).join(', ');
   const placeholders = Object.keys(data).map(() => '?').join(', ');
@@ -1468,13 +1498,14 @@ app.put('/api/seguimiento/:id', (req, res) => {
   db.get('SELECT * FROM seguimiento WHERE id = ?', [req.params.id], (err, row) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!row) return res.status(404).json({ error: 'No encontrado' });
+    const userName = actorFromReq(req);
     const fields = ['unidad','operador','remolque','ruta','origen','destino','cita_carga','cita_descarga','hora_llegada','hora_liberacion','estatus','ubicacion_samsara','comentarios_cliente','comentarios_monitoreo','grupo'];
     const updates = [];
     const values = [];
     fields.forEach(f => {
       const newVal = req.body[f] !== undefined ? req.body[f] : row[f];
       if (String(newVal) !== String(row[f])) {
-        db.run('INSERT INTO seguimiento_historial (seguimiento_id, campo, valor_anterior, valor_nuevo) VALUES (?, ?, ?, ?)', [req.params.id, f, row[f] || '', newVal || '']);
+        db.run('INSERT INTO seguimiento_historial (seguimiento_id, campo, valor_anterior, valor_nuevo, usuario) VALUES (?, ?, ?, ?, ?)', [req.params.id, f, row[f] || '', newVal || '', userName]);
       }
       updates.push(`${f} = ?`);
       values.push(newVal || '');
@@ -1491,9 +1522,10 @@ app.put('/api/seguimiento/:id', (req, res) => {
 app.delete('/api/seguimiento/:id', (req, res) => {
   db.get('SELECT * FROM seguimiento WHERE id = ?', [req.params.id], (err, row) => {
     if (row) {
+      const userName = actorFromReq(req);
       const fields = ['unidad','operador','remolque','ruta','origen','destino','cita_carga','cita_descarga','hora_llegada','hora_liberacion','estatus','ubicacion_samsara','comentarios_cliente','comentarios_monitoreo','grupo'];
       fields.forEach(f => {
-        db.run('INSERT INTO seguimiento_historial (seguimiento_id, campo, valor_anterior, valor_nuevo, usuario) VALUES (?, ?, ?, ?, ?)', [req.params.id, f, row[f] || '', '', 'Eliminado']);
+        db.run('INSERT INTO seguimiento_historial (seguimiento_id, campo, valor_anterior, valor_nuevo, usuario) VALUES (?, ?, ?, ?, ?)', [req.params.id, f, row[f] || '', '', userName]);
       });
     }
     db.run('DELETE FROM seguimiento WHERE id = ?', [req.params.id], function (err) {
@@ -1521,6 +1553,8 @@ app.post('/api/seguimiento/import', (req, res) => {
   const items = req.body;
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'Array de registros requerido' });
   let imported = 0;
+  const userName = actorFromReq(req);
+  const userId = req.user?.id || null;
   db.serialize(() => {
     db.run('DELETE FROM seguimiento');
     items.forEach(item => {
@@ -1540,6 +1574,8 @@ app.post('/api/seguimiento/import', (req, res) => {
         comentarios_cliente: item['COMENTARIOS CLIENTE'] || '',
         comentarios_monitoreo: item['COMENTARIOS MONITOREO'] || '',
         grupo: item.GRUPO || '',
+        created_by_user_id: userId,
+        created_by_username: userName,
         fecha_actualizacion: item['HORA ACTUALIZACION'] || new Date().toISOString().replace('T', ' ').substring(0, 19),
       };
       const cols = Object.keys(data).join(', ');
