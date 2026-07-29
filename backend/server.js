@@ -936,6 +936,13 @@ app.delete('/api/alertas/:id', (req, res) => {
   });
 });
 
+app.delete('/api/alertas', (req, res) => {
+  db.run('DELETE FROM alertas', [], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ changes: this.changes });
+  });
+});
+
 // ============ PENDIENTES ============
 
 app.get('/api/pendientes', (req, res) => {

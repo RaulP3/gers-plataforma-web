@@ -512,6 +512,12 @@ export default function Home() {
     loadAll();
   };
 
+  const limpiarAlertas = async () => {
+    if (!confirm('¿Limpiar todas las alertas? Esta acción no se puede deshacer.')) return;
+    await fetch(`${apiUrl}/alertas`, { method: 'DELETE' });
+    loadAll();
+  };
+
   const crearCliente = async (e) => {
     e.preventDefault();
     const nombre = prompt('Nombre del cliente:');
@@ -1857,6 +1863,7 @@ export default function Home() {
                   <option value="combustible_bajo">Combustible Bajo</option>
                 </select>
                 <button onClick={loadAll} style={s.button()}>Actualizar</button>
+                <button onClick={limpiarAlertas} style={s.button('#ef4444')}>Limpiar alertas</button>
               </div>
             </div>
             {alertas.filter(a => !filtroAlertas || a.tipo === filtroAlertas).length === 0 ? (
