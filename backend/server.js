@@ -62,6 +62,15 @@ function getQuery(sql, params = []) {
   });
 }
 
+function allQuery(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) return reject(err);
+      resolve(rows || []);
+    });
+  });
+}
+
 function createSessionToken() {
   return crypto.randomBytes(32).toString('hex');
 }
@@ -268,6 +277,18 @@ db.serialize(() => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     expires_at DATETIME NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id)
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS turnos_reportes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    turno TEXT,
+    horas INTEGER DEFAULT 8,
+    observaciones TEXT DEFAULT '',
+    resumen_json TEXT NOT NULL,
+    resumen_texto TEXT NOT NULL,
+    created_by INTEGER,
+    created_by_username TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
   db.run(`CREATE INDEX IF NOT EXISTS idx_route_history_vehicle_time ON route_history (vehicle_id, recorded_at)`);
@@ -507,6 +528,103 @@ app.post('/api/users', requireAuth, requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('Error al crear usuario:', err);
     res.status(500).json({ error: 'Error al crear usuario' });
+  }
+});
+
+function buildTurnoText(summary) {
+  const lines = [];
+  lines.push(`REPORTE DE ENTREGA DE TURNO`);
+  lines.push(`Periodo: ultimas ${summary.horas} horas`);
+  lines.push(`Generado: ${new Date().toLocaleString('es-MX')}`);
+  if (summary.turno) lines.push(`Turno: ${summary.turno}`);
+  if (summary.observaciones) lines.push(`Observaciones: ${summary.observaciones}`);
+  lines.push('');
+  lines.push('RESUMEN');
+  lines.push(`- Alertas no leidas: ${summary.alertasNoLeidas}`);
+  lines.push(`- Alertas de combustible bajo: ${summary.alertasCombustibleBajo}`);
+  lines.push(`- Pendientes abiertos: ${summary.pendientesAbiertos}`);
+  lines.push(`- Viajes activos: ${summary.viajesActivos}`);
+  lines.push(`- Eventos de geocerca: ${summary.eventosGeocerca}`);
+  lines.push(`- Unidades con ubicacion registrada: ${summary.unidadesConUbicacion}`);
+  lines.push('');
+  lines.push('LO MAS RELEVANTE');
+  if (summary.alertasCriticas.length === 0 && summary.eventosRecientes.length === 0 && summary.pendientesImportantes.length === 0) {
+    lines.push('- No se detectaron eventos criticos relevantes en el periodo.');
+  } else {
+    summary.alertasCriticas.forEach(a => lines.push(`- Alerta: ${a.vehicle_name || a.vehicle_id} | ${a.tipo} | ${a.mensaje}`));
+    summary.eventosRecientes.forEach(e => lines.push(`- Geocerca: ${e.vehicle_name || e.vehicle_id} | ${e.geofence_nombre} | ${e.tipo} | ${e.created_at}`));
+    summary.pendientesImportantes.forEach(p => lines.push(`- Pendiente: ${p.titulo} | ${p.estado} | ${p.prioridad}`));
+  }
+  return lines.join('\n');
+}
+
+async function getTurnoSummary(hours = 8, turno = '', observaciones = '') {
+  const safeHours = Math.max(1, Math.min(Number(hours) || 8, 72));
+  const periodStart = `datetime('now', '-${safeHours} hours')`;
+
+  const [alertasNoLeidas, alertasCombustibleBajo, pendientesAbiertos, viajesActivos, eventosGeocerca, eventosRecientes, alertasCriticas, pendientesImportantes, unidadesConUbicacion] = await Promise.all([
+    getQuery('SELECT COUNT(*) as total FROM alertas WHERE leida = 0'),
+    getQuery(`SELECT COUNT(*) as total FROM alertas WHERE tipo = 'combustible_bajo' AND timestamp >= ${periodStart}`),
+    getQuery("SELECT COUNT(*) as total FROM pendientes WHERE estado != 'completado'"),
+    getQuery("SELECT COUNT(*) as total FROM viajes WHERE estado NOT IN ('completado', 'cancelado')"),
+    getQuery(`SELECT COUNT(*) as total FROM geofence_events WHERE created_at >= ${periodStart}`),
+    allQuery(`SELECT * FROM geofence_events WHERE created_at >= ${periodStart} ORDER BY created_at DESC LIMIT 5`),
+    allQuery(`SELECT * FROM alertas WHERE (severidad IN ('critica', 'alta') OR tipo = 'combustible_bajo') AND timestamp >= ${periodStart} ORDER BY timestamp DESC LIMIT 5`),
+    allQuery(`SELECT * FROM pendientes WHERE estado != 'completado' AND fecha_creacion >= ${periodStart} ORDER BY CASE prioridad WHEN 'alta' THEN 1 WHEN 'media' THEN 2 WHEN 'baja' THEN 3 ELSE 4 END, fecha_creacion DESC LIMIT 8`),
+    getQuery('SELECT COUNT(*) as total FROM vehicle_locations'),
+  ]);
+
+  const summary = {
+    horas: safeHours,
+    turno,
+    observaciones,
+    alertasNoLeidas: alertasNoLeidas?.total || 0,
+    alertasCombustibleBajo: alertasCombustibleBajo?.total || 0,
+    pendientesAbiertos: pendientesAbiertos?.total || 0,
+    viajesActivos: viajesActivos?.total || 0,
+    eventosGeocerca: eventosGeocerca?.total || 0,
+    eventosRecientes,
+    alertasCriticas,
+    pendientesImportantes,
+    unidadesConUbicacion: unidadesConUbicacion?.total || 0,
+  };
+
+  summary.texto = buildTurnoText(summary);
+  return summary;
+}
+
+app.post('/api/turnos/entregar', async (req, res) => {
+  try {
+    const { horas = 8, turno = '', observaciones = '' } = req.body || {};
+    const summary = await getTurnoSummary(horas, turno, observaciones);
+    const saved = await runQuery(
+      `INSERT INTO turnos_reportes (turno, horas, observaciones, resumen_json, resumen_texto, created_by, created_by_username)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        turno || '',
+        summary.horas,
+        observaciones || '',
+        JSON.stringify(summary),
+        summary.texto,
+        req.user?.id || null,
+        req.user?.username || '',
+      ]
+    );
+    const report = await getQuery('SELECT * FROM turnos_reportes WHERE id = ?', [saved.lastID]);
+    res.json({ summary, report });
+  } catch (err) {
+    console.error('Error al generar entrega de turno:', err);
+    res.status(500).json({ error: 'Error al generar entrega de turno' });
+  }
+});
+
+app.get('/api/turnos/entregas', async (req, res) => {
+  try {
+    const reports = await allQuery('SELECT * FROM turnos_reportes ORDER BY created_at DESC LIMIT 50');
+    res.json(reports);
+  } catch (err) {
+    console.error('Error al consultar reportes de turno:', err);
+    res.status(500).json({ error: 'Error al consultar reportes de turno' });
   }
 });
 

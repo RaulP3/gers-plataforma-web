@@ -54,6 +54,10 @@ export default function Home() {
   const [showMensajeModal, setShowMensajeModal] = useState(false);
   const [mensajeCliente, setMensajeCliente] = useState('');
   const [mensajeTexto, setMensajeTexto] = useState('');
+  const [showTurnoModal, setShowTurnoModal] = useState(false);
+  const [turnoForm, setTurnoForm] = useState({ turno: '', horas: 8, observaciones: '' });
+  const [turnoSummary, setTurnoSummary] = useState(null);
+  const [turnoLoading, setTurnoLoading] = useState(false);
 
   const generarMensajeSeguimiento = (grupo) => {
     const filas = seguimiento.filter(row => row.grupo === grupo);
@@ -273,6 +277,25 @@ export default function Home() {
       }
     } catch (err) {
       setUsuarioMsg(err.message || 'Error al crear usuario');
+    }
+  };
+
+  const entregarTurno = async (e) => {
+    e.preventDefault();
+    setTurnoLoading(true);
+    try {
+      const res = await fetch(`${apiUrl}/turnos/entregar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(turnoForm),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'No se pudo generar el reporte');
+      setTurnoSummary(data);
+    } catch (err) {
+      alert(err.message || 'Error al generar el reporte');
+    } finally {
+      setTurnoLoading(false);
     }
   };
 
@@ -1153,6 +1176,7 @@ export default function Home() {
                 {placingZone ? '✕ Cancelar' : '➕ Zona'}
               </button>
               <button onClick={loadAll} style={{ padding: '6px 14px', background: '#00ff41', color: '#0d0d0d', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>Actualizar</button>
+              <button onClick={() => { setTurnoSummary(null); setShowTurnoModal(true); }} style={{ padding: '6px 14px', background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>Entregar turno</button>
             </div>
 
             <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
@@ -3417,6 +3441,90 @@ export default function Home() {
                   <button type="submit" style={s.button('#10b981')}>Guardar</button>
                 </div>
               </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showTurnoModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2200 }} onClick={() => { setShowTurnoModal(false); setTurnoSummary(null); }}>
+          <div style={{ background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '16px', width: '920px', maxWidth: '95vw', maxHeight: '90vh', overflow: 'auto', padding: '1.5rem' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <div>
+                <h2 style={{ margin: 0, color: '#00ff41' }}>Entregar turno</h2>
+                <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>Genera un resumen de lo mas importante sucedido en las ultimas horas</p>
+              </div>
+              <button onClick={() => { setShowTurnoModal(false); setTurnoSummary(null); }} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
+            </div>
+
+            {!turnoSummary ? (
+              <form onSubmit={entregarTurno} style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '1rem' }}>
+                <div>
+                  <label style={s.label}>Nombre del turno</label>
+                  <input style={s.input} placeholder="Ej: Turno noche" value={turnoForm.turno} onChange={(e) => setTurnoForm({ ...turnoForm, turno: e.target.value })} />
+                </div>
+                <div>
+                  <label style={s.label}>Horas a revisar</label>
+                  <input style={s.input} type="number" min="1" max="72" value={turnoForm.horas} onChange={(e) => setTurnoForm({ ...turnoForm, horas: e.target.value })} />
+                </div>
+                <div>
+                  <label style={s.label}>Observaciones</label>
+                  <input style={s.input} placeholder="Notas del turno" value={turnoForm.observaciones} onChange={(e) => setTurnoForm({ ...turnoForm, observaciones: e.target.value })} />
+                </div>
+                <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                  <button type="button" onClick={() => { setShowTurnoModal(false); setTurnoSummary(null); }} style={s.button('#6b7280')}>Cancelar</button>
+                  <button type="submit" disabled={turnoLoading} style={s.button('#1d4ed8')}>{turnoLoading ? 'Generando...' : 'Generar reporte'}</button>
+                </div>
+              </form>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div style={{ ...s.card, padding: '1rem' }}>
+                  <h3 style={{ marginTop: 0, color: '#00ff41' }}>Resumen general</h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.75rem' }}>
+                    <div style={{ padding: '0.75rem', background: '#0a0a0a', borderRadius: '8px', border: '1px solid #1a3d1a' }}><div style={{ color: '#6a9b6a', fontSize: '0.75rem' }}>Alertas no leidas</div><div style={{ color: '#fff', fontSize: '1.4rem', fontWeight: 700 }}>{turnoSummary.summary.alertasNoLeidas}</div></div>
+                    <div style={{ padding: '0.75rem', background: '#0a0a0a', borderRadius: '8px', border: '1px solid #1a3d1a' }}><div style={{ color: '#6a9b6a', fontSize: '0.75rem' }}>Combustible bajo</div><div style={{ color: '#fff', fontSize: '1.4rem', fontWeight: 700 }}>{turnoSummary.summary.alertasCombustibleBajo}</div></div>
+                    <div style={{ padding: '0.75rem', background: '#0a0a0a', borderRadius: '8px', border: '1px solid #1a3d1a' }}><div style={{ color: '#6a9b6a', fontSize: '0.75rem' }}>Pendientes abiertos</div><div style={{ color: '#fff', fontSize: '1.4rem', fontWeight: 700 }}>{turnoSummary.summary.pendientesAbiertos}</div></div>
+                    <div style={{ padding: '0.75rem', background: '#0a0a0a', borderRadius: '8px', border: '1px solid #1a3d1a' }}><div style={{ color: '#6a9b6a', fontSize: '0.75rem' }}>Viajes activos</div><div style={{ color: '#fff', fontSize: '1.4rem', fontWeight: 700 }}>{turnoSummary.summary.viajesActivos}</div></div>
+                    <div style={{ padding: '0.75rem', background: '#0a0a0a', borderRadius: '8px', border: '1px solid #1a3d1a' }}><div style={{ color: '#6a9b6a', fontSize: '0.75rem' }}>Eventos geocerca</div><div style={{ color: '#fff', fontSize: '1.4rem', fontWeight: 700 }}>{turnoSummary.summary.eventosGeocerca}</div></div>
+                    <div style={{ padding: '0.75rem', background: '#0a0a0a', borderRadius: '8px', border: '1px solid #1a3d1a' }}><div style={{ color: '#6a9b6a', fontSize: '0.75rem' }}>Ubicaciones</div><div style={{ color: '#fff', fontSize: '1.4rem', fontWeight: 700 }}>{turnoSummary.summary.unidadesConUbicacion}</div></div>
+                  </div>
+                </div>
+                <div style={{ ...s.card, padding: '1rem' }}>
+                  <h3 style={{ marginTop: 0, color: '#00ff41' }}>Reporte generado</h3>
+                  <textarea readOnly value={turnoSummary.summary.texto} style={{ width: '100%', minHeight: '420px', resize: 'vertical', background: '#0a0a0a', color: '#e5e7eb', border: '1px solid #1a3d1a', borderRadius: '8px', padding: '0.75rem', fontFamily: 'monospace', fontSize: '0.82rem', whiteSpace: 'pre-wrap' }} />
+                  <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', justifyContent: 'flex-end' }}>
+                    <button onClick={() => navigator.clipboard.writeText(turnoSummary.summary.texto)} style={s.button('#10b981')}>Copiar</button>
+                    <button onClick={() => { setTurnoSummary(null); }} style={s.button('#1d4ed8')}>Nuevo reporte</button>
+                    <button onClick={() => { setShowTurnoModal(false); setTurnoSummary(null); }} style={s.button('#6b7280')}>Cerrar</button>
+                  </div>
+                </div>
+                <div style={{ gridColumn: '1 / -1', ...s.card, padding: '1rem' }}>
+                  <h3 style={{ marginTop: 0, color: '#00ff41' }}>Lo mas relevante</h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
+                    <div>
+                      <strong style={{ color: '#e5e7eb' }}>Alertas criticas</strong>
+                      <div style={{ marginTop: '0.5rem', color: '#c0c0c0', fontSize: '0.85rem' }}>
+                        {turnoSummary.summary.alertasCriticas.length === 0 ? 'Sin alertas criticas en el periodo' : turnoSummary.summary.alertasCriticas.map((a, i) => <div key={i}>- {a.vehicle_name || a.vehicle_id}: {a.mensaje}</div>)}
+                      </div>
+                    </div>
+                    <div>
+                      <strong style={{ color: '#e5e7eb' }}>Pendientes prioritarios</strong>
+                      <div style={{ marginTop: '0.5rem', color: '#c0c0c0', fontSize: '0.85rem' }}>
+                        {turnoSummary.summary.pendientesImportantes.length === 0 ? 'Sin pendientes prioritarios recientes' : turnoSummary.summary.pendientesImportantes.map((p, i) => <div key={i}>- {p.titulo} ({p.prioridad})</div>)}
+                      </div>
+                    </div>
+                    <div>
+                      <strong style={{ color: '#e5e7eb' }}>Eventos recientes</strong>
+                      <div style={{ marginTop: '0.5rem', color: '#c0c0c0', fontSize: '0.85rem' }}>
+                        {turnoSummary.summary.eventosRecientes.length === 0 ? 'Sin eventos de geocerca recientes' : turnoSummary.summary.eventosRecientes.map((e, i) => <div key={i}>- {e.vehicle_name || e.vehicle_id}: {e.geofence_nombre} ({e.tipo})</div>)}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: '1rem', color: '#9ca3af', fontSize: '0.8rem' }}>
+                    Guardado por: {turnoSummary.report?.created_by_username || currentUser?.username || 'Sistema'}
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         </div>
