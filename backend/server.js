@@ -542,18 +542,26 @@ function buildTurnoText(summary) {
   lines.push('RESUMEN');
   lines.push(`- Alertas no leidas: ${summary.alertasNoLeidas}`);
   lines.push(`- Alertas de combustible bajo: ${summary.alertasCombustibleBajo}`);
-  lines.push(`- Pendientes abiertos: ${summary.pendientesAbiertos}`);
+  lines.push(`- Pendientes que quedan: ${summary.pendientesQueQuedanTotal}`);
+  lines.push(`- Pendientes resueltos en turno: ${summary.pendientesResueltosTotal}`);
   lines.push(`- Viajes activos: ${summary.viajesActivos}`);
   lines.push(`- Eventos de geocerca: ${summary.eventosGeocerca}`);
   lines.push(`- Unidades con ubicacion registrada: ${summary.unidadesConUbicacion}`);
   lines.push('');
   lines.push('LO MAS RELEVANTE');
-  if (summary.alertasCriticas.length === 0 && summary.eventosRecientes.length === 0 && summary.pendientesImportantes.length === 0) {
+  if (summary.alertasCriticas.length === 0 && summary.eventosRecientes.length === 0 && summary.pendientesQueQuedan.length === 0 && summary.pendientesResueltos.length === 0) {
     lines.push('- No se detectaron eventos criticos relevantes en el periodo.');
   } else {
     summary.alertasCriticas.forEach(a => lines.push(`- Alerta: ${a.vehicle_name || a.vehicle_id} | ${a.tipo} | ${a.mensaje}`));
     summary.eventosRecientes.forEach(e => lines.push(`- Geocerca: ${e.vehicle_name || e.vehicle_id} | ${e.geofence_nombre} | ${e.tipo} | ${e.created_at}`));
-    summary.pendientesImportantes.forEach(p => lines.push(`- Pendiente: ${p.titulo} | ${p.estado} | ${p.prioridad}`));
+    if (summary.pendientesResueltos.length) {
+      lines.push('Pendientes resueltos:');
+      summary.pendientesResueltos.forEach(p => lines.push(`- ${p.titulo} | ${p.prioridad} | ${p.fecha_actualizacion || p.fecha_creacion}`));
+    }
+    if (summary.pendientesQueQuedan.length) {
+      lines.push('Pendientes que se quedan:');
+      summary.pendientesQueQuedan.forEach(p => lines.push(`- ${p.titulo} | ${p.prioridad} | ${p.estado} | ${p.asignado_a || 'Sin asignar'}`));
+    }
   }
   return lines.join('\n');
 }
@@ -562,15 +570,17 @@ async function getTurnoSummary(hours = 8, turno = '', observaciones = '') {
   const safeHours = Math.max(1, Math.min(Number(hours) || 8, 72));
   const periodStart = `datetime('now', '-${safeHours} hours')`;
 
-  const [alertasNoLeidas, alertasCombustibleBajo, pendientesAbiertos, viajesActivos, eventosGeocerca, eventosRecientes, alertasCriticas, pendientesImportantes, unidadesConUbicacion] = await Promise.all([
+  const [alertasNoLeidas, alertasCombustibleBajo, pendientesQueQuedanTotal, pendientesResueltosTotal, viajesActivos, eventosGeocerca, eventosRecientes, alertasCriticas, pendientesQueQuedan, pendientesResueltos, unidadesConUbicacion] = await Promise.all([
     getQuery('SELECT COUNT(*) as total FROM alertas WHERE leida = 0'),
     getQuery(`SELECT COUNT(*) as total FROM alertas WHERE tipo = 'combustible_bajo' AND timestamp >= ${periodStart}`),
     getQuery("SELECT COUNT(*) as total FROM pendientes WHERE estado != 'completado'"),
+    getQuery(`SELECT COUNT(*) as total FROM pendientes WHERE estado = 'completado' AND fecha_actualizacion >= ${periodStart}`),
     getQuery("SELECT COUNT(*) as total FROM viajes WHERE estado NOT IN ('completado', 'cancelado')"),
     getQuery(`SELECT COUNT(*) as total FROM geofence_events WHERE created_at >= ${periodStart}`),
     allQuery(`SELECT * FROM geofence_events WHERE created_at >= ${periodStart} ORDER BY created_at DESC LIMIT 5`),
     allQuery(`SELECT * FROM alertas WHERE (severidad IN ('critica', 'alta') OR tipo = 'combustible_bajo') AND timestamp >= ${periodStart} ORDER BY timestamp DESC LIMIT 5`),
-    allQuery(`SELECT * FROM pendientes WHERE estado != 'completado' AND fecha_creacion >= ${periodStart} ORDER BY CASE prioridad WHEN 'alta' THEN 1 WHEN 'media' THEN 2 WHEN 'baja' THEN 3 ELSE 4 END, fecha_creacion DESC LIMIT 8`),
+    allQuery(`SELECT * FROM pendientes WHERE estado != 'completado' ORDER BY CASE prioridad WHEN 'alta' THEN 1 WHEN 'media' THEN 2 WHEN 'baja' THEN 3 ELSE 4 END, fecha_creacion DESC LIMIT 8`),
+    allQuery(`SELECT * FROM pendientes WHERE estado = 'completado' AND fecha_actualizacion >= ${periodStart} ORDER BY fecha_actualizacion DESC LIMIT 8`),
     getQuery('SELECT COUNT(*) as total FROM vehicle_locations'),
   ]);
 
@@ -580,12 +590,14 @@ async function getTurnoSummary(hours = 8, turno = '', observaciones = '') {
     observaciones,
     alertasNoLeidas: alertasNoLeidas?.total || 0,
     alertasCombustibleBajo: alertasCombustibleBajo?.total || 0,
-    pendientesAbiertos: pendientesAbiertos?.total || 0,
+    pendientesQueQuedanTotal: pendientesQueQuedanTotal?.total || 0,
+    pendientesResueltosTotal: pendientesResueltosTotal?.total || 0,
     viajesActivos: viajesActivos?.total || 0,
     eventosGeocerca: eventosGeocerca?.total || 0,
     eventosRecientes,
     alertasCriticas,
-    pendientesImportantes,
+    pendientesQueQuedan,
+    pendientesResueltos,
     unidadesConUbicacion: unidadesConUbicacion?.total || 0,
   };
 
