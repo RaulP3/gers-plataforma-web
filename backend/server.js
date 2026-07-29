@@ -4,6 +4,7 @@ const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
 const axios = require('axios');
 const path = require('path');
+const crypto = require('crypto');
 
 const fs = require('fs');
 const app = express();
@@ -29,6 +30,90 @@ const db = new sqlite3.Database(dbPath, (err) => {
   if (err) console.error('Error al conectar con SQLite:', err);
   else console.log('Conectado a SQLite en', dbPath);
 });
+
+const PBKDF2_ITERATIONS = 120000;
+const SESSION_DAYS = 30;
+
+function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const hash = crypto.pbkdf2Sync(password, salt, PBKDF2_ITERATIONS, 64, 'sha512').toString('hex');
+  return { salt, hash };
+}
+
+function verifyPassword(password, salt, storedHash) {
+  const { hash } = hashPassword(password, salt);
+  return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(storedHash, 'hex'));
+}
+
+function runQuery(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function (err) {
+      if (err) return reject(err);
+      resolve(this);
+    });
+  });
+}
+
+function getQuery(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) return reject(err);
+      resolve(row);
+    });
+  });
+}
+
+function createSessionToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+async function getUserByToken(token) {
+  return getQuery(
+    `SELECT u.id, u.username, u.nombre, u.rol
+     FROM sessions s
+     JOIN users u ON u.id = s.user_id
+     WHERE s.token = ? AND s.revoked = 0 AND s.expires_at > CURRENT_TIMESTAMP`,
+    [token]
+  );
+}
+
+async function refreshSession(token) {
+  await runQuery(`UPDATE sessions SET expires_at = datetime('now', '+${SESSION_DAYS} days') WHERE token = ? AND revoked = 0`, [token]);
+}
+
+async function requireAuth(req, res, next) {
+  try {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : req.headers['x-auth-token'];
+    if (!token) return res.status(401).json({ error: 'No autenticado' });
+    const user = await getUserByToken(token);
+    if (!user) return res.status(401).json({ error: 'Sesión inválida o expirada' });
+    await refreshSession(token);
+    req.user = user;
+    req.authToken = token;
+    next();
+  } catch (err) {
+    console.error('Error de autenticación:', err);
+    res.status(500).json({ error: 'Error de autenticación' });
+  }
+}
+
+async function ensureDefaultAdmin() {
+  try {
+    const user = await getQuery('SELECT COUNT(*) as total FROM users');
+    if (user && user.total > 0) return;
+    const adminUser = process.env.ADMIN_USERNAME || 'admin';
+    const adminPass = process.env.ADMIN_PASSWORD || 'admin123';
+    const name = process.env.ADMIN_NAME || 'Administrador';
+    const { salt, hash } = hashPassword(adminPass);
+    await runQuery(
+      'INSERT INTO users (username, password_hash, password_salt, nombre, rol, activo) VALUES (?, ?, ?, ?, ?, 1)',
+      [adminUser, hash, salt, name, 'admin']
+    );
+    console.log(`Usuario admin inicial creado: ${adminUser}`);
+  } catch (err) {
+    console.error('No se pudo crear el usuario admin inicial:', err);
+  }
+}
 
 db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS viajes (
@@ -161,6 +246,28 @@ db.serialize(() => {
     heading REAL,
     location TEXT,
     recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    password_salt TEXT NOT NULL,
+    nombre TEXT,
+    rol TEXT DEFAULT 'user',
+    activo INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+    revoked INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
   )`);
 
   db.run(`CREATE INDEX IF NOT EXISTS idx_route_history_vehicle_time ON route_history (vehicle_id, recorded_at)`);
@@ -303,12 +410,109 @@ db.serialize(() => {
   });
 });
 
+ensureDefaultAdmin();
+
 const samsaraApi = axios.create({
   baseURL: 'https://api.samsara.com/v1',
   headers: {
     'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`,
     'Content-Type': 'application/json'
   }
+});
+
+function requireAdmin(req, res, next) {
+  if (req.user?.rol !== 'admin') {
+    return res.status(403).json({ error: 'Requiere permisos de administrador' });
+  }
+  next();
+}
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Usuario y contraseña son obligatorios' });
+    }
+
+    const user = await getQuery('SELECT * FROM users WHERE username = ? AND activo = 1', [username.trim()]);
+    if (!user) return res.status(401).json({ error: 'Credenciales inválidas' });
+    if (!verifyPassword(password, user.password_salt, user.password_hash)) {
+      return res.status(401).json({ error: 'Credenciales inválidas' });
+    }
+
+    const token = createSessionToken();
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString();
+    await runQuery(`INSERT INTO sessions (user_id, token, expires_at) VALUES (?, ?, datetime('now', '+${SESSION_DAYS} days'))`, [user.id, token]);
+
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        nombre: user.nombre,
+        rol: user.rol,
+      },
+      expiresAt,
+    });
+  } catch (err) {
+    console.error('Error en login:', err);
+    res.status(500).json({ error: 'Error al iniciar sesión' });
+  }
+});
+
+app.get('/api/auth/me', requireAuth, async (req, res) => {
+  res.json({ user: req.user });
+});
+
+app.post('/api/auth/logout', requireAuth, async (req, res) => {
+  try {
+    await runQuery('UPDATE sessions SET revoked = 1 WHERE token = ?', [req.authToken]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Error al cerrar sesión:', err);
+    res.status(500).json({ error: 'Error al cerrar sesión' });
+  }
+});
+
+app.get('/api/users', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const users = await new Promise((resolve, reject) => {
+      db.all('SELECT id, username, nombre, rol, activo, created_at, updated_at FROM users ORDER BY created_at DESC', [], (err, rows) => {
+        if (err) return reject(err);
+        resolve(rows || []);
+      });
+    });
+    res.json(users);
+  } catch (err) {
+    console.error('Error al listar usuarios:', err);
+    res.status(500).json({ error: 'Error al listar usuarios' });
+  }
+});
+
+app.post('/api/users', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { username, password, nombre = '', rol = 'user' } = req.body || {};
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Usuario y contraseña son obligatorios' });
+    }
+    const existing = await getQuery('SELECT id FROM users WHERE username = ?', [username.trim()]);
+    if (existing) return res.status(409).json({ error: 'El usuario ya existe' });
+    const { salt, hash } = hashPassword(password);
+    const result = await runQuery(
+      'INSERT INTO users (username, password_hash, password_salt, nombre, rol, activo) VALUES (?, ?, ?, ?, ?, 1)',
+      [username.trim(), hash, salt, nombre.trim(), rol]
+    );
+    const user = await getQuery('SELECT id, username, nombre, rol, activo, created_at, updated_at FROM users WHERE id = ?', [result.lastID]);
+    res.status(201).json(user);
+  } catch (err) {
+    console.error('Error al crear usuario:', err);
+    res.status(500).json({ error: 'Error al crear usuario' });
+  }
+});
+
+app.use('/api', (req, res, next) => {
+  if (req.path.startsWith('/auth')) return next();
+  return requireAuth(req, res, next);
 });
 
 // ============ SAMSARA VEHICLES + LOCATIONS ============

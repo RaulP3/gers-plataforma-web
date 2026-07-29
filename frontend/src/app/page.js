@@ -10,6 +10,14 @@ const RouteMap = dynamic(() => import('../components/RouteMap'), { ssr: false })
 
 export default function Home() {
   const [apiUrl, setApiUrl] = useState('');
+  const [authToken, setAuthToken] = useState('');
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+  const [loginError, setLoginError] = useState('');
+  const [usuarios, setUsuarios] = useState([]);
+  const [formUsuario, setFormUsuario] = useState({ username: '', password: '', nombre: '', rol: 'user' });
+  const [usuarioMsg, setUsuarioMsg] = useState('');
   const [activeTab, setActiveTab] = useState('dashboard');
   const [stats, setStats] = useState({});
   const [pendientes, setPendientes] = useState([]);
@@ -178,18 +186,105 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (apiUrl) loadAll();
+    if (!apiUrl) return;
+    const initAuth = async () => {
+      const storedToken = localStorage.getItem('gers_auth_token');
+      if (!storedToken) {
+        setAuthLoading(false);
+        return;
+      }
+      try {
+        const meRes = await fetch(`${apiUrl}/auth/me`, {
+          headers: { Authorization: `Bearer ${storedToken}` },
+        });
+        if (!meRes.ok) throw new Error('Sesión inválida');
+        const meData = await meRes.json();
+        setAuthToken(storedToken);
+        setCurrentUser(meData.user);
+      } catch {
+        localStorage.removeItem('gers_auth_token');
+        setAuthToken('');
+        setCurrentUser(null);
+      } finally {
+        setAuthLoading(false);
+      }
+    };
+    initAuth();
   }, [apiUrl]);
 
   useEffect(() => {
-    if (!apiUrl) return;
+    if (apiUrl && currentUser) loadAll();
+  }, [apiUrl, currentUser]);
+
+  const apiRequest = (url, options = {}) => {
+    const headers = { ...(options.headers || {}) };
+    const isBackendUrl = typeof url === 'string' && apiUrl && url.startsWith(apiUrl);
+    if (isBackendUrl && authToken && !headers.Authorization) headers.Authorization = `Bearer ${authToken}`;
+    return globalThis.fetch(url, { ...options, headers });
+  };
+
+  const authFetch = apiRequest;
+  const fetch = apiRequest;
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setLoginError('');
+    try {
+      const res = await fetch(`${apiUrl}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(loginForm),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'No se pudo iniciar sesión');
+      localStorage.setItem('gers_auth_token', data.token);
+      setAuthToken(data.token);
+      setCurrentUser(data.user);
+    } catch (err) {
+      setLoginError(err.message || 'Error al iniciar sesión');
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await authFetch(`${apiUrl}/auth/logout`, { method: 'POST' });
+    } catch {}
+    localStorage.removeItem('gers_auth_token');
+    setAuthToken('');
+    setCurrentUser(null);
+  };
+
+  const guardarUsuario = async (e) => {
+    e.preventDefault();
+    setUsuarioMsg('');
+    try {
+      const res = await authFetch(`${apiUrl}/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formUsuario),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'No se pudo crear el usuario');
+      setUsuarioMsg(`Usuario ${data.username} creado`);
+      setFormUsuario({ username: '', password: '', nombre: '', rol: 'user' });
+      if (currentUser?.rol === 'admin') {
+        const lista = await authFetch(`${apiUrl}/users`).then(r => r.json()).catch(() => []);
+        setUsuarios(Array.isArray(lista) ? lista : []);
+      }
+    } catch (err) {
+      setUsuarioMsg(err.message || 'Error al crear usuario');
+    }
+  };
+
+  useEffect(() => {
+    if (!apiUrl || !currentUser) return;
     const interval = setInterval(() => {
-      fetch(`${apiUrl}/samsara/vehicles`).then(r => r.json()).then(v => {
+      authFetch(`${apiUrl}/samsara/vehicles`).then(r => r.json()).then(v => {
         setVehiculos(Array.isArray(v) ? v : (v.data || v.vehicles || []));
       }).catch(() => {});
     }, 15000);
     return () => clearInterval(interval);
-  }, [apiUrl]);
+  }, [apiUrl, currentUser, authToken]);
 
   useEffect(() => {
     if (!destinoInput.trim() || !selectedVehicle?.location) { setEtaData(null); return; }
@@ -274,6 +369,10 @@ export default function Home() {
       if (vehiculosRes.status === 'fulfilled') {
         const v = vehiculosRes.value;
         setVehiculos(Array.isArray(v) ? v : (v.data || v.vehicles || []));
+      }
+      if (currentUser?.rol === 'admin') {
+        const usersRes = await fetch(`${apiUrl}/users`).then(r => r.json()).catch(() => []);
+        setUsuarios(Array.isArray(usersRes) ? usersRes : []);
       }
     } catch (e) {
       console.error('Error cargando datos:', e);
@@ -891,6 +990,32 @@ export default function Home() {
     return [...samsaraMapped, ...localMapped];
   }, [vehiculos, unidadesLocales]);
 
+  if (authLoading) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: '#0a0a0a', color: '#00ff41' }}>
+        <div>Cargando autenticación...</div>
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'radial-gradient(circle at top, #102010, #0a0a0a 60%)', color: '#e5e7eb', padding: '1.5rem' }}>
+        <form onSubmit={handleLogin} style={{ width: '100%', maxWidth: '420px', background: '#111111', border: '1px solid #1a3d1a', borderRadius: '16px', padding: '2rem', boxShadow: '0 0 30px rgba(0,255,65,0.08)' }}>
+          <div style={{ fontSize: '2rem', fontWeight: 800, color: '#00ff41', marginBottom: '0.5rem' }}>GERS</div>
+          <div style={{ opacity: 0.75, marginBottom: '1.5rem' }}>Acceso al sistema</div>
+          <label style={{ display: 'block', marginBottom: '0.3rem', fontSize: '0.8rem', color: '#6a9b6a' }}>Usuario</label>
+          <input value={loginForm.username} onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })} style={{ width: '100%', marginBottom: '1rem', padding: '0.75rem', borderRadius: '10px', border: '1px solid #1a3d1a', background: '#0d0d0d', color: '#fff' }} />
+          <label style={{ display: 'block', marginBottom: '0.3rem', fontSize: '0.8rem', color: '#6a9b6a' }}>Contraseña</label>
+          <input type="password" value={loginForm.password} onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })} style={{ width: '100%', marginBottom: '1rem', padding: '0.75rem', borderRadius: '10px', border: '1px solid #1a3d1a', background: '#0d0d0d', color: '#fff' }} />
+          {loginError && <div style={{ color: '#f87171', marginBottom: '1rem', fontSize: '0.9rem' }}>{loginError}</div>}
+          <button type="submit" style={{ width: '100%', padding: '0.85rem', borderRadius: '10px', border: '1px solid #00ff41', background: '#00ff41', color: '#0a0a0a', fontWeight: 700, cursor: 'pointer' }}>Entrar</button>
+          <div style={{ marginTop: '1rem', fontSize: '0.78rem', opacity: 0.55 }}>Usuario inicial: admin / admin123</div>
+        </form>
+      </div>
+    );
+  }
+
   const menuItems = [
     { key: 'dashboard', label: 'Dashboard', icon: '📊' },
     { key: 'unidades', label: 'Unidades', icon: '🚛', badge: todasLasUnidades.length },
@@ -905,6 +1030,7 @@ export default function Home() {
     { key: 'geocercas', label: 'Geocercas', icon: '⭕' },
     { key: 'rutas', label: 'Historial Rutas', icon: '🛤️' },
     { key: 'reportes', label: 'Reportes', icon: '📈' },
+    ...(currentUser?.rol === 'admin' ? [{ key: 'usuarios', label: 'Usuarios', icon: '🔐' }] : []),
   ];
 
   const s = {
@@ -971,6 +1097,12 @@ export default function Home() {
         {!sidebarCollapsed && (
           <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid #1a3d1a', fontSize: '0.75rem', opacity: 0.4 }}>
             GERS Platform v1.0
+          </div>
+        )}
+        {!sidebarCollapsed && currentUser && (
+          <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid #1a3d1a' }}>
+            <div style={{ fontSize: '0.78rem', color: '#9ca3af', marginBottom: '0.75rem' }}>{currentUser.nombre || currentUser.username}</div>
+            <button onClick={handleLogout} style={{ width: '100%', padding: '0.55rem 0.8rem', borderRadius: '8px', border: '1px solid #00ff41', background: 'transparent', color: '#00ff41', cursor: 'pointer' }}>Salir</button>
           </div>
         )}
       </aside>
@@ -2519,6 +2651,63 @@ export default function Home() {
                   </>
                 )}
               </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'usuarios' && currentUser?.rol === 'admin' && (
+          <div>
+            <h2 style={{ marginTop: 0, marginBottom: '1.5rem' }}>Usuarios</h2>
+            <div style={{ ...s.card, marginBottom: '1.5rem' }}>
+              <form onSubmit={guardarUsuario} style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '0.75rem', alignItems: 'end' }}>
+                <div>
+                  <label style={s.label}>Usuario</label>
+                  <input style={s.input} value={formUsuario.username} onChange={(e) => setFormUsuario({ ...formUsuario, username: e.target.value })} required />
+                </div>
+                <div>
+                  <label style={s.label}>Nombre</label>
+                  <input style={s.input} value={formUsuario.nombre} onChange={(e) => setFormUsuario({ ...formUsuario, nombre: e.target.value })} />
+                </div>
+                <div>
+                  <label style={s.label}>Contraseña</label>
+                  <input style={s.input} type="password" value={formUsuario.password} onChange={(e) => setFormUsuario({ ...formUsuario, password: e.target.value })} required />
+                </div>
+                <div>
+                  <label style={s.label}>Rol</label>
+                  <select style={s.select} value={formUsuario.rol} onChange={(e) => setFormUsuario({ ...formUsuario, rol: e.target.value })}>
+                    <option value="user">Usuario</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+                <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                  <button type="submit" style={s.button('#00ff41')}>Crear usuario</button>
+                  {usuarioMsg && <span style={{ color: '#6a9b6a', fontSize: '0.85rem' }}>{usuarioMsg}</span>}
+                </div>
+              </form>
+            </div>
+            <div style={s.card}>
+              <table style={s.table}>
+                <thead>
+                  <tr>
+                    <th style={s.th}>Usuario</th>
+                    <th style={s.th}>Nombre</th>
+                    <th style={s.th}>Rol</th>
+                    <th style={s.th}>Estado</th>
+                    <th style={s.th}>Creado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {usuarios.map((u) => (
+                    <tr key={u.id}>
+                      <td style={s.td}>{u.username}</td>
+                      <td style={s.td}>{u.nombre || '-'}</td>
+                      <td style={s.td}>{u.rol}</td>
+                      <td style={s.td}>{u.activo ? 'Activo' : 'Inactivo'}</td>
+                      <td style={s.td}>{u.created_at || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
