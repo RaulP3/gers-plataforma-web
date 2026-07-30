@@ -185,6 +185,26 @@ db.serialize(() => {
     FOREIGN KEY (pendiente_id) REFERENCES pendientes(id)
   )`);
 
+  db.run(`CREATE TABLE IF NOT EXISTS pendientes_historial (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pendiente_id INTEGER,
+    titulo TEXT NOT NULL,
+    descripcion TEXT,
+    prioridad TEXT,
+    estado TEXT,
+    asignado_a TEXT,
+    turno TEXT,
+    notas TEXT,
+    creado_por TEXT,
+    created_by_user_id INTEGER,
+    created_by_username TEXT,
+    fecha_creacion DATETIME,
+    fecha_actualizacion DATETIME,
+    archived_by_user_id INTEGER,
+    archived_by_username TEXT,
+    archived_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
   db.run(`CREATE TABLE IF NOT EXISTS comentarios (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     vehicle_id TEXT NOT NULL,
@@ -1043,7 +1063,7 @@ app.post('/api/check-fuel', async (req, res) => {
 
     const alerts = [];
     for (const v of vehicles) {
-      if (v.fuelLevelPercent !== null && v.fuelLevelPercent < 0.25) {
+      if (v.fuelLevelPercent !== null && v.fuelLevelPercent <= 0.2) {
         const recent = await new Promise((resolve) => {
           db.get(
             `SELECT id FROM alertas WHERE vehicle_id = ? AND tipo = 'combustible_bajo' AND timestamp > datetime('now', '-4 hours')`,
@@ -1253,6 +1273,50 @@ app.delete('/api/pendientes/:id/comentarios/:comentarioId', (req, res) => {
   });
 });
 
+app.get('/api/pendientes/historial', (req, res) => {
+  db.all('SELECT * FROM pendientes_historial ORDER BY archived_at DESC, id DESC', [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows || []);
+  });
+});
+
+app.post('/api/pendientes/archivar-completados', (req, res) => {
+  db.all('SELECT * FROM pendientes WHERE estado = "completado" ORDER BY fecha_actualizacion DESC', [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!rows || rows.length === 0) return res.json({ archived: 0 });
+
+    const archivedByUserId = req.user?.id || null;
+    const archivedByUsername = actorFromReq(req);
+
+    db.serialize(() => {
+      const insertStmt = db.prepare(`
+        INSERT INTO pendientes_historial (
+          pendiente_id, titulo, descripcion, prioridad, estado, asignado_a, turno, notas,
+          creado_por, created_by_user_id, created_by_username, fecha_creacion, fecha_actualizacion,
+          archived_by_user_id, archived_by_username
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      rows.forEach((row) => {
+        insertStmt.run([
+          row.id, row.titulo, row.descripcion || '', row.prioridad || 'media', row.estado || 'completado',
+          row.asignado_a || '', row.turno || '', row.notas || '', row.creado_por || '',
+          row.created_by_user_id || null, row.created_by_username || '', row.fecha_creacion || null,
+          row.fecha_actualizacion || null, archivedByUserId, archivedByUsername,
+        ]);
+      });
+
+      insertStmt.finalize((finalizeErr) => {
+        if (finalizeErr) return res.status(500).json({ error: finalizeErr.message });
+        db.run('DELETE FROM pendientes WHERE estado = "completado"', [], function (deleteErr) {
+          if (deleteErr) return res.status(500).json({ error: deleteErr.message });
+          res.json({ archived: this.changes || rows.length });
+        });
+      });
+    });
+  });
+});
+
 // ============ COMENTARIOS / SEGUIMIENTO ============
 
 app.get('/api/comentarios', (req, res) => {
@@ -1271,12 +1335,12 @@ app.get('/api/comentarios', (req, res) => {
 });
 
 app.post('/api/comentarios', (req, res) => {
-  const { vehicle_id, vehicle_name, tipo, titulo, contenido, kilometraje } = req.body;
+  const { vehicle_id, vehicle_name, tipo, titulo, contenido, kilometraje, remolque, grupo, origen, destino, estatus } = req.body;
   const userName = actorFromReq(req);
   const userId = req.user?.id || null;
   db.run(
-    'INSERT INTO comentarios (vehicle_id, vehicle_name, autor, tipo, titulo, contenido, kilometraje, created_by_user_id, created_by_username) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [vehicle_id, vehicle_name, userName, tipo || 'seguimiento', titulo || null, contenido, kilometraje || null, userId, userName],
+    'INSERT INTO comentarios (vehicle_id, vehicle_name, autor, tipo, titulo, contenido, kilometraje, estatus, remolque, grupo, origen, destino, created_by_user_id, created_by_username) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [vehicle_id, vehicle_name, userName, tipo || 'seguimiento', titulo || null, contenido, kilometraje || null, estatus || '', remolque || '', grupo || '', origen || '', destino || '', userId, userName],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ id: this.lastID });
@@ -1532,6 +1596,15 @@ app.post('/api/remolques', (req, res) => {
 
 app.delete('/api/remolques/:id', (req, res) => {
   db.run('DELETE FROM remolques WHERE id = ?', [req.params.id], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ changes: this.changes });
+  });
+});
+
+app.put('/api/remolques/:id', (req, res) => {
+  const { numero, categoria } = req.body;
+  if (!numero) return res.status(400).json({ error: 'numero es requerido' });
+  db.run('UPDATE remolques SET numero = ?, categoria = ? WHERE id = ?', [numero.trim(), categoria || 'Caja Seca', req.params.id], function (err) {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ changes: this.changes });
   });

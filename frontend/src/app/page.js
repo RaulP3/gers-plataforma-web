@@ -27,6 +27,8 @@ export default function Home() {
   const [formPendiente, setFormPendiente] = useState({ titulo: '', descripcion: '', prioridad: 'media', asignado_a: '', turno: '', notas: '' });
   const [draggedPendiente, setDraggedPendiente] = useState(null);
   const [dragOverColumn, setDragOverColumn] = useState(null);
+  const [showHistorialModal, setShowHistorialModal] = useState(false);
+  const [historialPendientes, setHistorialPendientes] = useState([]);
   const [nuevoComentarioPendiente, setNuevoComentarioPendiente] = useState('');
   const [viajes, setViajes] = useState([]);
   const [alertas, setAlertas] = useState([]);
@@ -42,6 +44,7 @@ export default function Home() {
   const [remolques, setRemolques] = useState([]);
   const [showRemolqueModal, setShowRemolqueModal] = useState(false);
   const [formRemolque, setFormRemolque] = useState({ numero: '', categoria: 'Caja Seca' });
+  const [remolqueEditando, setRemolqueEditando] = useState(null);
   const [historialRemolque, setHistorialRemolque] = useState([]);
   const [selectedRemolque, setSelectedRemolque] = useState(null);
   const [seguimiento, setSeguimiento] = useState([]);
@@ -50,6 +53,7 @@ export default function Home() {
   const [seguimientoGrupoFilter, setSeguimientoGrupoFilter] = useState('');
   const [seguimientoUnidadFilter, setSeguimientoUnidadFilter] = useState('');
   const [seguimientoEditando, setSeguimientoEditando] = useState(null);
+  const [showSeguimientoForm, setShowSeguimientoForm] = useState(false);
   const [formSeguimiento, setFormSeguimiento] = useState({
     unidad: '', operador: '', remolque: '', ruta: '', origen: '', destino: '',
     cita_carga: '', cita_descarga: '', hora_llegada: '', hora_liberacion: '',
@@ -531,6 +535,22 @@ export default function Home() {
     setPendienteEditando({ ...pendienteEditando, comentarios });
   };
 
+  const archivarCompletados = async () => {
+    const completados = pendientes.filter(p => p.estado === 'completado');
+    if (completados.length === 0) { alert('No hay pendientes completados para archivar'); return; }
+    if (!confirm(`¿Archivar ${completados.length} pendiente(s) completado(s)?`)) return;
+    const res = await fetch(`${apiUrl}/pendientes/archivar-completados`, { method: 'POST' });
+    const data = await res.json();
+    if (data.archived > 0) { alert(`${data.archived} pendiente(s) archivado(s)`); loadAll(); }
+  };
+
+  const cargarHistorial = async () => {
+    setShowHistorialModal(true);
+    const res = await fetch(`${apiUrl}/pendientes/historial`);
+    const data = await res.json();
+    setHistorialPendientes(data);
+  };
+
   const handleDragStart = (e, pendiente) => {
     setDraggedPendiente(pendiente);
     e.dataTransfer.effectAllowed = 'move';
@@ -624,16 +644,24 @@ export default function Home() {
 
   const crearRemolque = async () => {
     if (!formRemolque.numero.trim()) return;
-    const res = await fetch(`${apiUrl}/remolques`, {
-      method: 'POST',
+    const isEditing = !!remolqueEditando;
+    const res = await fetch(`${apiUrl}/remolques${isEditing ? `/${remolqueEditando.id}` : ''}`, {
+      method: isEditing ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(formRemolque),
     });
     const data = await res.json();
     if (data.error) { alert(data.error); return; }
     setShowRemolqueModal(false);
+    setRemolqueEditando(null);
     setFormRemolque({ numero: '', categoria: 'Caja Seca' });
     loadAll();
+  };
+
+  const cerrarRemolqueModal = () => {
+    setShowRemolqueModal(false);
+    setRemolqueEditando(null);
+    setFormRemolque({ numero: '', categoria: 'Caja Seca' });
   };
 
   const eliminarRemolque = async (id) => {
@@ -841,6 +869,7 @@ export default function Home() {
       estatus: 'Disponible', comentarios_cliente: '', comentarios_monitoreo: '', grupo: ''
     });
     setSeguimientoEditando(null);
+    setShowSeguimientoForm(false);
   };
 
   const guardarSeguimiento = async (e) => {
@@ -877,6 +906,7 @@ export default function Home() {
 
   const editarSeguimiento = (row) => {
     setSeguimientoEditando(row);
+    setShowSeguimientoForm(true);
     setFormSeguimiento({
       unidad: row.unidad || '',
       operador: row.operador || '',
@@ -1362,16 +1392,16 @@ export default function Home() {
 
   const menuItems = [
     { key: 'dashboard', label: 'Dashboard', icon: '📊' },
-    { key: 'unidades', label: 'Unidades', icon: '🚛', badge: todasLasUnidades.length },
     { key: 'monitoreo', label: 'Monitoreo', icon: '🗺️' },
+    { key: 'seguimiento', label: 'Seguimiento', icon: '📊' },
     { key: 'notas', label: 'Notas', icon: '📝' },
-    { key: 'alertas', label: 'Alertas', icon: '🔔', badge: alertasNoLeidas.length },
     { key: 'operaciones', label: 'Pendientes', icon: '📋' },
     { key: 'viajes', label: 'Viajes', icon: '🚚' },
+    { key: 'geocercas', label: 'Geocercas', icon: '⭕' },
+    { key: 'unidades', label: 'Unidades', icon: '🚛', badge: todasLasUnidades.length },
+    { key: 'alertas', label: 'Alertas', icon: '🔔', badge: alertasNoLeidas.length },
     { key: 'operadores', label: 'Operadores', icon: '👤' },
     { key: 'remolques', label: 'Remolques', icon: '🚛' },
-    { key: 'seguimiento', label: 'Seguimiento', icon: '📊' },
-    { key: 'geocercas', label: 'Geocercas', icon: '⭕' },
     { key: 'rutas', label: 'Historial Rutas', icon: '🛤️' },
     { key: 'reportes', label: 'Reportes', icon: '📈' },
     ...(currentUser?.rol === 'admin' ? [{ key: 'usuarios', label: 'Usuarios', icon: '🔐' }] : []),
@@ -2175,7 +2205,7 @@ export default function Home() {
                         <div style={{ fontSize: '0.75rem', color: '#4a8a4a', marginTop: '0.25rem' }}>{parseFecha(a.timestamp)?.toLocaleString()}</div>
                       </div>
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
-                        {!a.leida && <button onClick={() => marcarAlertaLeida(a.id)} style={s.button('#10b981')}>Leída</button>}
+                        {!a.leida && <button onClick={() => marcarAlertaLeida(a.id)} style={s.button('#10b981')}>Resuelta</button>}
                         <button onClick={() => eliminarAlerta(a.id)} style={s.button('#ef4444')}>X</button>
                       </div>
                     </div>
@@ -2201,6 +2231,8 @@ export default function Home() {
                   <option value="tarde">Tarde</option>
                   <option value="noche">Noche</option>
                 </select>
+                <button onClick={cargarHistorial} style={s.button('#1d4ed8')}>Historial</button>
+                <button onClick={archivarCompletados} style={s.button('#f59e0b')}>Archivar completados</button>
                 <button onClick={() => { setPendienteEditando(null); setFormPendiente({ titulo: '', descripcion: '', prioridad: 'media', asignado_a: '', turno: '', notas: '' }); setShowPendienteModal(true); }} style={s.button('#10b981')}>+ Nuevo Pendiente</button>
               </div>
             </div>
@@ -2557,7 +2589,7 @@ export default function Home() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h2 style={{ color: '#e0e0e0', margin: 0 }}>Remolques</h2>
-              <button onClick={() => { setFormRemolque({ numero: '', categoria: 'Caja Seca' }); setShowRemolqueModal(true); }} style={{ padding: '0.5rem 1rem', background: '#00ff41', color: '#000', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 700 }}>+ Nuevo</button>
+              <button onClick={() => { setRemolqueEditando(null); setFormRemolque({ numero: '', categoria: 'Caja Seca' }); setShowRemolqueModal(true); }} style={{ padding: '0.5rem 1rem', background: '#00ff41', color: '#000', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 700 }}>+ Nuevo</button>
             </div>
 
             {['Thermo Refrigerado', 'Caja Seca', 'Tanque'].map(cat => {
@@ -2576,7 +2608,10 @@ export default function Home() {
                         style={{ background: selectedRemolque === r.id ? '#1a3d1a' : '#111', border: `1px solid ${selectedRemolque === r.id ? '#00ff41' : '#1a3d1a'}`, borderRadius: '10px', padding: '1rem', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <span style={{ color: '#00ff41', fontWeight: 700, fontSize: '1.1rem' }}>#{r.numero}</span>
-                          <button onClick={(e) => { e.stopPropagation(); eliminarRemolque(r.id); }} style={{ background: 'none', border: 'none', color: '#ff4444', cursor: 'pointer', fontSize: '0.9rem' }}>✕</button>
+                          <div style={{ display: 'flex', gap: '0.25rem' }}>
+                            <button onClick={(e) => { e.stopPropagation(); setRemolqueEditando(r); setFormRemolque({ numero: r.numero, categoria: r.categoria || 'Caja Seca' }); setShowRemolqueModal(true); }} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '0.9rem' }}>✏️</button>
+                            <button onClick={(e) => { e.stopPropagation(); eliminarRemolque(r.id); }} style={{ background: 'none', border: 'none', color: '#ff4444', cursor: 'pointer', fontSize: '0.9rem' }}>✕</button>
+                          </div>
                         </div>
                         <div style={{ fontSize: '0.75rem', color: '#f59e0b', textTransform: 'uppercase' }}>{r.categoria || 'Caja Seca'}</div>
                         {r.unidad_asignada ? (
@@ -2632,10 +2667,14 @@ export default function Home() {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {!showSeguimientoForm && (
+                <button onClick={() => setShowSeguimientoForm(true)} style={{ ...s.button('#10b981'), alignSelf: 'flex-start' }}>+ Nuevo seguimiento</button>
+              )}
+              {showSeguimientoForm && (
               <div style={s.card}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', gap: '0.75rem' }}>
                   <h3 style={{ margin: 0, fontSize: '1rem' }}>{seguimientoEditando ? 'Editar seguimiento' : 'Nuevo seguimiento'}</h3>
-                  {seguimientoEditando && <button onClick={limpiarSeguimientoForm} style={s.button('#6b7280')}>Cancelar</button>}
+                  <button onClick={limpiarSeguimientoForm} style={s.button('#6b7280')}>Cancelar</button>
                 </div>
                 <form onSubmit={guardarSeguimiento}>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
@@ -2721,6 +2760,7 @@ export default function Home() {
                   <button type="submit" style={{ ...s.button('#10b981'), width: '100%' }}>{seguimientoEditando ? 'Actualizar registro' : 'Guardar registro'}</button>
                 </form>
               </div>
+              )}
 
               <div style={{ ...s.card, display: 'flex', flexDirection: 'column', gap: '1rem', minWidth: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
@@ -3098,37 +3138,46 @@ export default function Home() {
                 <RouteMap points={routeHistory} />
               </div>
               <div style={{ ...s.card, overflow: 'auto', maxHeight: 'calc(100vh - 320px)' }}>
-                <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.9rem', color: '#e0e0e0' }}>
-                  Puntos ({routeHistory.length})
-                </h3>
-                {routeLoading ? (
-                  <div style={{ textAlign: 'center', padding: '2rem', color: '#4a8a4a' }}>Cargando...</div>
-                ) : routeHistory.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '2rem', color: '#4a8a4a' }}>
-                    <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🛤️</div>
-                    <p>Selecciona vehículo y fecha</p>
-                  </div>
-                ) : (
-                  <>
-                    <div style={{ marginBottom: '0.75rem', padding: '0.6rem', background: '#111', borderRadius: '8px', border: '1px solid #1a3d1a', fontSize: '0.8rem', color: '#6a9b6a' }}>
-                      <strong>{routeHistory.length}</strong> puntos registrados<br/>
-                      <span style={{ color: '#4a8a4a' }}>
-                        {parseFecha(routeHistory[0].recorded_at)?.toLocaleTimeString()} - {parseFecha(routeHistory[routeHistory.length - 1].recorded_at)?.toLocaleTimeString()}
-                      </span>
-                    </div>
-                    <div style={{ maxHeight: 'calc(100vh - 480px)', overflow: 'auto' }}>
-                      {routeHistory.map((p, i) => (
-                        <div key={p.id} style={{ padding: '0.5rem 0', borderBottom: '1px solid #0d1f0d', fontSize: '0.8rem' }}>
-                          <div style={{ color: '#c0c0c0' }}>
-                            <span style={{ color: '#00ff41', fontWeight: '600' }}>{parseFecha(p.recorded_at)?.toLocaleTimeString()}</span>
-                            {' · '}{Math.round(p.speed || 0)} mph
-                          </div>
-                          <div style={{ color: '#4a8a4a', fontSize: '0.75rem' }}>{p.location || 'Sin dirección'}</div>
+                {(() => {
+                  const routeStops = routeHistory.filter((p, i) => i > 0 && Number(p.speed || 0) < 1 && Number(routeHistory[i - 1]?.speed || 0) >= 1);
+                  return (
+                    <>
+                      <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.9rem', color: '#e0e0e0' }}>
+                        Paradas ({routeStops.length})
+                      </h3>
+                      {routeLoading ? (
+                        <div style={{ textAlign: 'center', padding: '2rem', color: '#4a8a4a' }}>Cargando...</div>
+                      ) : routeHistory.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '2rem', color: '#4a8a4a' }}>
+                          <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🛤️</div>
+                          <p>Selecciona vehículo y fecha</p>
                         </div>
-                      ))}
-                    </div>
-                  </>
-                )}
+                      ) : (
+                        <>
+                          <div style={{ marginBottom: '0.75rem', padding: '0.6rem', background: '#111', borderRadius: '8px', border: '1px solid #1a3d1a', fontSize: '0.8rem', color: '#6a9b6a' }}>
+                            <strong>{routeHistory.length}</strong> puntos registrados<br/>
+                            <span style={{ color: '#4a8a4a' }}>
+                              {parseFecha(routeHistory[0].recorded_at)?.toLocaleTimeString()} - {parseFecha(routeHistory[routeHistory.length - 1].recorded_at)?.toLocaleTimeString()}
+                            </span>
+                          </div>
+                          <div style={{ maxHeight: 'calc(100vh - 480px)', overflow: 'auto' }}>
+                            {routeStops.length === 0 ? (
+                              <div style={{ textAlign: 'center', padding: '1rem', color: '#4a8a4a' }}>No hubo paradas en este recorrido.</div>
+                            ) : routeStops.map((p) => (
+                              <div key={p.id} style={{ padding: '0.5rem 0', borderBottom: '1px solid #0d1f0d', fontSize: '0.8rem' }}>
+                                <div style={{ color: '#c0c0c0' }}>
+                                  <span style={{ color: '#00ff41', fontWeight: '600' }}>{parseFecha(p.recorded_at)?.toLocaleTimeString()}</span>
+                                  {' · '}{Math.round(p.speed || 0)} mph
+                                </div>
+                                <div style={{ color: '#4a8a4a', fontSize: '0.75rem' }}>{p.location || 'Sin dirección'}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             </div>
           </div>
@@ -4035,12 +4084,57 @@ export default function Home() {
         </div>
       )}
 
+      {showHistorialModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }} onClick={() => setShowHistorialModal(false)}>
+          <div style={{ background: '#0d1a0d', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '1.5rem', maxWidth: '1100px', width: '95%', maxHeight: '85vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h2 style={{ margin: 0, fontSize: '1.2rem', color: '#00ff41' }}>Historial de pendientes</h2>
+              <button onClick={() => setShowHistorialModal(false)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.5rem' }}>✕</button>
+            </div>
+            {historialPendientes.length === 0 ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#6a9b6a' }}>No hay pendientes archivados.</div>
+            ) : (
+              <div style={{ overflow: 'auto' }}>
+                <table style={s.table}>
+                  <thead>
+                    <tr>
+                      <th style={s.th}>Título</th>
+                      <th style={s.th}>Prioridad</th>
+                      <th style={s.th}>Estado</th>
+                      <th style={s.th}>Asignado</th>
+                      <th style={s.th}>Turno</th>
+                      <th style={s.th}>Archivado por</th>
+                      <th style={s.th}>Archivado</th>
+                      <th style={s.th}>Creado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historialPendientes.map((item) => (
+                      <tr key={item.id}>
+                        <td style={s.td}>{item.titulo}</td>
+                        <td style={s.td}>{item.prioridad || '-'}</td>
+                        <td style={s.td}>{item.estado || '-'}</td>
+                        <td style={s.td}>{item.asignado_a || '-'}</td>
+                        <td style={s.td}>{item.turno || '-'}</td>
+                        <td style={s.td}>{item.archived_by_username || 'Sistema'}</td>
+                        <td style={s.td}>{parseFecha(item.archived_at)?.toLocaleString('es-MX') || '-'}</td>
+                        <td style={s.td}>{parseFecha(item.fecha_creacion)?.toLocaleString('es-MX') || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {showRemolqueModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2200 }} onClick={() => setShowRemolqueModal(false)}>
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2200 }} onClick={cerrarRemolqueModal}>
           <div style={{ background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '16px', width: '520px', maxWidth: '95vw', padding: '1.5rem' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h2 style={{ margin: 0, color: '#00ff41' }}>Nuevo remolque</h2>
-              <button onClick={() => setShowRemolqueModal(false)} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
+              <h2 style={{ margin: 0, color: '#00ff41' }}>{remolqueEditando ? 'Editar remolque' : 'Nuevo remolque'}</h2>
+              <button onClick={cerrarRemolqueModal} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
             </div>
             <div style={{ display: 'grid', gap: '0.85rem' }}>
               <div>
@@ -4056,8 +4150,8 @@ export default function Home() {
                 </select>
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-                <button type="button" onClick={() => setShowRemolqueModal(false)} style={s.button('#6b7280')}>Cancelar</button>
-                <button type="button" onClick={crearRemolque} style={s.button('#00ff41')}>Guardar</button>
+                <button type="button" onClick={cerrarRemolqueModal} style={s.button('#6b7280')}>Cancelar</button>
+                <button type="button" onClick={crearRemolque} style={s.button('#00ff41')}>{remolqueEditando ? 'Actualizar' : 'Guardar'}</button>
               </div>
             </div>
           </div>
