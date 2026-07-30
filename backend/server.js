@@ -137,6 +137,7 @@ db.serialize(() => {
     destino TEXT,
     conductor TEXT,
     telefono TEXT,
+    remolque TEXT,
     estado TEXT DEFAULT 'programado',
     fecha_inicio DATETIME,
     fecha_fin DATETIME,
@@ -144,6 +145,7 @@ db.serialize(() => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
   db.run("ALTER TABLE viajes ADD COLUMN telefono TEXT", [], () => {});
+  db.run("ALTER TABLE viajes ADD COLUMN remolque TEXT", [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS alertas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -244,8 +246,15 @@ db.serialize(() => {
     tipo TEXT NOT NULL,
     latitud REAL,
     longitud REAL,
+    source TEXT DEFAULT 'local',
+    event_uid TEXT,
+    raw_payload TEXT DEFAULT '',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+  db.run("ALTER TABLE geofence_events ADD COLUMN source TEXT DEFAULT 'local'", [], () => {});
+  db.run("ALTER TABLE geofence_events ADD COLUMN event_uid TEXT", [], () => {});
+  db.run("ALTER TABLE geofence_events ADD COLUMN raw_payload TEXT DEFAULT ''", [], () => {});
+  db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_geofence_events_event_uid ON geofence_events(event_uid) WHERE event_uid IS NOT NULL", [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS vehicle_geofence_state (
     vehicle_id TEXT NOT NULL,
@@ -361,7 +370,6 @@ db.serialize(() => {
     hora_llegada TEXT DEFAULT '',
     hora_liberacion TEXT DEFAULT '',
     estatus TEXT DEFAULT 'Disponible',
-    ubicacion_samsara TEXT DEFAULT '',
     comentarios_cliente TEXT DEFAULT '',
     comentarios_monitoreo TEXT DEFAULT '',
     grupo TEXT DEFAULT '',
@@ -906,6 +914,52 @@ app.get('/api/geofence-events', (req, res) => {
   });
 });
 
+app.delete('/api/geofence-events', (req, res) => {
+  db.serialize(() => {
+    db.run('DELETE FROM geofence_events', [], function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      db.run('DELETE FROM vehicle_geofence_state', [], function (err2) {
+        if (err2) return res.status(500).json({ error: err2.message });
+        res.json({ deleted: this.changes });
+      });
+    });
+  });
+});
+
+app.post('/api/webhooks/samsara', (req, res) => {
+  try {
+    const payload = req.body || {};
+    const eventType = payload.eventType;
+    if (!['GeofenceEntry', 'GeofenceExit'].includes(eventType)) {
+      return res.json({ ok: true, ignored: true });
+    }
+
+    const data = payload.data || {};
+    const address = data.address || {};
+    const geofence = address.geofence || {};
+    const vehicle = data.vehicle || {};
+    const createdAt = payload.eventTime ? new Date(payload.eventTime).toISOString() : new Date().toISOString();
+    const tipo = eventType === 'GeofenceEntry' ? 'entrada' : 'salida';
+    const geofenceName = address.name || 'Geocerca Samsara';
+    const geofenceId = address.id || null;
+    const latitud = geofence.circle?.latitude ?? null;
+    const longitud = geofence.circle?.longitude ?? null;
+
+    db.run(
+      `INSERT OR IGNORE INTO geofence_events (vehicle_id, vehicle_name, geofence_id, geofence_nombre, tipo, latitud, longitud, source, event_uid, raw_payload, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'samsara', ?, ?, ?)` ,
+      [String(vehicle.id || ''), vehicle.name || '', geofenceId, geofenceName, tipo, latitud, longitud, String(payload.eventId || ''), JSON.stringify(payload), createdAt],
+      function (err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ ok: true, saved: this.changes > 0 });
+      }
+    );
+  } catch (err) {
+    console.error('Webhook Samsara inválido:', err.message);
+    res.status(400).json({ error: 'Payload inválido' });
+  }
+});
+
 app.post('/api/check-geofences', async (req, res) => {
   try {
     const geofences = await new Promise((resolve, reject) => {
@@ -1019,7 +1073,22 @@ app.post('/api/check-fuel', async (req, res) => {
 // ============ VIAJES ============
 
 app.get('/api/viajes', (req, res) => {
-  db.all('SELECT * FROM viajes ORDER BY fecha_inicio ASC', [], (err, rows) => {
+  db.all(`SELECT * FROM viajes ORDER BY
+    CASE LOWER(COALESCE(estado, ''))
+      WHEN 'en_ruta_cargado' THEN 0
+      WHEN 'en_ruta_vacio' THEN 1
+      WHEN 'proceso_carga' THEN 2
+      WHEN 'proceso_descarga' THEN 3
+      WHEN 'proceso_liberacion' THEN 4
+      WHEN 'espera_ingreso' THEN 5
+      WHEN 'en_resguardo' THEN 6
+      WHEN 'programado' THEN 7
+      WHEN 'disponible' THEN 8
+      WHEN 'completado' THEN 9
+      WHEN 'cancelado' THEN 10
+      ELSE 99
+    END,
+    COALESCE(fecha_inicio, created_at) ASC`, [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
   });
@@ -1028,8 +1097,8 @@ app.get('/api/viajes', (req, res) => {
 app.post('/api/viajes', (req, res) => {
   const { vehicle_id, vehicle_name, origen, destino, conductor, telefono, fecha_inicio, fecha_fin, notas } = req.body;
   db.run(
-    'INSERT INTO viajes (vehicle_id, vehicle_name, origen, destino, conductor, telefono, fecha_inicio, fecha_fin, notas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [vehicle_id, vehicle_name, origen, destino, conductor, telefono || '', fecha_inicio, fecha_fin, notas],
+    'INSERT INTO viajes (vehicle_id, vehicle_name, origen, destino, conductor, telefono, remolque, fecha_inicio, fecha_fin, notas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [vehicle_id, vehicle_name, origen, destino, conductor, telefono || '', req.body.remolque || '', fecha_inicio, fecha_fin, notas],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ id: this.lastID });
@@ -1381,10 +1450,29 @@ app.get('/api/viajes/activos', (req, res) => {
   db.all(
     `SELECT v.*, s.remolque as seg_remolque, s.origen as seg_origen, s.destino as seg_destino, s.estatus as seg_estatus,
             s.cita_carga, s.cita_descarga, s.hora_llegada, s.hora_liberacion
-     FROM viajes v
-     LEFT JOIN seguimiento s ON s.unidad = v.vehicle_name
-     WHERE v.estado NOT IN ('completado', 'cancelado')
-     ORDER BY v.fecha_inicio ASC`,
+      FROM viajes v
+      LEFT JOIN seguimiento s ON s.id = (
+        SELECT s2.id
+        FROM seguimiento s2
+        WHERE s2.unidad = v.vehicle_name
+        ORDER BY datetime(s2.fecha_actualizacion) DESC, s2.id DESC
+        LIMIT 1
+      )
+      WHERE v.estado NOT IN ('completado', 'cancelado')
+     ORDER BY
+       CASE LOWER(COALESCE(v.estado, ''))
+         WHEN 'en_ruta_cargado' THEN 0
+         WHEN 'en_ruta_vacio' THEN 1
+         WHEN 'proceso_carga' THEN 2
+         WHEN 'proceso_descarga' THEN 3
+         WHEN 'proceso_liberacion' THEN 4
+         WHEN 'espera_ingreso' THEN 5
+         WHEN 'en_resguardo' THEN 6
+         WHEN 'programado' THEN 7
+         WHEN 'disponible' THEN 8
+         ELSE 99
+       END,
+       COALESCE(v.fecha_inicio, v.created_at) ASC`,
     [],
     (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
@@ -1492,7 +1580,7 @@ app.get('/api/seguimiento', (req, res) => {
 });
 
 app.post('/api/seguimiento', (req, res) => {
-  const fields = ['unidad','operador','remolque','ruta','origen','destino','cita_carga','cita_descarga','hora_llegada','hora_liberacion','estatus','ubicacion_samsara','comentarios_cliente','comentarios_monitoreo','grupo'];
+  const fields = ['unidad','operador','remolque','ruta','origen','destino','cita_carga','cita_descarga','hora_llegada','hora_liberacion','estatus','comentarios_cliente','comentarios_monitoreo','grupo'];
   const data = fields.reduce((acc, f) => { acc[f] = req.body[f] || ''; return acc; }, {});
   const userName = actorFromReq(req);
   const userId = req.user?.id || null;
@@ -1512,7 +1600,7 @@ app.put('/api/seguimiento/:id', (req, res) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!row) return res.status(404).json({ error: 'No encontrado' });
     const userName = actorFromReq(req);
-    const fields = ['unidad','operador','remolque','ruta','origen','destino','cita_carga','cita_descarga','hora_llegada','hora_liberacion','estatus','ubicacion_samsara','comentarios_cliente','comentarios_monitoreo','grupo'];
+    const fields = ['unidad','operador','remolque','ruta','origen','destino','cita_carga','cita_descarga','hora_llegada','hora_liberacion','estatus','comentarios_cliente','comentarios_monitoreo','grupo'];
     const updates = [];
     const values = [];
     fields.forEach(f => {
@@ -1536,7 +1624,7 @@ app.delete('/api/seguimiento/:id', (req, res) => {
   db.get('SELECT * FROM seguimiento WHERE id = ?', [req.params.id], (err, row) => {
     if (row) {
       const userName = actorFromReq(req);
-      const fields = ['unidad','operador','remolque','ruta','origen','destino','cita_carga','cita_descarga','hora_llegada','hora_liberacion','estatus','ubicacion_samsara','comentarios_cliente','comentarios_monitoreo','grupo'];
+      const fields = ['unidad','operador','remolque','ruta','origen','destino','cita_carga','cita_descarga','hora_llegada','hora_liberacion','estatus','comentarios_cliente','comentarios_monitoreo','grupo'];
       fields.forEach(f => {
         db.run('INSERT INTO seguimiento_historial (seguimiento_id, campo, valor_anterior, valor_nuevo, usuario) VALUES (?, ?, ?, ?, ?)', [req.params.id, f, row[f] || '', '', userName]);
       });
@@ -1583,7 +1671,6 @@ app.post('/api/seguimiento/import', (req, res) => {
         hora_llegada: item['HORA LLEGADA CON CLIENTE'] || '',
         hora_liberacion: item['HORA LIBERACION CLIENTE'] || '',
         estatus: item.ESTATUS || 'Disponible',
-        ubicacion_samsara: item['UBICACION SAMSARA'] || '',
         comentarios_cliente: item['COMENTARIOS CLIENTE'] || '',
         comentarios_monitoreo: item['COMENTARIOS MONITOREO'] || '',
         grupo: item.GRUPO || '',
