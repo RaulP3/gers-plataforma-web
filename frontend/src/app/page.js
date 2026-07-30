@@ -706,6 +706,12 @@ export default function Home() {
     });
   };
 
+  const obtenerRemolqueAsignadoUnidad = (vehicleId, vehicleName = '') => {
+    const unidad = String(vehicleName || vehiculos.find(v => String(v.id) === String(vehicleId))?.name || '').toLowerCase();
+    const remolqueAsignado = remolques.find(r => String(r.vehicle_id_asignado || '') === String(vehicleId) || String(r.unidad_asignada || '').toLowerCase() === unidad);
+    return remolqueAsignado?.numero || '';
+  };
+
   const aplicarSeguimientoDesdeUnidad = (vehicleId) => {
     const vehicle = vehiculos.find(v => String(v.id) === String(vehicleId));
     const unidad = vehicle?.name || '';
@@ -2058,7 +2064,8 @@ export default function Home() {
                       <label style={s.label}>Unidad *</label>
                       <select style={s.select} value={nuevoComentario.vehicle_id} onChange={(e) => {
                         const v = vehiculos.find(vh => String(vh.id) === e.target.value);
-                        setNuevoComentario({ ...nuevoComentario, vehicle_id: e.target.value, vehicle_name: v?.name || '' });
+                        const remolque = obtenerRemolqueAsignadoUnidad(e.target.value, v?.name || '');
+                        setNuevoComentario({ ...nuevoComentario, vehicle_id: e.target.value, vehicle_name: v?.name || '', remolque });
                       }} required>
                         <option value="">Seleccionar unidad...</option>
                         {vehiculos.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
@@ -2138,7 +2145,7 @@ export default function Home() {
                     .map((c) => (
                       <div key={c.id} style={{ padding: '1rem', borderBottom: '1px solid #0d1f0d' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
-                          <div>
+                        <div>
                             <strong style={{ fontSize: '0.9rem' }}>{c.vehicle_name || c.vehicle_id}</strong>
                             <span style={{ ...s.badge(
                               notasTab === 'bitacora' ? '#3b82f6' : (c.estatus === 'Crítica' ? '#ef4444' : c.estatus === 'Alta' ? '#f59e0b' : c.estatus === 'Media' ? '#3b82f6' : '#6b7280')
@@ -2149,7 +2156,7 @@ export default function Home() {
                         {notasTab === 'incidencias' && c.titulo && <div style={{ fontWeight: '600', fontSize: '0.85rem', marginBottom: '0.25rem' }}>{c.titulo}</div>}
                         <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
                           {notasTab === 'incidencias' && c.estatus && <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: '#003311', color: '#00ff41', border: '1px solid #00ff4133' }}>{c.estatus}</span>}
-                          {c.remolque && <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: '#332200', color: '#f59e0b', border: '1px solid #f59e0b33' }}>🚛 {c.remolque}</span>}
+                          {((c.remolque || obtenerRemolqueAsignadoUnidad(c.vehicle_id, c.vehicle_name)) || '') && <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: '#332200', color: '#f59e0b', border: '1px solid #f59e0b33' }}>🚛 {c.remolque || obtenerRemolqueAsignadoUnidad(c.vehicle_id, c.vehicle_name)}</span>}
                         </div>
                         <div style={{ fontSize: '0.85rem', color: '#c0c0c0', marginBottom: '0.5rem', whiteSpace: 'pre-wrap' }}>{c.contenido}</div>
                         <div style={{ fontSize: '0.75rem', color: '#4a8a4a', display: 'flex', gap: '1rem' }}>
