@@ -306,10 +306,18 @@ export default function Home() {
 
   useEffect(() => {
     if (!apiUrl || !currentUser) return;
-    const interval = setInterval(() => {
-      loadAll();
-    }, 60000);
-    return () => clearInterval(interval);
+    const source = new EventSource(`${apiUrl}/live`);
+    const handleReload = () => loadAll();
+    const noop = () => {};
+    source.addEventListener('reload', handleReload);
+    source.addEventListener('vehicles', handleReload);
+    source.addEventListener('connected', noop);
+    return () => {
+      source.removeEventListener('reload', handleReload);
+      source.removeEventListener('vehicles', handleReload);
+      source.removeEventListener('connected', noop);
+      source.close();
+    };
   }, [apiUrl, currentUser]);
 
   const apiRequest = (url, options = {}) => {

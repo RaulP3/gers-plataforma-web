@@ -23,6 +23,34 @@ app.use(cors({
 }));
 app.use(express.json());
 
+app.get('/api/live', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+  res.write('event: connected\ndata: {"type":"connected"}\n\n');
+  liveClients.add(res);
+
+  req.on('close', () => {
+    liveClients.delete(res);
+  });
+});
+
+app.use('/api', (req, res, next) => {
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
+  const originalJson = res.json.bind(res);
+  const originalSend = res.send.bind(res);
+  const notify = (body, sender) => {
+    const output = sender(body);
+    if (res.statusCode < 400) broadcastLiveUpdate('reload', { method: req.method, path: req.path });
+    return output;
+  };
+  res.json = (body) => notify(body, originalJson);
+  res.send = (body) => notify(body, originalSend);
+  next();
+});
+
 const dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'gers.db');
 const dbDir = path.dirname(dbPath);
 if (!fs.existsSync(dbDir)) { fs.mkdirSync(dbDir, { recursive: true }); }
@@ -77,6 +105,19 @@ function actorFromReq(req) {
 
 function createSessionToken() {
   return crypto.randomBytes(32).toString('hex');
+}
+
+const liveClients = new Set();
+
+function broadcastLiveUpdate(type = 'reload', detail = {}) {
+  const payload = `event: ${type}\ndata: ${JSON.stringify({ type, detail, ts: Date.now() })}\n\n`;
+  for (const client of liveClients) {
+    try {
+      client.write(payload);
+    } catch {
+      liveClients.delete(client);
+    }
+  }
 }
 
 async function getUserByToken(token) {
@@ -709,7 +750,7 @@ app.use('/api', (req, res, next) => {
 
 // ============ SAMSARA VEHICLES + LOCATIONS ============
 
-app.get('/api/samsara/vehicles', async (req, res) => {
+async function refreshSamsaraVehicles() {
   try {
     const listRes = await samsaraApi.get('/fleet/list');
     const vehicles = listRes.data.vehicles || [];
@@ -763,10 +804,19 @@ app.get('/api/samsara/vehicles', async (req, res) => {
         lastSeen: apiLoc ? apiLoc.minutesAgo : null
       };
     });
-
-    res.json(enrichedVehicles);
+    broadcastLiveUpdate('reload', { source: 'samsara-vehicles' });
+    return enrichedVehicles;
   } catch (error) {
     console.error('Error Samsara API:', error.message);
+    throw error;
+  }
+}
+
+app.get('/api/samsara/vehicles', async (req, res) => {
+  try {
+    const enrichedVehicles = await refreshSamsaraVehicles();
+    res.json(enrichedVehicles);
+  } catch (error) {
     res.status(500).json({ error: 'Error al obtener vehículos', details: error.message });
   }
 });
@@ -1874,8 +1924,15 @@ const runAlertChecks = async () => {
   } catch (e) {}
 };
 
-setTimeout(runAlertChecks, 10000);
-setInterval(runAlertChecks, 60000);
+const runLiveSync = async () => {
+  try {
+    await refreshSamsaraVehicles();
+    await runAlertChecks();
+  } catch (e) {}
+};
+
+setTimeout(runLiveSync, 10000);
+setInterval(runLiveSync, 60000);
 
 app.listen(PORT, () => {
   console.log(`Servidor GERS corriendo en puerto ${PORT}`);
