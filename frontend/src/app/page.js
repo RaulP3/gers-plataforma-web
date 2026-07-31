@@ -2715,7 +2715,7 @@ export default function Home() {
               <button onClick={() => { setRemolqueEditando(null); setFormRemolque({ numero: '', categoria: 'Caja Seca' }); setShowRemolqueModal(true); }} style={{ padding: '0.5rem 1rem', background: '#00ff41', color: '#000', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 700 }}>+ Nuevo</button>
             </div>
 
-            {['Thermo Refrigerado', 'Caja Seca', 'Tanque'].map(cat => {
+            {['Thermo Refrigerado', 'Caja Seca', 'Porta Contenedores', 'Tanque'].map(cat => {
               const filas = remolques.filter(r => (r.categoria || 'Caja Seca') === cat);
               return (
                 <div key={cat} style={{ background: '#111', border: '1px solid #1a3d1a', borderRadius: '10px', padding: '1rem' }}>
@@ -4324,6 +4324,7 @@ export default function Home() {
                 <select style={s.select} value={formRemolque.categoria} onChange={(e) => setFormRemolque({ ...formRemolque, categoria: e.target.value })}>
                   <option value="Thermo Refrigerado">Thermo Refrigerado</option>
                   <option value="Caja Seca">Caja Seca</option>
+                  <option value="Porta Contenedores">Porta Contenedores</option>
                   <option value="Tanque">Tanque</option>
                 </select>
               </div>
