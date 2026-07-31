@@ -202,6 +202,7 @@ db.serialize(() => {
     fecha_actualizacion DATETIME,
     archived_by_user_id INTEGER,
     archived_by_username TEXT,
+    comentarios_resumen TEXT,
     archived_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
@@ -1127,14 +1128,6 @@ app.post('/api/viajes', (req, res) => {
 });
 
 app.put('/api/viajes/:id', (req, res) => {
-  const { estado } = req.body;
-  db.run('UPDATE viajes SET estado = ? WHERE id = ?', [estado, req.params.id], function (err) {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json({ changes: this.changes });
-  });
-});
-
-app.put('/api/viajes/:id', (req, res) => {
   const { vehicle_id, vehicle_name, origen, destino, conductor, telefono, fecha_inicio, fecha_fin, notas, estado, remolque } = req.body;
   db.run(
     'UPDATE viajes SET vehicle_id = ?, vehicle_name = ?, origen = ?, destino = ?, conductor = ?, telefono = ?, fecha_inicio = ?, fecha_fin = ?, notas = ?, estado = ?, remolque = ? WHERE id = ?',
@@ -1280,40 +1273,81 @@ app.get('/api/pendientes/historial', (req, res) => {
   });
 });
 
-app.post('/api/pendientes/archivar-completados', (req, res) => {
-  db.all('SELECT * FROM pendientes WHERE estado = "completado" ORDER BY fecha_actualizacion DESC', [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!rows || rows.length === 0) return res.json({ archived: 0 });
+app.post('/api/pendientes/archivar-completados', async (req, res) => {
+  try {
+    const rows = await new Promise((resolve, reject) => {
+      db.all('SELECT * FROM pendientes WHERE estado = "completado" ORDER BY fecha_actualizacion DESC', [], (err, data) => {
+        if (err) reject(err); else resolve(data || []);
+      });
+    });
+    if (!rows.length) return res.json({ archived: 0 });
 
     const archivedByUserId = req.user?.id || null;
     const archivedByUsername = actorFromReq(req);
-
-    db.serialize(() => {
-      const insertStmt = db.prepare(`
-        INSERT INTO pendientes_historial (
-          pendiente_id, titulo, descripcion, prioridad, estado, asignado_a, turno, notas,
-          creado_por, created_by_user_id, created_by_username, fecha_creacion, fecha_actualizacion,
-          archived_by_user_id, archived_by_username
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-
-      rows.forEach((row) => {
-        insertStmt.run([
-          row.id, row.titulo, row.descripcion || '', row.prioridad || 'media', row.estado || 'completado',
-          row.asignado_a || '', row.turno || '', row.notas || '', row.creado_por || '',
-          row.created_by_user_id || null, row.created_by_username || '', row.fecha_creacion || null,
-          row.fecha_actualizacion || null, archivedByUserId, archivedByUsername,
-        ]);
+    const pendientesConComentarios = await Promise.all(rows.map((row) => new Promise((resolve, reject) => {
+      db.all('SELECT autor, contenido FROM comentarios_pendientes WHERE pendiente_id = ? ORDER BY fecha_creacion ASC', [row.id], (err, comments) => {
+        if (err) reject(err);
+        else resolve({ ...row, comentarios_resumen: (comments || []).map(c => `${c.autor || 'Sistema'}: ${c.contenido}`).join('\n') });
       });
+    })));
 
-      insertStmt.finalize((finalizeErr) => {
-        if (finalizeErr) return res.status(500).json({ error: finalizeErr.message });
-        db.run('DELETE FROM pendientes WHERE estado = "completado"', [], function (deleteErr) {
-          if (deleteErr) return res.status(500).json({ error: deleteErr.message });
-          res.json({ archived: this.changes || rows.length });
+    const archived = await new Promise((resolve, reject) => {
+      db.serialize(() => {
+        const insertStmt = db.prepare(`
+          INSERT INTO pendientes_historial (
+            pendiente_id, titulo, descripcion, prioridad, estado, asignado_a, turno, notas,
+            creado_por, created_by_user_id, created_by_username, fecha_creacion, fecha_actualizacion,
+            archived_by_user_id, archived_by_username, comentarios_resumen
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        pendientesConComentarios.forEach((row) => {
+          insertStmt.run([
+            row.id, row.titulo, row.descripcion || '', row.prioridad || 'media', row.estado || 'completado',
+            row.asignado_a || '', row.turno || '', row.notas || '', row.creado_por || '',
+            row.created_by_user_id || null, row.created_by_username || '', row.fecha_creacion || null,
+            row.fecha_actualizacion || null, archivedByUserId, archivedByUsername, row.comentarios_resumen || '',
+          ]);
+        });
+
+        insertStmt.finalize((finalizeErr) => {
+          if (finalizeErr) return reject(finalizeErr);
+          db.run('DELETE FROM comentarios_pendientes WHERE pendiente_id IN (' + rows.map(() => '?').join(',') + ')', rows.map(r => r.id), function (deleteCommentsErr) {
+            if (deleteCommentsErr) return reject(deleteCommentsErr);
+            db.run('DELETE FROM pendientes WHERE estado = "completado"', [], function (deleteErr) {
+              if (deleteErr) return reject(deleteErr);
+              resolve(this.changes || rows.length);
+            });
+          });
         });
       });
     });
+
+    res.json({ archived });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/reportes/pendientes-completados', (req, res) => {
+  db.all('SELECT * FROM pendientes_historial ORDER BY archived_at DESC, id DESC', [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows || []);
+  });
+});
+
+app.get('/api/reportes/notas', (req, res) => {
+  const { tipo, vehicle_id, fecha_inicio, fecha_fin } = req.query;
+  let query = "SELECT * FROM comentarios WHERE tipo IN ('bitacora', 'incidencia', 'seguimiento', 'mantenimiento', 'incidente')";
+  const params = [];
+  if (tipo) { query += ' AND tipo = ?'; params.push(tipo); }
+  if (vehicle_id) { query += ' AND vehicle_id = ?'; params.push(vehicle_id); }
+  if (fecha_inicio) { query += ' AND created_at >= ?'; params.push(fecha_inicio); }
+  if (fecha_fin) { query += ' AND created_at <= ?'; params.push(fecha_fin + ' 23:59:59'); }
+  query += ' ORDER BY created_at DESC';
+  db.all(query, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows || []);
   });
 });
 
@@ -1833,12 +1867,15 @@ app.delete('/api/unidades/:id', (req, res) => {
 
 // ============ AUTO-CHECK INTERVALS ============
 
-setInterval(async () => {
+const runAlertChecks = async () => {
   try {
     await fetch('http://localhost:' + PORT + '/api/check-geofences', { method: 'POST' });
     await fetch('http://localhost:' + PORT + '/api/check-fuel', { method: 'POST' });
   } catch (e) {}
-}, 300000);
+};
+
+setTimeout(runAlertChecks, 15000);
+setInterval(runAlertChecks, 60000);
 
 app.listen(PORT, () => {
   console.log(`Servidor GERS corriendo en puerto ${PORT}`);
