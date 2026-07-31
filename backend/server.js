@@ -1874,7 +1874,7 @@ const runAlertChecks = async () => {
   } catch (e) {}
 };
 
-setTimeout(runAlertChecks, 15000);
+setTimeout(runAlertChecks, 10000);
 setInterval(runAlertChecks, 60000);
 
 app.listen(PORT, () => {

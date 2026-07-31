@@ -308,7 +308,7 @@ export default function Home() {
     if (!apiUrl || !currentUser) return;
     const interval = setInterval(() => {
       loadAll();
-    }, 180000);
+    }, 60000);
     return () => clearInterval(interval);
   }, [apiUrl, currentUser]);
 
@@ -418,7 +418,7 @@ export default function Home() {
       authFetch(`${apiUrl}/samsara/vehicles`).then(r => r.json()).then(v => {
         setVehiculos(Array.isArray(v) ? v : (v.data || v.vehicles || []));
       }).catch(() => {});
-    }, 15000);
+    }, 60000);
     return () => clearInterval(interval);
   }, [apiUrl, currentUser, authToken]);
 
