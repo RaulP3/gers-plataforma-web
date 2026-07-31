@@ -152,6 +152,7 @@ export default function Home() {
   const [operadores, setOperadores] = useState({});
   const [samsaraDrivers, setSamsaraDrivers] = useState([]);
   const [hiddenDrivers, setHiddenDrivers] = useState([]);
+  const [hiddenUnits, setHiddenUnits] = useState([]);
   const [driverPhoneOverrides, setDriverPhoneOverrides] = useState({});
   const [filtroOperador, setFiltroOperador] = useState('');
   const [geofences, setGeofences] = useState([]);
@@ -249,6 +250,11 @@ export default function Home() {
       setHiddenDrivers([]);
     }
     try {
+      setHiddenUnits(JSON.parse(localStorage.getItem('gers_hidden_units') || '[]'));
+    } catch {
+      setHiddenUnits([]);
+    }
+    try {
       setDriverPhoneOverrides(JSON.parse(localStorage.getItem('gers_driver_phone_overrides') || '{}'));
     } catch {
       setDriverPhoneOverrides({});
@@ -258,6 +264,10 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem('gers_hidden_drivers', JSON.stringify(hiddenDrivers));
   }, [hiddenDrivers]);
+
+  useEffect(() => {
+    localStorage.setItem('gers_hidden_units', JSON.stringify(hiddenUnits));
+  }, [hiddenUnits]);
 
   useEffect(() => {
     localStorage.setItem('gers_driver_phone_overrides', JSON.stringify(driverPhoneOverrides));
@@ -798,6 +808,8 @@ export default function Home() {
 
   const normalizarTexto = (value) => String(value || '').trim().toLowerCase();
 
+  const unidadKey = (v) => (v?.isLocal ? `local:${v.localId}` : `samsara:${v.id}`);
+
   const obtenerSeguimientoUnidad = (unidad) => {
     return seguimiento
       .filter(row => normalizarTexto(row.unidad) === normalizarTexto(unidad))
@@ -1043,6 +1055,40 @@ export default function Home() {
 
   const guardarComentarioRapido = async () => {
     if (!comentarioRapido.contenido.trim() || !selectedVehicle) return;
+    const unidad = selectedVehicle.name || '';
+    const filaSeguimiento = obtenerSeguimientoUnidad(unidad);
+    const viajeActivo = viajesActivos.find(vj => String(vj.vehicle_id) === String(selectedVehicle.id) || vj.vehicle_name === selectedVehicle.name) || null;
+    const payloadSeguimiento = {
+      unidad,
+      operador: operadores[String(selectedVehicle.id)]?.nombre || filaSeguimiento?.operador || viajeActivo?.conductor || '',
+      remolque: filaSeguimiento?.remolque || viajeActivo?.remolque || '',
+      ruta: filaSeguimiento?.ruta || [viajeActivo?.origen, viajeActivo?.destino].filter(Boolean).join(' - ') || '',
+      origen: filaSeguimiento?.origen || viajeActivo?.origen || '',
+      destino: filaSeguimiento?.destino || viajeActivo?.destino || '',
+      cita_carga: filaSeguimiento?.cita_carga || viajeActivo?.fecha_inicio || '',
+      cita_descarga: filaSeguimiento?.cita_descarga || viajeActivo?.fecha_fin || '',
+      hora_llegada: filaSeguimiento?.hora_llegada || '',
+      hora_liberacion: filaSeguimiento?.hora_liberacion || '',
+      estatus: filaSeguimiento?.estatus || viajeActivo?.estado || 'Disponible',
+      comentarios_cliente: filaSeguimiento?.comentarios_cliente || '',
+      comentarios_monitoreo: comentarioRapido.contenido.trim(),
+      grupo: filaSeguimiento?.grupo || '',
+    };
+
+    if (filaSeguimiento?.id) {
+      await fetch(`${apiUrl}/seguimiento/${filaSeguimiento.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payloadSeguimiento),
+      });
+    } else {
+      await fetch(`${apiUrl}/seguimiento`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payloadSeguimiento),
+      });
+    }
+
     await fetch(`${apiUrl}/comentarios`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1716,6 +1762,8 @@ export default function Home() {
 
         {activeTab === 'unidades' && (() => {
           const unidadesFiltradas = todasLasUnidades.filter(v => {
+            const key = unidadKey(v);
+            if (hiddenUnits.includes(key)) return false;
             const coincideBusqueda = !busquedaUnidades ||
               v.name.toLowerCase().includes(busquedaUnidades.toLowerCase()) ||
               (operadores[String(v.id)]?.nombre || '').toLowerCase().includes(busquedaUnidades.toLowerCase()) ||
@@ -1743,6 +1791,7 @@ export default function Home() {
                     style={{ ...s.button('#00ff41'), background: '#00ff4120', border: '1px solid #00ff41', color: '#00ff41', padding: '0.5rem 1rem' }}>
                     + Agregar Unidad
                   </button>
+                  {hiddenUnits.length > 0 && <button onClick={() => setHiddenUnits([])} style={s.button('#3b82f6')}>Mostrar ocultas ({hiddenUnits.length})</button>}
                   <button onClick={loadAll} style={s.button()}>Actualizar</button>
                 </div>
               </div>
@@ -1798,6 +1847,26 @@ export default function Home() {
                   </span>
                 </div>
               </div>
+
+              {hiddenUnits.length > 0 && (
+                <div style={{ ...s.card, marginBottom: '1.5rem', padding: '1rem 1.5rem', borderColor: '#3b82f6' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                    <strong style={{ color: '#3b82f6' }}>Unidades ocultas ({hiddenUnits.length})</strong>
+                    <button onClick={() => setHiddenUnits([])} style={s.button('#3b82f6')}>Mostrar todas</button>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    {todasLasUnidades.filter(v => hiddenUnits.includes(unidadKey(v))).map(v => (
+                      <button
+                        key={unidadKey(v)}
+                        onClick={() => setHiddenUnits(prev => prev.filter(k => k !== unidadKey(v)))}
+                        style={{ padding: '0.35rem 0.65rem', borderRadius: '999px', border: '1px solid #3b82f6', background: '#1a1a1a', color: '#c0c0c0', cursor: 'pointer', fontSize: '0.75rem' }}
+                      >
+                        {v.name} ✕
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div style={s.card}>
                 {todasLasUnidades.length === 0 ? (
@@ -1866,6 +1935,14 @@ export default function Home() {
                                   style={{ padding: '0.2rem 0.5rem', borderRadius: '6px', border: '1px solid #ef4444', background: '#ef444420', color: '#ef4444', cursor: 'pointer', fontSize: '0.7rem' }}>X</button>
                               </div>
                             ) : (v.lastSeen !== null && v.lastSeen !== undefined ? `hace ${v.lastSeen}min` : '-')}
+                            <div style={{ marginTop: '0.35rem' }}>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setHiddenUnits(prev => prev.includes(unidadKey(v)) ? prev : [...prev, unidadKey(v)]); }}
+                                style={{ padding: '0.2rem 0.5rem', borderRadius: '6px', border: '1px solid #6b7280', background: '#1a1a1a', color: '#c0c0c0', cursor: 'pointer', fontSize: '0.7rem' }}
+                              >
+                                Ocultar
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
