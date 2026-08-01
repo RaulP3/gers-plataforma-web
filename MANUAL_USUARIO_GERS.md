@@ -5,8 +5,9 @@
 
 ## Acceso
 - URL local: `http://localhost:3000`
-- Usuario inicial: `admin`
-- Contrasena inicial: `admin123`
+- Usuario inicial: el valor seguro configurado por el operador en `ADMIN_USERNAME`.
+- Contrasena inicial: el valor seguro configurado por el operador en `ADMIN_PASSWORD`.
+- El sistema no publica credenciales predeterminadas. Solicita el acceso al administrador responsable.
 
 ## Que permite hacer el sistema
 - Ver unidades y su estado.
@@ -108,11 +109,17 @@
 - Generar el reporte de turno al finalizar la jornada.
 
 ## Instalacion con Docker
+1. Copia `.env.example` como `.env` en la raiz del proyecto.
+2. Reemplaza los valores de ejemplo de `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `SAMSARA_API_TOKEN` y `SAMSARA_WEBHOOK_SECRET`. No compartas ni confirmes `.env`.
+3. Inicia y espera las comprobaciones de salud:
+
 ```bash
-docker compose up -d --build
+docker compose --env-file .env up --detach --build --wait
 ```
+
+En Windows, `start.bat` realiza estas validaciones automaticamente. Si alguna credencial o secreto real estuvo expuesto anteriormente, el administrador debe rotarlo tambien en Samsara o en el proveedor correspondiente; eliminarlo del archivo no lo revoca.
 
 Para detenerlo:
 ```bash
-docker compose down
+docker compose --env-file .env down
 ```

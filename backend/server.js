@@ -10,44 +10,72 @@ const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 3001;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const allowedOrigins = new Set(
+  (process.env.CORS_ORIGINS || FRONTEND_URL).split(',').map(origin => origin.trim()).filter(Boolean)
+);
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || origin.startsWith('http://localhost') || origin.match(/^http:\/\/192\.168\.\d+\.\d+/) || origin.match(/^http:\/\/10\.\d+\.\d+\.\d+/) || origin.match(/^http:\/\/172\.(1[6-9]|2\d|3[01])\.\d+\.\d+/)) {
-      callback(null, true);
-    } else {
-      callback(null, true);
-    }
+    const allowPrivateOrigins = !IS_PRODUCTION || process.env.ALLOW_PRIVATE_NETWORK_ORIGINS === 'true';
+    const localDevelopmentOrigin = allowPrivateOrigins && origin && (
+      /^https?:\/\/localhost(?::\d+)?$/.test(origin) ||
+      /^https?:\/\/(?:192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)(?::\d+)?$/.test(origin)
+    );
+    callback(null, !origin || allowedOrigins.has(origin) || localDevelopmentOrigin);
   },
   credentials: true
 }));
-app.use(express.json());
+app.use(express.json({
+  verify: (req, res, buffer) => {
+    if (req.originalUrl.split('?')[0] === '/api/webhooks/samsara') req.rawBody = Buffer.from(buffer);
+  },
+}));
 
-app.get('/api/live', (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
-  res.flushHeaders?.();
-  res.write('event: connected\ndata: {"type":"connected"}\n\n');
-  liveClients.add(res);
-
-  req.on('close', () => {
-    liveClients.delete(res);
+app.get('/health', (req, res) => {
+  db.get('SELECT 1 AS ok', [], (err) => {
+    if (err) return res.status(503).json({ status: 'unhealthy' });
+    res.json({ status: 'ok' });
   });
+});
+
+app.get('/api/live', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization || '';
+    const queryToken = req.query.token || req.query.access_token;
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : (req.headers['x-auth-token'] || queryToken);
+    if (!token || Array.isArray(token)) return res.status(401).json({ error: 'No autenticado' });
+    const user = await getUserByToken(token);
+    if (!user) return res.status(401).json({ error: 'Sesión inválida o expirada' });
+    await refreshSession(token);
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+    res.write('event: connected\ndata: {"type":"connected"}\n\n');
+    liveClients.add(res);
+
+    req.on('close', () => {
+      liveClients.delete(res);
+    });
+  } catch (err) {
+    console.error('Error de autenticación SSE:', err);
+    if (!res.headersSent) res.status(500).json({ error: 'Error de autenticación' });
+    else res.end();
+  }
 });
 
 app.use('/api', (req, res, next) => {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
-  const originalJson = res.json.bind(res);
-  const originalSend = res.send.bind(res);
-  const notify = (body, sender) => {
-    const output = sender(body);
-    if (res.statusCode < 400) broadcastLiveUpdate('reload', { method: req.method, path: req.path });
-    return output;
-  };
-  res.json = (body) => notify(body, originalJson);
-  res.send = (body) => notify(body, originalSend);
+  let notified = false;
+  res.on('finish', () => {
+    if (!notified && res.statusCode < 400) {
+      notified = true;
+      broadcastLiveUpdate('reload', { method: req.method, path: req.path });
+    }
+  });
   next();
 });
 
@@ -58,9 +86,13 @@ const db = new sqlite3.Database(dbPath, (err) => {
   if (err) console.error('Error al conectar con SQLite:', err);
   else console.log('Conectado a SQLite en', dbPath);
 });
+db.configure('busyTimeout', 10000);
 
 const PBKDF2_ITERATIONS = 120000;
 const SESSION_DAYS = 30;
+const GEOCODE_CACHE_MAX_ENTRIES = 100;
+const GEOCODE_CACHE_TTL_MS = 60 * 60 * 1000;
+const geocodeCache = new Map();
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const hash = crypto.pbkdf2Sync(password, salt, PBKDF2_ITERATIONS, 64, 'sha512').toString('hex');
@@ -107,6 +139,36 @@ function createSessionToken() {
   return crypto.randomBytes(32).toString('hex');
 }
 
+async function withTransaction(work) {
+  const transactionDb = new sqlite3.Database(dbPath);
+  transactionDb.configure('busyTimeout', 10000);
+  const tx = {
+    run: (sql, params = []) => new Promise((resolve, reject) => {
+      transactionDb.run(sql, params, function (err) {
+        if (err) reject(err); else resolve(this);
+      });
+    }),
+    get: (sql, params = []) => new Promise((resolve, reject) => {
+      transactionDb.get(sql, params, (err, row) => err ? reject(err) : resolve(row));
+    }),
+    all: (sql, params = []) => new Promise((resolve, reject) => {
+      transactionDb.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows || []));
+    }),
+  };
+  try {
+    await tx.run('PRAGMA foreign_keys = ON');
+    await tx.run('BEGIN IMMEDIATE');
+    const result = await work(tx);
+    await tx.run('COMMIT');
+    return result;
+  } catch (error) {
+    try { await tx.run('ROLLBACK'); } catch {}
+    throw error;
+  } finally {
+    transactionDb.close();
+  }
+}
+
 const liveClients = new Set();
 
 function broadcastLiveUpdate(type = 'reload', detail = {}) {
@@ -125,7 +187,7 @@ async function getUserByToken(token) {
     `SELECT u.id, u.username, u.nombre, u.rol
      FROM sessions s
      JOIN users u ON u.id = s.user_id
-     WHERE s.token = ? AND s.revoked = 0 AND s.expires_at > CURRENT_TIMESTAMP`,
+     WHERE s.token = ? AND s.revoked = 0 AND s.expires_at > CURRENT_TIMESTAMP AND u.activo = 1`,
     [token]
   );
 }
@@ -154,9 +216,16 @@ async function requireAuth(req, res, next) {
 async function ensureDefaultAdmin() {
   try {
     const user = await getQuery('SELECT COUNT(*) as total FROM users');
-    if (user && user.total > 0) return;
-    const adminUser = process.env.ADMIN_USERNAME || 'admin';
-    const adminPass = process.env.ADMIN_PASSWORD || 'admin123';
+    const configuredUser = String(process.env.ADMIN_USERNAME || '').trim();
+    const configuredPass = String(process.env.ADMIN_PASSWORD || '');
+    if (user?.total > 0 && !configuredUser) return;
+    const adminUser = configuredUser || (!IS_PRODUCTION ? 'admin' : '');
+    const adminPass = configuredPass || (!IS_PRODUCTION ? 'admin123' : '');
+    if (!adminUser || !adminPass) {
+      throw new Error('ADMIN_USERNAME y ADMIN_PASSWORD son requeridos para crear el primer administrador');
+    }
+    const existing = await getQuery('SELECT id FROM users WHERE username = ?', [adminUser]);
+    if (existing) return;
     const name = process.env.ADMIN_NAME || 'Administrador';
     const { salt, hash } = hashPassword(adminPass);
     await runQuery(
@@ -165,17 +234,24 @@ async function ensureDefaultAdmin() {
     );
     console.log(`Usuario admin inicial creado: ${adminUser}`);
   } catch (err) {
-    console.error('No se pudo crear el usuario admin inicial:', err);
+    console.error('No se pudo crear el usuario admin inicial:', err.message);
+    throw err;
   }
 }
 
-db.serialize(() => {
+const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
+  const finishInitialization = err => err ? reject(err) : resolve();
+  db.run('PRAGMA foreign_keys = ON', [], err => {
+    if (err) reject(err);
+  });
   db.run(`CREATE TABLE IF NOT EXISTS viajes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     vehicle_id TEXT,
     vehicle_name TEXT,
     origen TEXT,
     destino TEXT,
+    tipo_entrega TEXT DEFAULT 'directo',
+    destinos_json TEXT DEFAULT '[]',
     conductor TEXT,
     telefono TEXT,
     remolque TEXT,
@@ -187,6 +263,8 @@ db.serialize(() => {
   )`);
   db.run("ALTER TABLE viajes ADD COLUMN telefono TEXT", [], () => {});
   db.run("ALTER TABLE viajes ADD COLUMN remolque TEXT", [], () => {});
+  db.run("ALTER TABLE viajes ADD COLUMN tipo_entrega TEXT DEFAULT 'directo'", [], () => {});
+  db.run("ALTER TABLE viajes ADD COLUMN destinos_json TEXT DEFAULT '[]'", [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS alertas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -290,6 +368,7 @@ db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS geofences (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nombre TEXT NOT NULL,
+    direccion TEXT DEFAULT '',
     latitud REAL NOT NULL,
     longitud REAL NOT NULL,
     radio_metros REAL DEFAULT 500,
@@ -298,6 +377,7 @@ db.serialize(() => {
     activa INTEGER DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+  db.run("ALTER TABLE geofences ADD COLUMN direccion TEXT DEFAULT ''", [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS geofence_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -335,6 +415,7 @@ db.serialize(() => {
     speed REAL,
     heading REAL,
     location TEXT,
+    source_time_ms INTEGER,
     recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
@@ -373,6 +454,8 @@ db.serialize(() => {
   )`);
 
   db.run(`CREATE INDEX IF NOT EXISTS idx_route_history_vehicle_time ON route_history (vehicle_id, recorded_at)`);
+  db.run('ALTER TABLE route_history ADD COLUMN source_time_ms INTEGER', [], () => {});
+  db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_route_history_vehicle_source_time ON route_history(vehicle_id, source_time_ms) WHERE source_time_ms IS NOT NULL');
 
   db.run("ALTER TABLE geofences ADD COLUMN categoria TEXT DEFAULT 'custom'", [], () => {});
 
@@ -413,11 +496,38 @@ db.serialize(() => {
     remolque_id INTEGER NOT NULL,
     vehicle_id TEXT NOT NULL,
     vehicle_name TEXT,
+    tipo_asignacion TEXT DEFAULT 'sencillo',
+    grupo_full TEXT,
     fecha_inicio DATETIME DEFAULT CURRENT_TIMESTAMP,
     fecha_fin DATETIME,
     activa INTEGER DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS mapas_mymaps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT NOT NULL,
+    descripcion TEXT,
+    origen TEXT,
+    destino TEXT,
+    url TEXT NOT NULL,
+    created_by_user_id INTEGER,
+    created_by_username TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.run("ALTER TABLE remolque_asignaciones ADD COLUMN tipo_asignacion TEXT DEFAULT 'sencillo'", [], () => {});
+  db.run('ALTER TABLE remolque_asignaciones ADD COLUMN grupo_full TEXT', [], () => {});
+  db.run("UPDATE remolque_asignaciones SET tipo_asignacion = 'sencillo' WHERE tipo_asignacion IS NULL OR tipo_asignacion = ''");
+  db.run(`UPDATE remolque_asignaciones SET activa = 0, fecha_fin = COALESCE(fecha_fin, CURRENT_TIMESTAMP)
+          WHERE activa = 1 AND id NOT IN (SELECT MAX(id) FROM remolque_asignaciones WHERE activa = 1 GROUP BY remolque_id)`);
+  db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_remolque_asignacion_activa_remolque ON remolque_asignaciones(remolque_id) WHERE activa = 1');
+  db.run('DROP INDEX IF EXISTS idx_remolque_asignacion_activa_vehicle');
+  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_remolque_asignacion_activa_vehicle_sencillo
+          ON remolque_asignaciones(vehicle_id) WHERE activa = 1 AND grupo_full IS NULL`);
+  db.run(`UPDATE remolques SET status = CASE
+            WHEN EXISTS (SELECT 1 FROM remolque_asignaciones ra WHERE ra.remolque_id = remolques.id AND ra.activa = 1) THEN 'asignado'
+            ELSE 'disponible' END`);
 
   db.run(`CREATE TABLE IF NOT EXISTS seguimiento (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -499,15 +609,19 @@ db.serialize(() => {
   ];
 
   db.get('SELECT COUNT(*) as count FROM geofences', [], (err, row) => {
+    if (err) return finishInitialization(err);
     if (row && row.count === 0) {
       const stmt = db.prepare('INSERT INTO geofences (nombre, latitud, longitud, radio_metros, descripcion, color, categoria) VALUES (?, ?, ?, ?, ?, ?, ?)');
       catalogGeofences.forEach(g => {
         stmt.run(g.nombre, g.latitud, g.longitud, g.radio_metros, g.descripcion, g.color, g.categoria);
       });
-      stmt.finalize();
-      console.log(`Seeded ${catalogGeofences.length} geocercas del catálogo`);
+      stmt.finalize(finalizeErr => {
+        if (!finalizeErr) console.log(`Seeded ${catalogGeofences.length} geocercas del catálogo`);
+        finishInitialization(finalizeErr);
+      });
     } else {
       db.all('SELECT nombre FROM geofences', [], (e, existing) => {
+        if (e) return finishInitialization(e);
         const existingNames = new Set((existing || []).map(r => r.nombre));
         const missing = catalogGeofences.filter(g => !existingNames.has(g.nombre));
         if (missing.length > 0) {
@@ -515,18 +629,19 @@ db.serialize(() => {
           missing.forEach(g => {
             stmt.run(g.nombre, g.latitud, g.longitud, g.radio_metros, g.descripcion, g.color, g.categoria);
           });
-          stmt.finalize();
-          console.log(`Seeded ${missing.length} geocercas faltantes del catálogo`);
-        }
+          stmt.finalize(finalizeErr => {
+            if (!finalizeErr) console.log(`Seeded ${missing.length} geocercas faltantes del catálogo`);
+            finishInitialization(finalizeErr);
+          });
+        } else finishInitialization();
       });
     }
   });
-});
-
-ensureDefaultAdmin();
+}));
 
 const samsaraApi = axios.create({
   baseURL: 'https://api.samsara.com/v1',
+  timeout: 15000,
   headers: {
     'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`,
     'Content-Type': 'application/json'
@@ -554,7 +669,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const token = createSessionToken();
-    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString();
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * SESSION_DAYS).toISOString();
     await runQuery(`INSERT INTO sessions (user_id, token, expires_at) VALUES (?, ?, datetime('now', '+${SESSION_DAYS} days'))`, [user.id, token]);
 
     res.json({
@@ -620,6 +735,28 @@ app.post('/api/users', requireAuth, requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('Error al crear usuario:', err);
     res.status(500).json({ error: 'Error al crear usuario' });
+  }
+});
+
+app.delete('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
+  const userId = Number(req.params.id);
+  if (!Number.isInteger(userId) || userId <= 0) return res.status(400).json({ error: 'Usuario inválido' });
+  if (userId === req.user.id) return res.status(400).json({ error: 'No puedes eliminar tu propia cuenta' });
+  try {
+    const target = await getQuery('SELECT id, username, rol, activo FROM users WHERE id = ?', [userId]);
+    if (!target) return res.status(404).json({ error: 'Usuario no encontrado' });
+    if (target.rol === 'admin' && target.activo) {
+      const admins = await getQuery("SELECT COUNT(*) AS total FROM users WHERE rol = 'admin' AND activo = 1");
+      if (admins.total <= 1) return res.status(400).json({ error: 'No se puede eliminar el último administrador activo' });
+    }
+    await withTransaction(async tx => {
+      await tx.run('DELETE FROM sessions WHERE user_id = ?', [userId]);
+      await tx.run('DELETE FROM users WHERE id = ?', [userId]);
+    });
+    res.json({ deleted: 1, id: userId });
+  } catch (err) {
+    console.error('Error al eliminar usuario:', err);
+    res.status(500).json({ error: 'No se pudo eliminar el usuario' });
   }
 });
 
@@ -697,7 +834,7 @@ async function getTurnoSummary(hours = 8, turno = '', observaciones = '') {
   return summary;
 }
 
-app.post('/api/turnos/entregar', async (req, res) => {
+app.post('/api/turnos/entregar', requireAuth, async (req, res) => {
   try {
     const { horas = 8, turno = '', observaciones = '' } = req.body || {};
     const summary = await getTurnoSummary(horas, turno, observaciones);
@@ -722,7 +859,7 @@ app.post('/api/turnos/entregar', async (req, res) => {
   }
 });
 
-app.post('/api/turnos/resumen', async (req, res) => {
+app.post('/api/turnos/resumen', requireAuth, async (req, res) => {
   try {
     const { horas = 8, turno = '', observaciones = '' } = req.body || {};
     const summary = await getTurnoSummary(horas, turno, observaciones);
@@ -733,7 +870,7 @@ app.post('/api/turnos/resumen', async (req, res) => {
   }
 });
 
-app.get('/api/turnos/entregas', async (req, res) => {
+app.get('/api/turnos/entregas', requireAuth, async (req, res) => {
   try {
     const reports = await allQuery('SELECT * FROM turnos_reportes ORDER BY created_at DESC LIMIT 50');
     res.json(reports);
@@ -744,13 +881,207 @@ app.get('/api/turnos/entregas', async (req, res) => {
 });
 
 app.use('/api', (req, res, next) => {
-  if (req.path.startsWith('/auth')) return next();
+  if (req.path.startsWith('/auth') || req.path === '/webhooks/samsara') return next();
   return requireAuth(req, res, next);
+});
+
+function normalizeDestination(value) {
+  return String(value).trim().replace(/\s+/g, ' ').toLocaleLowerCase('es-MX');
+}
+
+function getCachedGeocode(key) {
+  const cached = geocodeCache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.cachedAt > GEOCODE_CACHE_TTL_MS) {
+    geocodeCache.delete(key);
+    return null;
+  }
+  geocodeCache.delete(key);
+  geocodeCache.set(key, cached);
+  return cached.value;
+}
+
+function cacheGeocode(key, value) {
+  geocodeCache.set(key, { value, cachedAt: Date.now() });
+  if (geocodeCache.size > GEOCODE_CACHE_MAX_ENTRIES) {
+    geocodeCache.delete(geocodeCache.keys().next().value);
+  }
+}
+
+function parseCoordinate(value, min, max) {
+  if (value === '' || value === null || value === undefined) return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= min && number <= max ? number : null;
+}
+
+async function geocodeAddress(address) {
+  const cacheKey = normalizeDestination(address);
+  const cached = getCachedGeocode(cacheKey);
+  if (cached) return cached;
+  const geoRes = await axios.get('https://nominatim.openstreetmap.org/search', {
+    params: { q: address, format: 'jsonv2', limit: 1 },
+    headers: { 'User-Agent': 'gers-plataforma-web/1.0' },
+    timeout: 15000,
+  });
+  const first = Array.isArray(geoRes.data) ? geoRes.data[0] : null;
+  if (!first) return null;
+  const lat = parseCoordinate(first.lat, -90, 90);
+  const lon = parseCoordinate(first.lon, -180, 180);
+  if (lat === null || lon === null) throw new Error('Nominatim devolvió coordenadas inválidas');
+  const result = { nombre: first.display_name || first.name || address, lat, lon };
+  cacheGeocode(cacheKey, result);
+  return result;
+}
+
+app.post('/api/calculate-route', async (req, res) => {
+  const destino = typeof req.body?.destino === 'string' ? req.body.destino.trim().replace(/\s+/g, ' ') : '';
+  const origen = typeof req.body?.origen === 'string' ? req.body.origen.trim().replace(/\s+/g, ' ') : '';
+  let latOrigen = parseCoordinate(req.body?.lat_origen, -90, 90);
+  let lonOrigen = parseCoordinate(req.body?.lon_origen, -180, 180);
+  const latDestino = parseCoordinate(req.body?.lat_destino, -90, 90);
+  const lonDestino = parseCoordinate(req.body?.lon_destino, -180, 180);
+  if (!destino || destino.length > 300) {
+    return res.status(400).json({ error: 'destino es requerido y debe tener máximo 300 caracteres' });
+  }
+  if ((latOrigen === null || lonOrigen === null) && (!origen || origen.length > 300)) {
+    return res.status(400).json({ error: 'Se requieren coordenadas válidas o una dirección de origen' });
+  }
+
+  try {
+    const [destination, originLocation] = await Promise.all([
+      latDestino !== null && lonDestino !== null
+        ? Promise.resolve({ nombre: destino, lat: latDestino, lon: lonDestino })
+        : geocodeAddress(destino),
+      latOrigen === null || lonOrigen === null ? geocodeAddress(origen) : Promise.resolve(null),
+    ]);
+    if (!destination) return res.status(404).json({ error: 'No se encontró el destino' });
+    if (originLocation) {
+      latOrigen = originLocation.lat;
+      lonOrigen = originLocation.lon;
+    }
+    if (latOrigen === null || lonOrigen === null) return res.status(404).json({ error: 'No se encontró el origen' });
+
+    const routeRes = await axios.get(
+      `https://router.project-osrm.org/route/v1/driving/${lonOrigen},${latOrigen};${destination.lon},${destination.lat}`,
+      {
+        params: { overview: 'false', alternatives: 'false', steps: 'false' },
+        headers: { 'User-Agent': 'gers-plataforma-web/1.0' },
+        timeout: 15000,
+      }
+    );
+    const route = routeRes.data?.routes?.[0];
+    if (routeRes.data?.code !== 'Ok' || !route || !Number.isFinite(route.distance) || !Number.isFinite(route.duration)) {
+      return res.status(422).json({ error: 'No se pudo calcular una ruta para el destino' });
+    }
+    res.json({
+      origen: originLocation,
+      destino: destination,
+      distancia_metros: route.distance,
+      duracion_segundos: route.duration,
+    });
+  } catch (error) {
+    console.error('Error al calcular ruta:', error.message);
+    res.status(502).json({ error: 'El servicio externo de rutas no está disponible' });
+  }
+});
+
+function validMyMapsUrl(value) {
+  if (typeof value !== 'string' || !value.trim()) return false;
+  try {
+    const parsed = new URL(value.trim());
+    const host = parsed.hostname.toLowerCase();
+    return ['http:', 'https:'].includes(parsed.protocol) && (
+      host === 'google.com' || host.endsWith('.google.com') ||
+      host === 'googleusercontent.com' || host.endsWith('.googleusercontent.com')
+    );
+  } catch {
+    return false;
+  }
+}
+
+app.get('/api/mapas', async (req, res) => {
+  try {
+    res.json(await allQuery('SELECT * FROM mapas_mymaps ORDER BY created_at DESC, id DESC'));
+  } catch (err) {
+    console.error('Error al listar mapas:', err);
+    res.status(500).json({ error: 'Error al listar mapas' });
+  }
+});
+
+app.post('/api/mapas', async (req, res) => {
+  const nombre = typeof req.body?.nombre === 'string' ? req.body.nombre.trim() : '';
+  const url = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
+  if (!nombre) return res.status(400).json({ error: 'nombre es requerido' });
+  if (!validMyMapsUrl(url)) return res.status(400).json({ error: 'url debe ser HTTP(S) de google.com o googleusercontent.com' });
+  try {
+    const result = await runQuery(
+      `INSERT INTO mapas_mymaps (nombre, descripcion, origen, destino, url, created_by_user_id, created_by_username)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [nombre, req.body.descripcion ?? null, req.body.origen ?? null, req.body.destino ?? null, url, req.user.id, req.user.username]
+    );
+    res.status(201).json(await getQuery('SELECT * FROM mapas_mymaps WHERE id = ?', [result.lastID]));
+  } catch (err) {
+    console.error('Error al crear mapa:', err);
+    res.status(500).json({ error: 'Error al crear mapa' });
+  }
+});
+
+app.put('/api/mapas/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Mapa inválido' });
+  const has = key => Object.prototype.hasOwnProperty.call(req.body || {}, key);
+  try {
+    const current = await getQuery('SELECT * FROM mapas_mymaps WHERE id = ?', [id]);
+    if (!current) return res.status(404).json({ error: 'Mapa no encontrado' });
+    if (has('nombre') && typeof req.body.nombre !== 'string') {
+      return res.status(400).json({ error: 'nombre debe ser texto' });
+    }
+    if (has('url') && typeof req.body.url !== 'string') {
+      return res.status(400).json({ error: 'url debe ser texto' });
+    }
+    const nombre = has('nombre') ? req.body.nombre.trim() : current.nombre;
+    const url = has('url') ? req.body.url.trim() : current.url;
+    if (!nombre) return res.status(400).json({ error: 'nombre no puede estar vacío' });
+    if (!validMyMapsUrl(url)) return res.status(400).json({ error: 'url debe ser HTTP(S) de google.com o googleusercontent.com' });
+    await runQuery(
+      `UPDATE mapas_mymaps SET nombre = ?, descripcion = ?, origen = ?, destino = ?, url = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [
+        nombre,
+        has('descripcion') ? req.body.descripcion : current.descripcion,
+        has('origen') ? req.body.origen : current.origen,
+        has('destino') ? req.body.destino : current.destino,
+        url,
+        id,
+      ]
+    );
+    res.json(await getQuery('SELECT * FROM mapas_mymaps WHERE id = ?', [id]));
+  } catch (err) {
+    console.error('Error al actualizar mapa:', err);
+    res.status(500).json({ error: 'Error al actualizar mapa' });
+  }
+});
+
+app.delete('/api/mapas/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Mapa inválido' });
+  try {
+    const current = await getQuery('SELECT id, created_by_user_id FROM mapas_mymaps WHERE id = ?', [id]);
+    if (!current) return res.status(404).json({ error: 'Mapa no encontrado' });
+    if (req.user.rol !== 'admin' && current.created_by_user_id !== req.user.id) {
+      return res.status(403).json({ error: 'Solo el propietario o un administrador puede eliminar este mapa' });
+    }
+    const result = await runQuery('DELETE FROM mapas_mymaps WHERE id = ?', [id]);
+    res.json({ deleted: result.changes, id });
+  } catch (err) {
+    console.error('Error al eliminar mapa:', err);
+    res.status(500).json({ error: 'Error al eliminar mapa' });
+  }
 });
 
 // ============ SAMSARA VEHICLES + LOCATIONS ============
 
-async function refreshSamsaraVehicles() {
+async function performSamsaraVehicleRefresh() {
   try {
     const listRes = await samsaraApi.get('/fleet/list');
     const vehicles = listRes.data.vehicles || [];
@@ -758,7 +1089,8 @@ async function refreshSamsaraVehicles() {
     let locationsMap = {};
     try {
       const locRes = await axios.get('https://api.samsara.com/fleet/vehicles/locations', {
-        headers: { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' }
+        headers: { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' },
+        timeout: 15000,
       });
 
       for (const v of (locRes.data?.data || [])) {
@@ -783,8 +1115,9 @@ async function refreshSamsaraVehicles() {
           );
 
           db.run(
-            `INSERT INTO route_history (vehicle_id, vehicle_name, latitude, longitude, speed, heading, location) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [v.id, v.name || null, v.location.latitude, v.location.longitude, v.location.speed, v.location.heading, v.location.reverseGeo?.formattedLocation || ''],
+            `INSERT OR IGNORE INTO route_history (vehicle_id, vehicle_name, latitude, longitude, speed, heading, location, source_time_ms, recorded_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [v.id, v.name || null, v.location.latitude, v.location.longitude, v.location.speed, v.location.heading, v.location.reverseGeo?.formattedLocation || '', locTime, new Date(locTime).toISOString().replace('T', ' ').replace('Z', '')],
             () => {}
           );
         }
@@ -804,12 +1137,19 @@ async function refreshSamsaraVehicles() {
         lastSeen: apiLoc ? apiLoc.minutesAgo : null
       };
     });
-    broadcastLiveUpdate('reload', { source: 'samsara-vehicles' });
     return enrichedVehicles;
   } catch (error) {
     console.error('Error Samsara API:', error.message);
     throw error;
   }
+}
+
+let samsaraRefreshInFlight = null;
+function refreshSamsaraVehicles() {
+  if (!samsaraRefreshInFlight) {
+    samsaraRefreshInFlight = performSamsaraVehicleRefresh().finally(() => { samsaraRefreshInFlight = null; });
+  }
+  return samsaraRefreshInFlight;
 }
 
 app.get('/api/samsara/vehicles', async (req, res) => {
@@ -831,17 +1171,34 @@ app.get('/api/vehicle-operators', (req, res) => {
 });
 
 app.put('/api/vehicle-operators/:vehicleId', (req, res) => {
-  const { operator_name, telefono } = req.body;
-  db.run(
-    `INSERT INTO vehicle_operators (vehicle_id, vehicle_name, operator_name, telefono, updated_at)
-     VALUES (?, ?, ?, ?, datetime('now'))
-     ON CONFLICT(vehicle_id) DO UPDATE SET operator_name = ?, telefono = ?, updated_at = datetime('now')`,
-    [req.params.vehicleId, req.body.vehicle_name || null, operator_name || '', telefono || '', operator_name || '', telefono || ''],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ changes: this.changes });
+  db.get('SELECT * FROM vehicle_operators WHERE vehicle_id = ?', [req.params.vehicleId], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    const has = (key) => Object.prototype.hasOwnProperty.call(req.body || {}, key);
+    const next = {
+      vehicle_name: has('vehicle_name') ? req.body.vehicle_name : (row?.vehicle_name || null),
+      operator_name: has('operator_name') ? req.body.operator_name : (row?.operator_name || ''),
+      telefono: has('telefono') ? req.body.telefono : (row?.telefono || ''),
+    };
+    if (row) {
+      db.run(
+        'UPDATE vehicle_operators SET vehicle_name = ?, operator_name = ?, telefono = ?, updated_at = datetime(\'now\') WHERE vehicle_id = ?',
+        [next.vehicle_name, next.operator_name, next.telefono, req.params.vehicleId],
+        function (runErr) {
+          if (runErr) return res.status(500).json({ error: runErr.message });
+          res.json({ changes: this.changes });
+        }
+      );
+    } else {
+      db.run(
+        'INSERT INTO vehicle_operators (vehicle_id, vehicle_name, operator_name, telefono, updated_at) VALUES (?, ?, ?, ?, datetime(\'now\'))',
+        [req.params.vehicleId, next.vehicle_name, next.operator_name, next.telefono],
+        function (runErr) {
+          if (runErr) return res.status(500).json({ error: runErr.message });
+          res.json({ changes: this.changes });
+        }
+      );
     }
-  );
+  });
 });
 
 // ============ SAMSARA DRIVERS ============
@@ -855,7 +1212,8 @@ app.get('/api/samsara/drivers', async (req, res) => {
       const params = after ? { after } : {};
       const driversRes = await axios.get('https://api.samsara.com/fleet/drivers', {
         headers: { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' },
-        params
+        params,
+        timeout: 15000,
       });
       const batch = driversRes.data.data || [];
       allDrivers = allDrivers.concat(batch);
@@ -899,7 +1257,8 @@ app.get('/api/geofences', (req, res) => {
 app.get('/api/samsara/addresses', async (req, res) => {
   try {
     const addressRes = await axios.get('https://api.samsara.com/addresses', {
-      headers: { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' }
+      headers: { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' },
+      timeout: 15000,
     });
     const data = addressRes.data;
     const addresses = data.addresses || (Array.isArray(data) ? data : (data.data || []));
@@ -923,13 +1282,13 @@ app.get('/api/samsara/addresses', async (req, res) => {
 });
 
 app.post('/api/geofences', (req, res) => {
-  const { nombre, latitud, longitud, radio_metros, descripcion, color } = req.body;
+  const { nombre, direccion, latitud, longitud, radio_metros, descripcion, color } = req.body;
   if (!nombre || latitud === undefined || longitud === undefined) {
     return res.status(400).json({ error: 'nombre, latitud y longitud son requeridos' });
   }
   db.run(
-    'INSERT INTO geofences (nombre, latitud, longitud, radio_metros, descripcion, color) VALUES (?, ?, ?, ?, ?, ?)',
-    [nombre, latitud, longitud, radio_metros || 500, descripcion || '', color || '#3b82f6'],
+    'INSERT INTO geofences (nombre, direccion, latitud, longitud, radio_metros, descripcion, color) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [nombre, direccion || '', latitud, longitud, radio_metros || 500, descripcion || '', color || '#3b82f6'],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ id: this.lastID });
@@ -937,14 +1296,26 @@ app.post('/api/geofences', (req, res) => {
   );
 });
 
+app.put('/api/geofences/toggle', (req, res) => {
+  const { ids, activa } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0 || activa === undefined) {
+    return res.status(400).json({ error: 'ids (array) y activa (0/1) son requeridos' });
+  }
+  const placeholders = ids.map(() => '?').join(',');
+  db.run(`UPDATE geofences SET activa = ? WHERE id IN (${placeholders})`, [activa, ...ids], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ changes: this.changes });
+  });
+});
+
 app.put('/api/geofences/:id', (req, res) => {
-  const { nombre, latitud, longitud, radio_metros, descripcion, color, activa } = req.body;
+  const { nombre, direccion, latitud, longitud, radio_metros, descripcion, color, activa } = req.body;
   db.run(
     `UPDATE geofences SET nombre = COALESCE(?, nombre), latitud = COALESCE(?, latitud),
-     longitud = COALESCE(?, longitud), radio_metros = COALESCE(?, radio_metros),
+     direccion = COALESCE(?, direccion), longitud = COALESCE(?, longitud), radio_metros = COALESCE(?, radio_metros),
      descripcion = COALESCE(?, descripcion), color = COALESCE(?, color), activa = COALESCE(?, activa)
      WHERE id = ?`,
-    [nombre, latitud, longitud, radio_metros, descripcion, color, activa, req.params.id],
+    [nombre, latitud, direccion, longitud, radio_metros, descripcion, color, activa, req.params.id],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ changes: this.changes });
@@ -952,20 +1323,30 @@ app.put('/api/geofences/:id', (req, res) => {
   );
 });
 
-app.delete('/api/geofences/:id', (req, res) => {
-  db.run('DELETE FROM geofences WHERE id = ?', [req.params.id], function (err) {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json({ changes: this.changes });
-  });
+app.post('/api/geocode-address', async (req, res) => {
+  const { address } = req.body || {};
+  if (!address || !String(address).trim()) return res.status(400).json({ error: 'address es requerido' });
+  try {
+    const geoRes = await axios.get('https://nominatim.openstreetmap.org/search', {
+      params: { q: address, format: 'jsonv2', limit: 1 },
+      headers: { 'User-Agent': 'gers-plataforma-web/1.0' },
+      timeout: 15000,
+    });
+    const first = Array.isArray(geoRes.data) ? geoRes.data[0] : null;
+    if (!first) return res.status(404).json({ error: 'No se encontró la dirección' });
+    res.json({
+      latitud: Number(first.lat),
+      longitud: Number(first.lon),
+      direccion: first.display_name || address,
+      nombre: first.name || address,
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'No se pudo geocodificar la dirección', details: error.message });
+  }
 });
 
-app.put('/api/geofences/toggle', (req, res) => {
-  const { ids, activa } = req.body;
-  if (!Array.isArray(ids) || activa === undefined) {
-    return res.status(400).json({ error: 'ids (array) y activa (0/1) son requeridos' });
-  }
-  const placeholders = ids.map(() => '?').join(',');
-  db.run(`UPDATE geofences SET activa = ? WHERE id IN (${placeholders})`, [activa, ...ids], function (err) {
+app.delete('/api/geofences/:id', (req, res) => {
+  db.run('DELETE FROM geofences WHERE id = ?', [req.params.id], function (err) {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ changes: this.changes });
   });
@@ -985,41 +1366,66 @@ app.get('/api/geofence-events', (req, res) => {
   });
 });
 
-app.delete('/api/geofence-events', (req, res) => {
-  db.serialize(() => {
-    db.run('DELETE FROM geofence_events', [], function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      db.run('DELETE FROM vehicle_geofence_state', [], function (err2) {
-        if (err2) return res.status(500).json({ error: err2.message });
-        res.json({ deleted: this.changes });
-      });
+app.delete('/api/geofence-events', requireAdmin, async (req, res) => {
+  try {
+    const deleted = await withTransaction(async tx => {
+      await tx.run('DELETE FROM geofence_events');
+      const states = await tx.run('DELETE FROM vehicle_geofence_state');
+      return states.changes;
     });
-  });
+    res.json({ deleted });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
+
+function validWebhookSignature(req) {
+  const secret = process.env.SAMSARA_WEBHOOK_SECRET;
+  if (!secret) return !IS_PRODUCTION;
+  const timestamp = String(req.headers['x-samsara-timestamp'] || '');
+  const supplied = String(req.headers['x-samsara-signature'] || '');
+  if (!timestamp || !/^v1=[a-f0-9]{64}$/i.test(supplied) || !Buffer.isBuffer(req.rawBody)) return false;
+  const message = Buffer.concat([Buffer.from(`v1:${timestamp}:`), req.rawBody]);
+  const digest = crypto.createHmac('sha256', Buffer.from(secret, 'base64')).update(message).digest('hex');
+  const expected = `v1=${digest}`;
+  const suppliedBuffer = Buffer.from(supplied, 'utf8');
+  const expectedBuffer = Buffer.from(expected, 'utf8');
+  return suppliedBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(suppliedBuffer, expectedBuffer);
+}
 
 app.post('/api/webhooks/samsara', (req, res) => {
   try {
+    if (!validWebhookSignature(req)) return res.status(401).json({ error: 'Firma de webhook inválida' });
     const payload = req.body || {};
     const eventType = payload.eventType;
-    if (!['GeofenceEntry', 'GeofenceExit'].includes(eventType)) {
+    const standardEvent = eventType === 'Alert' ? (payload.event || {}) : null;
+    const standardCondition = standardEvent?.alertConditionId;
+    const isStandardGeofence = ['DeviceLocationInsideGeofence', 'DeviceLocationOutsideGeofence'].includes(standardCondition);
+    const isLegacyGeofence = ['GeofenceEntry', 'GeofenceExit'].includes(eventType);
+    if (!isStandardGeofence && !isLegacyGeofence) {
       return res.json({ ok: true, ignored: true });
     }
 
     const data = payload.data || {};
     const address = data.address || {};
     const geofence = address.geofence || {};
-    const vehicle = data.vehicle || {};
-    const createdAt = payload.eventTime ? new Date(payload.eventTime).toISOString() : new Date().toISOString();
-    const tipo = eventType === 'GeofenceEntry' ? 'entrada' : 'salida';
-    const geofenceName = address.name || 'Geocerca Samsara';
-    const geofenceId = address.id || null;
-    const latitud = geofence.circle?.latitude ?? null;
-    const longitud = geofence.circle?.longitude ?? null;
+    const vehicle = isStandardGeofence ? (standardEvent.device || standardEvent.vehicle || {}) : (data.vehicle || {});
+    const eventTime = isStandardGeofence
+      ? (standardEvent.startMs || payload.eventMs || Date.now())
+      : (payload.eventTime || Date.now());
+    const createdAt = new Date(eventTime).toISOString();
+    const tipo = (eventType === 'GeofenceEntry' || standardCondition === 'DeviceLocationInsideGeofence') ? 'entrada' : 'salida';
+    const details = String(standardEvent?.details || standardEvent?.summary || '');
+    const geofenceMatch = details.match(/\b(?:inside|outside)\s+(.+?)(?:\s+for more than\s+\d+\s+minutes)?\.?$/i);
+    const geofenceName = isStandardGeofence ? (geofenceMatch?.[1] || 'Geocerca Samsara') : (address.name || 'Geocerca Samsara');
+    const geofenceId = isStandardGeofence ? null : (address.id || null);
+    const latitud = isStandardGeofence ? (standardEvent.location?.latitude ?? null) : (geofence.circle?.latitude ?? null);
+    const longitud = isStandardGeofence ? (standardEvent.location?.longitude ?? null) : (geofence.circle?.longitude ?? null);
 
     db.run(
       `INSERT OR IGNORE INTO geofence_events (vehicle_id, vehicle_name, geofence_id, geofence_nombre, tipo, latitud, longitud, source, event_uid, raw_payload, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, 'samsara', ?, ?, ?)` ,
-      [String(vehicle.id || ''), vehicle.name || '', geofenceId, geofenceName, tipo, latitud, longitud, String(payload.eventId || ''), JSON.stringify(payload), createdAt],
+      [String(vehicle.id || ''), vehicle.name || '', geofenceId, geofenceName, tipo, latitud, longitud, payload.eventId ? String(payload.eventId) : null, JSON.stringify(payload), createdAt],
       function (err) {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ ok: true, saved: this.changes > 0 });
@@ -1031,8 +1437,7 @@ app.post('/api/webhooks/samsara', (req, res) => {
   }
 });
 
-app.post('/api/check-geofences', async (req, res) => {
-  try {
+async function performGeofenceCheck() {
     const geofences = await new Promise((resolve, reject) => {
       db.all('SELECT * FROM geofences WHERE activa = 1', [], (err, rows) => {
         if (err) reject(err); else resolve(rows || []);
@@ -1050,7 +1455,8 @@ app.post('/api/check-geofences', async (req, res) => {
     }
 
     const locRes = await axios.get('https://api.samsara.com/fleet/vehicles/locations', {
-      headers: { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' }
+      headers: { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' },
+      timeout: 15000,
     });
 
     const alerts = [];
@@ -1069,28 +1475,28 @@ app.post('/api/check-geofences', async (req, res) => {
         const wasInside = prev ? prev.inside === 1 : false;
 
         if (inside && !wasInside) {
-          db.run(
+          await runQuery(
             `INSERT INTO geofence_events (vehicle_id, vehicle_name, geofence_id, geofence_nombre, tipo, latitud, longitud) VALUES (?, ?, ?, ?, 'entrada', ?, ?)`,
             [v.id, v.name, g.id, g.nombre, vLat, vLon]
           );
-          db.run(
+          await runQuery(
             'INSERT INTO alertas (vehicle_id, vehicle_name, tipo, mensaje, severidad) VALUES (?, ?, ?, ?, ?)',
             [v.id, v.name, 'geocerca', `${v.name} entró a la geocerca "${g.nombre}"`, 'info']
           );
           alerts.push({ vehicle: v.name, geofence: g.nombre, tipo: 'entrada' });
         } else if (!inside && wasInside) {
-          db.run(
+          await runQuery(
             `INSERT INTO geofence_events (vehicle_id, vehicle_name, geofence_id, geofence_nombre, tipo, latitud, longitud) VALUES (?, ?, ?, ?, 'salida', ?, ?)`,
             [v.id, v.name, g.id, g.nombre, vLat, vLon]
           );
-          db.run(
+          await runQuery(
             'INSERT INTO alertas (vehicle_id, vehicle_name, tipo, mensaje, severidad) VALUES (?, ?, ?, ?, ?)',
             [v.id, v.name, 'geocerca', `${v.name} salió de la geocerca "${g.nombre}"`, 'info']
           );
           alerts.push({ vehicle: v.name, geofence: g.nombre, tipo: 'salida' });
         }
 
-        db.run(
+        await runQuery(
           `INSERT OR REPLACE INTO vehicle_geofence_state (vehicle_id, geofence_id, inside, last_check)
            VALUES (?, ?, ?, datetime('now'))`,
           [v.id, g.id, inside ? 1 : 0]
@@ -1098,7 +1504,20 @@ app.post('/api/check-geofences', async (req, res) => {
       }
     }
 
-    res.json({ checked: vehicles.length, geofences: geofences.length, newAlerts: alerts.length, alerts });
+    return { checked: vehicles.length, geofences: geofences.length, newAlerts: alerts.length, alerts };
+}
+
+let geofenceCheckInFlight = null;
+function checkGeofences() {
+  if (!geofenceCheckInFlight) {
+    geofenceCheckInFlight = performGeofenceCheck().finally(() => { geofenceCheckInFlight = null; });
+  }
+  return geofenceCheckInFlight;
+}
+
+app.post('/api/check-geofences', async (req, res) => {
+  try {
+    res.json(await checkGeofences());
   } catch (error) {
     console.error('Error checking geofences:', error.message);
     res.status(500).json({ error: error.message });
@@ -1107,25 +1526,21 @@ app.post('/api/check-geofences', async (req, res) => {
 
 // ============ FUEL ALERTS ============
 
-app.post('/api/check-fuel', async (req, res) => {
-  try {
+async function performFuelCheck() {
     const listRes = await samsaraApi.get('/fleet/list');
     const vehicles = listRes.data.vehicles || [];
 
     const alerts = [];
     for (const v of vehicles) {
       if (v.fuelLevelPercent !== null && v.fuelLevelPercent <= 0.2) {
-        const recent = await new Promise((resolve) => {
-          db.get(
-            `SELECT id FROM alertas WHERE vehicle_id = ? AND tipo = 'combustible_bajo' AND timestamp > datetime('now', '-4 hours')`,
-            [String(v.id)],
-            (err, row) => resolve(row)
-          );
-        });
+        const recent = await getQuery(
+          `SELECT id FROM alertas WHERE vehicle_id = ? AND tipo = 'combustible_bajo' AND timestamp > datetime('now', '-4 hours')`,
+          [String(v.id)]
+        );
 
         if (!recent) {
           const pct = Math.round(v.fuelLevelPercent * 100);
-          db.run(
+          await runQuery(
             'INSERT INTO alertas (vehicle_id, vehicle_name, tipo, mensaje, severidad) VALUES (?, ?, ?, ?, ?)',
             [String(v.id), v.name, 'combustible_bajo', `${v.name} tiene ${pct}% de diesel - Nivel bajo`, 'alta']
           );
@@ -1134,7 +1549,20 @@ app.post('/api/check-fuel', async (req, res) => {
       }
     }
 
-    res.json({ checked: vehicles.length, newAlerts: alerts.length, alerts });
+    return { checked: vehicles.length, newAlerts: alerts.length, alerts };
+}
+
+let fuelCheckInFlight = null;
+function checkFuel() {
+  if (!fuelCheckInFlight) {
+    fuelCheckInFlight = performFuelCheck().finally(() => { fuelCheckInFlight = null; });
+  }
+  return fuelCheckInFlight;
+}
+
+app.post('/api/check-fuel', async (req, res) => {
+  try {
+    res.json(await checkFuel());
   } catch (error) {
     console.error('Error checking fuel:', error.message);
     res.status(500).json({ error: error.message });
@@ -1142,6 +1570,50 @@ app.post('/api/check-fuel', async (req, res) => {
 });
 
 // ============ VIAJES ============
+
+function normalizeTripDelivery(body, current = null) {
+  const has = key => Object.prototype.hasOwnProperty.call(body || {}, key);
+  const tipoEntrega = has('tipo_entrega') ? body.tipo_entrega : (current?.tipo_entrega || 'directo');
+  if (!['directo', 'reparto'].includes(tipoEntrega)) {
+    throw new Error('tipo_entrega debe ser directo o reparto');
+  }
+
+  let suppliedDestinations;
+  if (has('destinos')) {
+    if (!Array.isArray(body.destinos)) throw new Error('destinos debe ser un arreglo');
+    suppliedDestinations = body.destinos;
+  } else if (current?.destinos_json) {
+    try {
+      suppliedDestinations = JSON.parse(current.destinos_json);
+    } catch {
+      suppliedDestinations = [];
+    }
+  } else {
+    suppliedDestinations = [];
+  }
+  if (!Array.isArray(suppliedDestinations)) throw new Error('destinos debe ser un arreglo');
+
+  const destinos = suppliedDestinations.map(value => {
+    if (typeof value !== 'string' || !value.trim()) throw new Error('destinos no puede contener valores vacíos');
+    return value.trim().replace(/\s+/g, ' ');
+  });
+  if (new Set(destinos.map(normalizeDestination)).size !== destinos.length) {
+    throw new Error('destinos debe contener destinos distintos');
+  }
+
+  if (tipoEntrega === 'reparto') {
+    if (destinos.length < 2) throw new Error('reparto requiere al menos 2 destinos');
+    return { tipo_entrega: tipoEntrega, destinos_json: JSON.stringify(destinos), destino: destinos[destinos.length - 1] };
+  }
+
+  if (destinos.length > 1) throw new Error('directo admite máximo un destino');
+  const legacyDestination = has('destino') ? body.destino : (destinos[0] ?? current?.destino);
+  if (legacyDestination !== null && legacyDestination !== undefined && typeof legacyDestination !== 'string') {
+    throw new Error('destino debe ser texto');
+  }
+  const destino = typeof legacyDestination === 'string' ? legacyDestination.trim().replace(/\s+/g, ' ') : legacyDestination;
+  return { tipo_entrega: tipoEntrega, destinos_json: JSON.stringify(destino ? [destino] : []), destino };
+}
 
 app.get('/api/viajes', (req, res) => {
   db.all(`SELECT * FROM viajes ORDER BY
@@ -1166,10 +1638,16 @@ app.get('/api/viajes', (req, res) => {
 });
 
 app.post('/api/viajes', (req, res) => {
-  const { vehicle_id, vehicle_name, origen, destino, conductor, telefono, fecha_inicio, fecha_fin, notas } = req.body;
+  const { vehicle_id, vehicle_name, origen, conductor, telefono, fecha_inicio, fecha_fin, notas } = req.body;
+  let delivery;
+  try {
+    delivery = normalizeTripDelivery(req.body);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
   db.run(
-    'INSERT INTO viajes (vehicle_id, vehicle_name, origen, destino, conductor, telefono, remolque, fecha_inicio, fecha_fin, notas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [vehicle_id, vehicle_name, origen, destino, conductor, telefono || '', req.body.remolque || '', fecha_inicio, fecha_fin, notas],
+    'INSERT INTO viajes (vehicle_id, vehicle_name, origen, destino, tipo_entrega, destinos_json, conductor, telefono, remolque, fecha_inicio, fecha_fin, notas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [vehicle_id, vehicle_name, origen, delivery.destino, delivery.tipo_entrega, delivery.destinos_json, conductor, telefono || '', req.body.remolque || '', fecha_inicio, fecha_fin, notas],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ id: this.lastID });
@@ -1178,15 +1656,44 @@ app.post('/api/viajes', (req, res) => {
 });
 
 app.put('/api/viajes/:id', (req, res) => {
-  const { vehicle_id, vehicle_name, origen, destino, conductor, telefono, fecha_inicio, fecha_fin, notas, estado, remolque } = req.body;
-  db.run(
-    'UPDATE viajes SET vehicle_id = ?, vehicle_name = ?, origen = ?, destino = ?, conductor = ?, telefono = ?, fecha_inicio = ?, fecha_fin = ?, notas = ?, estado = ?, remolque = ? WHERE id = ?',
-    [vehicle_id || null, vehicle_name || null, origen || null, destino || null, conductor || null, telefono || null, fecha_inicio || null, fecha_fin || null, notas || null, estado || null, remolque || null, req.params.id],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ changes: this.changes });
+  db.get('SELECT * FROM viajes WHERE id = ?', [req.params.id], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.status(404).json({ error: 'Viaje no encontrado' });
+
+    const has = (key) => Object.prototype.hasOwnProperty.call(req.body || {}, key);
+    let delivery = { tipo_entrega: row.tipo_entrega, destinos_json: row.destinos_json, destino: row.destino };
+    if (has('tipo_entrega') || has('destinos') || has('destino')) {
+      try {
+        delivery = normalizeTripDelivery(req.body, row);
+      } catch (deliveryErr) {
+        return res.status(400).json({ error: deliveryErr.message });
+      }
     }
-  );
+    const next = {
+      vehicle_id: has('vehicle_id') ? req.body.vehicle_id : row.vehicle_id,
+      vehicle_name: has('vehicle_name') ? req.body.vehicle_name : row.vehicle_name,
+      origen: has('origen') ? req.body.origen : row.origen,
+      destino: delivery.destino,
+      tipo_entrega: delivery.tipo_entrega,
+      destinos_json: delivery.destinos_json,
+      conductor: has('conductor') ? req.body.conductor : row.conductor,
+      telefono: has('telefono') ? req.body.telefono : row.telefono,
+      fecha_inicio: has('fecha_inicio') ? req.body.fecha_inicio : row.fecha_inicio,
+      fecha_fin: has('fecha_fin') ? req.body.fecha_fin : row.fecha_fin,
+      notas: has('notas') ? req.body.notas : row.notas,
+      estado: has('estado') ? req.body.estado : row.estado,
+      remolque: has('remolque') ? req.body.remolque : row.remolque,
+    };
+
+    db.run(
+      'UPDATE viajes SET vehicle_id = ?, vehicle_name = ?, origen = ?, destino = ?, tipo_entrega = ?, destinos_json = ?, conductor = ?, telefono = ?, fecha_inicio = ?, fecha_fin = ?, notas = ?, estado = ?, remolque = ? WHERE id = ?',
+      [next.vehicle_id, next.vehicle_name, next.origen, next.destino, next.tipo_entrega, next.destinos_json, next.conductor, next.telefono, next.fecha_inicio, next.fecha_fin, next.notas, next.estado, next.remolque, req.params.id],
+      function (runErr) {
+        if (runErr) return res.status(500).json({ error: runErr.message });
+        res.json({ changes: this.changes });
+      }
+    );
+  });
 });
 
 app.delete('/api/viajes/:id', (req, res) => {
@@ -1231,7 +1738,7 @@ app.delete('/api/alertas/:id', (req, res) => {
   });
 });
 
-app.delete('/api/alertas', (req, res) => {
+app.delete('/api/alertas', requireAdmin, (req, res) => {
   db.run('DELETE FROM alertas', [], function (err) {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ changes: this.changes });
@@ -1269,22 +1776,41 @@ app.post('/api/pendientes', (req, res) => {
 });
 
 app.put('/api/pendientes/:id', (req, res) => {
-  const { titulo, descripcion, prioridad, estado, asignado_a, turno, notas } = req.body;
-  db.run(
-    'UPDATE pendientes SET titulo = ?, descripcion = ?, prioridad = ?, estado = ?, asignado_a = ?, turno = ?, notas = ?, fecha_actualizacion = CURRENT_TIMESTAMP WHERE id = ?',
-    [titulo, descripcion, prioridad, estado, asignado_a, turno, notas, req.params.id],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ changes: this.changes });
-    }
-  );
+  db.get('SELECT * FROM pendientes WHERE id = ?', [req.params.id], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.status(404).json({ error: 'No encontrado' });
+    const has = (key) => Object.prototype.hasOwnProperty.call(req.body || {}, key);
+    const next = {
+      titulo: has('titulo') ? req.body.titulo : row.titulo,
+      descripcion: has('descripcion') ? req.body.descripcion : row.descripcion,
+      prioridad: has('prioridad') ? req.body.prioridad : row.prioridad,
+      estado: has('estado') ? req.body.estado : row.estado,
+      asignado_a: has('asignado_a') ? req.body.asignado_a : row.asignado_a,
+      turno: has('turno') ? req.body.turno : row.turno,
+      notas: has('notas') ? req.body.notas : row.notas,
+    };
+    db.run(
+      'UPDATE pendientes SET titulo = ?, descripcion = ?, prioridad = ?, estado = ?, asignado_a = ?, turno = ?, notas = ?, fecha_actualizacion = CURRENT_TIMESTAMP WHERE id = ?',
+      [next.titulo, next.descripcion, next.prioridad, next.estado, next.asignado_a, next.turno, next.notas, req.params.id],
+      function (runErr) {
+        if (runErr) return res.status(500).json({ error: runErr.message });
+        res.json({ changes: this.changes });
+      }
+    );
+  });
 });
 
-app.delete('/api/pendientes/:id', (req, res) => {
-  db.run('DELETE FROM pendientes WHERE id = ?', [req.params.id], function (err) {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json({ changes: this.changes });
-  });
+app.delete('/api/pendientes/:id', async (req, res) => {
+  try {
+    const changes = await withTransaction(async tx => {
+      await tx.run('DELETE FROM comentarios_pendientes WHERE pendiente_id = ?', [req.params.id]);
+      const result = await tx.run('DELETE FROM pendientes WHERE id = ?', [req.params.id]);
+      return result.changes;
+    });
+    res.json({ changes });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/pendientes/:id/comentarios', (req, res) => {
@@ -1310,7 +1836,7 @@ app.post('/api/pendientes/:id/comentarios', (req, res) => {
 });
 
 app.delete('/api/pendientes/:id/comentarios/:comentarioId', (req, res) => {
-  db.run('DELETE FROM comentarios_pendientes WHERE id = ?', [req.params.comentarioId], function (err) {
+  db.run('DELETE FROM comentarios_pendientes WHERE id = ? AND pendiente_id = ?', [req.params.comentarioId, req.params.id], function (err) {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ changes: this.changes });
   });
@@ -1323,54 +1849,35 @@ app.get('/api/pendientes/historial', (req, res) => {
   });
 });
 
-app.post('/api/pendientes/archivar-completados', async (req, res) => {
+app.post('/api/pendientes/archivar-completados', requireAdmin, async (req, res) => {
   try {
-    const rows = await new Promise((resolve, reject) => {
-      db.all('SELECT * FROM pendientes WHERE estado = "completado" ORDER BY fecha_actualizacion DESC', [], (err, data) => {
-        if (err) reject(err); else resolve(data || []);
-      });
-    });
-    if (!rows.length) return res.json({ archived: 0 });
-
     const archivedByUserId = req.user?.id || null;
     const archivedByUsername = actorFromReq(req);
-    const pendientesConComentarios = await Promise.all(rows.map((row) => new Promise((resolve, reject) => {
-      db.all('SELECT autor, contenido FROM comentarios_pendientes WHERE pendiente_id = ? ORDER BY fecha_creacion ASC', [row.id], (err, comments) => {
-        if (err) reject(err);
-        else resolve({ ...row, comentarios_resumen: (comments || []).map(c => `${c.autor || 'Sistema'}: ${c.contenido}`).join('\n') });
-      });
-    })));
-
-    const archived = await new Promise((resolve, reject) => {
-      db.serialize(() => {
-        const insertStmt = db.prepare(`
+    const archived = await withTransaction(async tx => {
+      const rows = await tx.all('SELECT * FROM pendientes WHERE estado = "completado" ORDER BY fecha_actualizacion DESC');
+      if (!rows.length) return 0;
+      for (const row of rows) {
+        const comments = await tx.all('SELECT autor, contenido FROM comentarios_pendientes WHERE pendiente_id = ? ORDER BY fecha_creacion ASC', [row.id]);
+        await tx.run(`
           INSERT INTO pendientes_historial (
             pendiente_id, titulo, descripcion, prioridad, estado, asignado_a, turno, notas,
             creado_por, created_by_user_id, created_by_username, fecha_creacion, fecha_actualizacion,
             archived_by_user_id, archived_by_username, comentarios_resumen
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-
-        pendientesConComentarios.forEach((row) => {
-          insertStmt.run([
-            row.id, row.titulo, row.descripcion || '', row.prioridad || 'media', row.estado || 'completado',
-            row.asignado_a || '', row.turno || '', row.notas || '', row.creado_por || '',
-            row.created_by_user_id || null, row.created_by_username || '', row.fecha_creacion || null,
-            row.fecha_actualizacion || null, archivedByUserId, archivedByUsername, row.comentarios_resumen || '',
-          ]);
-        });
-
-        insertStmt.finalize((finalizeErr) => {
-          if (finalizeErr) return reject(finalizeErr);
-          db.run('DELETE FROM comentarios_pendientes WHERE pendiente_id IN (' + rows.map(() => '?').join(',') + ')', rows.map(r => r.id), function (deleteCommentsErr) {
-            if (deleteCommentsErr) return reject(deleteCommentsErr);
-            db.run('DELETE FROM pendientes WHERE estado = "completado"', [], function (deleteErr) {
-              if (deleteErr) return reject(deleteErr);
-              resolve(this.changes || rows.length);
-            });
-          });
-        });
-      });
+        `, [
+          row.id, row.titulo, row.descripcion || '', row.prioridad || 'media', row.estado || 'completado',
+          row.asignado_a || '', row.turno || '', row.notas || '', row.creado_por || '',
+          row.created_by_user_id || null, row.created_by_username || '', row.fecha_creacion || null,
+          row.fecha_actualizacion || null, archivedByUserId, archivedByUsername,
+          comments.map(c => `${c.autor || 'Sistema'}: ${c.contenido}`).join('\n'),
+        ]);
+      }
+      const ids = rows.map(row => row.id);
+      const placeholders = ids.map(() => '?').join(',');
+      await tx.run(`DELETE FROM comentarios_pendientes WHERE pendiente_id IN (${placeholders})`, ids);
+      const deleted = await tx.run(`DELETE FROM pendientes WHERE id IN (${placeholders}) AND estado = 'completado'`, ids);
+      if (deleted.changes !== ids.length) throw new Error('Los pendientes cambiaron durante el archivado');
+      return deleted.changes;
     });
 
     res.json({ archived });
@@ -1433,15 +1940,24 @@ app.post('/api/comentarios', (req, res) => {
 });
 
 app.put('/api/comentarios/:id', (req, res) => {
-  const { titulo, contenido, tipo } = req.body;
-  db.run(
-    'UPDATE comentarios SET titulo = COALESCE(?, titulo), contenido = COALESCE(?, contenido), tipo = COALESCE(?, tipo) WHERE id = ?',
-    [titulo, contenido, tipo, req.params.id],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ changes: this.changes });
-    }
-  );
+  db.get('SELECT * FROM comentarios WHERE id = ?', [req.params.id], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.status(404).json({ error: 'No encontrado' });
+    const has = (key) => Object.prototype.hasOwnProperty.call(req.body || {}, key);
+    const next = {
+      titulo: has('titulo') ? req.body.titulo : row.titulo,
+      contenido: has('contenido') ? req.body.contenido : row.contenido,
+      tipo: has('tipo') ? req.body.tipo : row.tipo,
+    };
+    db.run(
+      'UPDATE comentarios SET titulo = ?, contenido = ?, tipo = ? WHERE id = ?',
+      [next.titulo, next.contenido, next.tipo, req.params.id],
+      function (runErr) {
+        if (runErr) return res.status(500).json({ error: runErr.message });
+        res.json({ changes: this.changes });
+      }
+    );
+  });
 });
 
 app.delete('/api/comentarios/:id', (req, res) => {
@@ -1498,7 +2014,7 @@ app.get('/api/reportes/pendientes', (req, res) => {
   let query = 'SELECT * FROM pendientes WHERE 1=1';
   const params = [];
   if (fecha_inicio) { query += ' AND fecha_creacion >= ?'; params.push(fecha_inicio); }
-  if (fecha_fin) { query += ' AND fecha_creacion <= ?'; params.push(fecha_fin); }
+  if (fecha_fin) { query += " AND fecha_creacion < datetime(?, '+1 day')"; params.push(fecha_fin); }
   db.all(query, params, (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
@@ -1509,8 +2025,8 @@ app.get('/api/reportes/viajes', (req, res) => {
   const { fecha_inicio, fecha_fin, estado } = req.query;
   let query = 'SELECT * FROM viajes WHERE 1=1';
   const params = [];
-  if (fecha_inicio) { query += ' AND fecha_inicio >= ?'; params.push(fecha_inicio); }
-  if (fecha_fin) { query += ' AND fecha_fin <= ?'; params.push(fecha_fin); }
+  if (fecha_inicio) { query += ' AND (fecha_fin IS NULL OR fecha_fin >= ?)'; params.push(fecha_inicio); }
+  if (fecha_fin) { query += " AND fecha_inicio < datetime(?, '+1 day')"; params.push(fecha_fin); }
   if (estado) { query += ' AND estado = ?'; params.push(estado); }
   db.all(query, params, (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -1568,7 +2084,7 @@ app.get('/api/route-history/dates', (req, res) => {
   );
 });
 
-app.delete('/api/route-history', (req, res) => {
+app.delete('/api/route-history', requireAdmin, (req, res) => {
   const { vehicle_id, fecha } = req.query;
   let query = 'DELETE FROM route_history WHERE 1=1';
   const params = [];
@@ -1580,16 +2096,103 @@ app.delete('/api/route-history', (req, res) => {
   });
 });
 
+function detectVehicleStops(rows, minimumMinutes) {
+  const minimumMs = minimumMinutes * 60 * 1000;
+  const maximumGapMs = 30 * 60 * 1000;
+  const maximumRadiusMeters = 250;
+  const stops = [];
+  let candidate = null;
+
+  const finishCandidate = () => {
+    if (!candidate || candidate.endedAt - candidate.startedAt < minimumMs) {
+      candidate = null;
+      return;
+    }
+    stops.push({
+      id: candidate.id,
+      vehicle_id: candidate.vehicleId,
+      vehicle_name: candidate.vehicleName,
+      latitude: candidate.latitudeSum / candidate.samples,
+      longitude: candidate.longitudeSum / candidate.samples,
+      speed: 0,
+      heading: candidate.heading,
+      location: candidate.location,
+      source_time_ms: candidate.startedAt,
+      recorded_at: new Date(candidate.startedAt).toISOString(),
+      stop_ended_at: new Date(candidate.endedAt).toISOString(),
+      stop_duration_minutes: Math.round((candidate.endedAt - candidate.startedAt) / 60000),
+      is_stop: true,
+    });
+    candidate = null;
+  };
+
+  for (const row of rows) {
+    const latitude = Number(row.latitude);
+    const longitude = Number(row.longitude);
+    const timestamp = Number(row.source_time_ms);
+    const speedKmh = Math.abs(Number(row.speed) || 0) * 1.609344;
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || !Number.isFinite(timestamp) || speedKmh >= 1) {
+      finishCandidate();
+      continue;
+    }
+
+    if (candidate) {
+      const centerLatitude = candidate.latitudeSum / candidate.samples;
+      const centerLongitude = candidate.longitudeSum / candidate.samples;
+      const gapMs = timestamp - candidate.endedAt;
+      const distance = haversineDistance(centerLatitude, centerLongitude, latitude, longitude);
+      if (gapMs < 0 || gapMs > maximumGapMs || distance > maximumRadiusMeters) finishCandidate();
+    }
+
+    if (!candidate) {
+      candidate = {
+        id: row.id,
+        vehicleId: row.vehicle_id,
+        vehicleName: row.vehicle_name,
+        latitudeSum: latitude,
+        longitudeSum: longitude,
+        samples: 1,
+        heading: row.heading,
+        location: row.location,
+        startedAt: timestamp,
+        endedAt: timestamp,
+      };
+    } else {
+      candidate.latitudeSum += latitude;
+      candidate.longitudeSum += longitude;
+      candidate.samples += 1;
+      candidate.endedAt = timestamp;
+      if (row.location) candidate.location = row.location;
+    }
+  }
+  finishCandidate();
+  return stops;
+}
+
 app.get('/api/route-history/last', (req, res) => {
-  const { vehicle_id, hours } = req.query;
+  const { vehicle_id, hours, stops_minutes: stopsMinutes } = req.query;
   if (!vehicle_id) return res.status(400).json({ error: 'vehicle_id es requerido' });
-  const h = Number(hours) || 24;
+  const h = Math.min(168, Math.max(1, Number(hours) || 24));
+  const minimumStopMinutes = stopsMinutes === undefined ? null : Math.min(1440, Math.max(1, Number(stopsMinutes) || 20));
+  const select = minimumStopMinutes
+    ? `SELECT MIN(id) AS id, vehicle_id, MAX(vehicle_name) AS vehicle_name,
+              AVG(latitude) AS latitude, AVG(longitude) AS longitude,
+              MAX(ABS(COALESCE(speed, 0))) AS speed, MAX(heading) AS heading,
+              MAX(location) AS location, MIN(source_time_ms) AS source_time_ms
+       FROM route_history
+       WHERE vehicle_id = ? AND source_time_ms IS NOT NULL
+         AND source_time_ms >= (unixepoch('now') - ? * 3600) * 1000
+       GROUP BY CAST(source_time_ms / 60000 AS INTEGER)
+       ORDER BY source_time_ms ASC`
+    : `SELECT * FROM route_history
+       WHERE vehicle_id = ? AND recorded_at >= datetime('now', '-' || ? || ' hours')
+       ORDER BY recorded_at ASC`;
   db.all(
-    `SELECT * FROM route_history WHERE vehicle_id = ? AND recorded_at >= datetime('now', '-' || ? || ' hours') ORDER BY recorded_at ASC`,
+    select,
     [vehicle_id, h],
     (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
-      res.json(rows || []);
+      res.json(minimumStopMinutes ? detectVehicleStops(rows || [], minimumStopMinutes) : (rows || []));
     }
   );
 });
@@ -1659,7 +2262,9 @@ app.delete('/api/clientes/:id', (req, res) => {
 app.get('/api/remolques', (req, res) => {
   db.all(`SELECT r.*,
     (SELECT ra.vehicle_name FROM remolque_asignaciones ra WHERE ra.remolque_id = r.id AND ra.activa = 1 LIMIT 1) as unidad_asignada,
-    (SELECT ra.vehicle_id FROM remolque_asignaciones ra WHERE ra.remolque_id = r.id AND ra.activa = 1 LIMIT 1) as vehicle_id_asignado
+    (SELECT ra.vehicle_id FROM remolque_asignaciones ra WHERE ra.remolque_id = r.id AND ra.activa = 1 LIMIT 1) as vehicle_id_asignado,
+    (SELECT ra.tipo_asignacion FROM remolque_asignaciones ra WHERE ra.remolque_id = r.id AND ra.activa = 1 LIMIT 1) as tipo_asignacion,
+    (SELECT ra.grupo_full FROM remolque_asignaciones ra WHERE ra.remolque_id = r.id AND ra.activa = 1 LIMIT 1) as grupo_full
     FROM remolques r ORDER BY r.numero ASC`, [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
@@ -1678,39 +2283,197 @@ app.post('/api/remolques', (req, res) => {
   });
 });
 
-app.delete('/api/remolques/:id', (req, res) => {
-  db.run('DELETE FROM remolques WHERE id = ?', [req.params.id], function (err) {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json({ changes: this.changes });
-  });
+app.post('/api/remolques/full/asignar', async (req, res) => {
+  const { remolque_ids, vehicle_id, vehicle_name } = req.body || {};
+  if (!Array.isArray(remolque_ids) || remolque_ids.length !== 2) {
+    return res.status(400).json({ error: 'remolque_ids debe contener exactamente dos remolques' });
+  }
+  const ids = remolque_ids.map(Number);
+  if (ids.some(id => !Number.isInteger(id) || id <= 0) || ids[0] === ids[1]) {
+    return res.status(400).json({ error: 'Los remolques deben ser distintos y válidos' });
+  }
+  if (!vehicle_id) return res.status(400).json({ error: 'vehicle_id es requerido' });
+
+  try {
+    const full = await withTransaction(async tx => {
+      const tanks = await tx.all(
+        'SELECT id, numero, categoria, status FROM remolques WHERE id IN (?, ?) ORDER BY id',
+        ids
+      );
+      if (tanks.length !== 2) {
+        const error = new Error('Uno o más remolques no fueron encontrados');
+        error.status = 404;
+        throw error;
+      }
+      if (tanks.some(tank => String(tank.categoria || '').trim().toLowerCase() !== 'tanque')) {
+        const error = new Error('Full requiere exactamente dos remolques de categoría Tanque');
+        error.status = 400;
+        throw error;
+      }
+      const activeElsewhere = await tx.get(
+        'SELECT id FROM remolque_asignaciones WHERE activa = 1 AND remolque_id IN (?, ?) AND vehicle_id <> ? LIMIT 1',
+        [ids[0], ids[1], vehicle_id]
+      );
+      if (activeElsewhere) {
+        const error = new Error('Uno de los tanques ya está asignado a otra unidad');
+        error.status = 409;
+        throw error;
+      }
+
+      const displaced = await tx.all(
+        'SELECT DISTINCT remolque_id FROM remolque_asignaciones WHERE activa = 1 AND vehicle_id = ?',
+        [vehicle_id]
+      );
+      await tx.run(
+        'UPDATE remolque_asignaciones SET activa = 0, fecha_fin = CURRENT_TIMESTAMP WHERE activa = 1 AND vehicle_id = ?',
+        [vehicle_id]
+      );
+      for (const row of displaced) {
+        await tx.run('UPDATE remolques SET status = ? WHERE id = ?', ['disponible', row.remolque_id]);
+      }
+
+      const grupoFull = crypto.randomUUID();
+      const assignments = [];
+      for (const id of ids) {
+        const result = await tx.run(
+          `INSERT INTO remolque_asignaciones
+             (remolque_id, vehicle_id, vehicle_name, tipo_asignacion, grupo_full)
+           VALUES (?, ?, ?, 'full', ?)`,
+          [id, vehicle_id, vehicle_name || '', grupoFull]
+        );
+        assignments.push(result.lastID);
+        await tx.run('UPDATE remolques SET status = ? WHERE id = ?', ['asignado', id]);
+      }
+      return {
+        tipo_asignacion: 'full',
+        grupo_full: grupoFull,
+        vehicle_id,
+        vehicle_name: vehicle_name || '',
+        tanques: tanks.map(tank => ({ ...tank, status: 'asignado' })),
+        asignacion_ids: assignments,
+      };
+    });
+    res.json(full);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/remolques/:id', async (req, res) => {
+  try {
+    const changes = await withTransaction(async tx => {
+      const active = await tx.get(
+        'SELECT grupo_full FROM remolque_asignaciones WHERE remolque_id = ? AND activa = 1',
+        [req.params.id]
+      );
+      if (active?.grupo_full) {
+        const members = await tx.all(
+          'SELECT remolque_id FROM remolque_asignaciones WHERE grupo_full = ? AND activa = 1',
+          [active.grupo_full]
+        );
+        await tx.run(
+          'UPDATE remolque_asignaciones SET activa = 0, fecha_fin = CURRENT_TIMESTAMP WHERE grupo_full = ? AND activa = 1',
+          [active.grupo_full]
+        );
+        for (const member of members) {
+          await tx.run('UPDATE remolques SET status = ? WHERE id = ?', ['disponible', member.remolque_id]);
+        }
+      }
+      await tx.run(
+        'UPDATE remolque_asignaciones SET activa = 0, fecha_fin = COALESCE(fecha_fin, CURRENT_TIMESTAMP) WHERE remolque_id = ? AND activa = 1',
+        [req.params.id]
+      );
+      await tx.run('DELETE FROM remolque_asignaciones WHERE remolque_id = ?', [req.params.id]);
+      const result = await tx.run('DELETE FROM remolques WHERE id = ?', [req.params.id]);
+      return result.changes;
+    });
+    res.json({ changes });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.put('/api/remolques/:id', (req, res) => {
-  const { numero, categoria } = req.body;
-  if (!numero) return res.status(400).json({ error: 'numero es requerido' });
-  db.run('UPDATE remolques SET numero = ?, categoria = ? WHERE id = ?', [numero.trim(), categoria || 'Caja Seca', req.params.id], function (err) {
+  db.get('SELECT * FROM remolques WHERE id = ?', [req.params.id], (err, row) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ changes: this.changes });
-  });
-});
-
-app.post('/api/remolques/:id/asignar', (req, res) => {
-  const { vehicle_id, vehicle_name } = req.body;
-  if (!vehicle_id) return res.status(400).json({ error: 'vehicle_id es requerido' });
-  db.serialize(() => {
-    db.run('UPDATE remolque_asignaciones SET activa = 0, fecha_fin = CURRENT_TIMESTAMP WHERE remolque_id = ? AND activa = 1', [req.params.id]);
-    db.run('INSERT INTO remolque_asignaciones (remolque_id, vehicle_id, vehicle_name) VALUES (?, ?, ?)', [req.params.id, vehicle_id, vehicle_name || ''], function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ id: this.lastID });
+    if (!row) return res.status(404).json({ error: 'No encontrado' });
+    const has = (key) => Object.prototype.hasOwnProperty.call(req.body || {}, key);
+    const numero = has('numero') ? req.body.numero : row.numero;
+    const categoria = has('categoria') ? req.body.categoria : row.categoria;
+    if (!numero) return res.status(400).json({ error: 'numero es requerido' });
+    db.run('UPDATE remolques SET numero = ?, categoria = ? WHERE id = ?', [String(numero).trim(), categoria || 'Caja Seca', req.params.id], function (runErr) {
+      if (runErr) return res.status(500).json({ error: runErr.message });
+      res.json({ changes: this.changes });
     });
   });
 });
 
-app.post('/api/remolques/:id/desasignar', (req, res) => {
-  db.run('UPDATE remolque_asignaciones SET activa = 0, fecha_fin = CURRENT_TIMESTAMP WHERE remolque_id = ? AND activa = 1', [req.params.id], function (err) {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json({ changes: this.changes });
-  });
+app.post('/api/remolques/:id/asignar', async (req, res) => {
+  const { vehicle_id, vehicle_name } = req.body;
+  if (!vehicle_id) return res.status(400).json({ error: 'vehicle_id es requerido' });
+  try {
+    const id = await withTransaction(async tx => {
+      const trailer = await tx.get('SELECT id FROM remolques WHERE id = ?', [req.params.id]);
+      if (!trailer) {
+        const error = new Error('Remolque no encontrado');
+        error.status = 404;
+        throw error;
+      }
+      const current = await tx.get(
+        'SELECT grupo_full FROM remolque_asignaciones WHERE activa = 1 AND remolque_id = ?',
+        [req.params.id]
+      );
+      const displaced = await tx.all(
+        `SELECT DISTINCT remolque_id FROM remolque_asignaciones
+         WHERE activa = 1 AND (remolque_id = ? OR vehicle_id = ? OR (? IS NOT NULL AND grupo_full = ?))`,
+        [req.params.id, vehicle_id, current?.grupo_full || null, current?.grupo_full || null]
+      );
+      await tx.run(
+        `UPDATE remolque_asignaciones SET activa = 0, fecha_fin = CURRENT_TIMESTAMP
+         WHERE activa = 1 AND (remolque_id = ? OR vehicle_id = ? OR (? IS NOT NULL AND grupo_full = ?))`,
+        [req.params.id, vehicle_id, current?.grupo_full || null, current?.grupo_full || null]
+      );
+      for (const row of displaced) {
+        await tx.run('UPDATE remolques SET status = ? WHERE id = ?', ['disponible', row.remolque_id]);
+      }
+      const result = await tx.run(
+        `INSERT INTO remolque_asignaciones
+           (remolque_id, vehicle_id, vehicle_name, tipo_asignacion, grupo_full)
+         VALUES (?, ?, ?, 'sencillo', NULL)`,
+        [req.params.id, vehicle_id, vehicle_name || '']
+      );
+      await tx.run('UPDATE remolques SET status = ? WHERE id = ?', ['asignado', req.params.id]);
+      return result.lastID;
+    });
+    res.json({ id });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+app.post('/api/remolques/:id/desasignar', async (req, res) => {
+  try {
+    const changes = await withTransaction(async tx => {
+      const active = await tx.get(
+        'SELECT grupo_full FROM remolque_asignaciones WHERE remolque_id = ? AND activa = 1',
+        [req.params.id]
+      );
+      if (!active) return 0;
+      const members = active.grupo_full
+        ? await tx.all('SELECT remolque_id FROM remolque_asignaciones WHERE grupo_full = ? AND activa = 1', [active.grupo_full])
+        : [{ remolque_id: req.params.id }];
+      const result = active.grupo_full
+        ? await tx.run('UPDATE remolque_asignaciones SET activa = 0, fecha_fin = CURRENT_TIMESTAMP WHERE grupo_full = ? AND activa = 1', [active.grupo_full])
+        : await tx.run('UPDATE remolque_asignaciones SET activa = 0, fecha_fin = CURRENT_TIMESTAMP WHERE remolque_id = ? AND activa = 1', [req.params.id]);
+      for (const member of members) {
+        await tx.run('UPDATE remolques SET status = ? WHERE id = ?', ['disponible', member.remolque_id]);
+      }
+      return result.changes;
+    });
+    res.json({ changes });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/remolques/:id/historial', (req, res) => {
@@ -1807,40 +2570,44 @@ app.get('/api/seguimiento/historial/todas', (req, res) => {
   });
 });
 
-app.post('/api/seguimiento/import', (req, res) => {
+app.post('/api/seguimiento/import', requireAdmin, async (req, res) => {
   const items = req.body;
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'Array de registros requerido' });
-  let imported = 0;
   const userName = actorFromReq(req);
   const userId = req.user?.id || null;
-  db.serialize(() => {
-    db.run('DELETE FROM seguimiento');
-    items.forEach(item => {
-      const data = {
-        unidad: item.UNIDAD || '',
-        operador: item.OPERADOR || '',
-        remolque: item.REMOLQUE || '',
-        ruta: item.RUTA || '',
-        origen: item.ORIGEN || '',
-        destino: item.DESTINO || '',
-        cita_carga: item['CITA CARGA'] || '',
-        cita_descarga: item['CITA DESCARGA'] || '',
-        hora_llegada: item['HORA LLEGADA CON CLIENTE'] || '',
-        hora_liberacion: item['HORA LIBERACION CLIENTE'] || '',
-        estatus: item.ESTATUS || 'Disponible',
-        comentarios_cliente: item['COMENTARIOS CLIENTE'] || '',
-        comentarios_monitoreo: item['COMENTARIOS MONITOREO'] || '',
-        grupo: item.GRUPO || '',
-        created_by_user_id: userId,
-        created_by_username: userName,
-        fecha_actualizacion: item['HORA ACTUALIZACION'] || new Date().toISOString().replace('T', ' ').substring(0, 19),
-      };
-      const cols = Object.keys(data).join(', ');
-      const placeholders = Object.keys(data).map(() => '?').join(', ');
-      db.run(`INSERT INTO seguimiento (${cols}) VALUES (${placeholders})`, Object.values(data));
-      imported++;
+  try {
+    const imported = await withTransaction(async tx => {
+      await tx.run('DELETE FROM seguimiento');
+      for (const item of items) {
+        const data = {
+          unidad: item.UNIDAD || '',
+          operador: item.OPERADOR || '',
+          remolque: item.REMOLQUE || '',
+          ruta: item.RUTA || '',
+          origen: item.ORIGEN || '',
+          destino: item.DESTINO || '',
+          cita_carga: item['CITA CARGA'] || '',
+          cita_descarga: item['CITA DESCARGA'] || '',
+          hora_llegada: item['HORA LLEGADA CON CLIENTE'] || '',
+          hora_liberacion: item['HORA LIBERACION CLIENTE'] || '',
+          estatus: item.ESTATUS || 'Disponible',
+          comentarios_cliente: item['COMENTARIOS CLIENTE'] || '',
+          comentarios_monitoreo: item['COMENTARIOS MONITOREO'] || '',
+          grupo: item.GRUPO || '',
+          created_by_user_id: userId,
+          created_by_username: userName,
+          fecha_actualizacion: item['HORA ACTUALIZACION'] || new Date().toISOString().replace('T', ' ').substring(0, 19),
+        };
+        const cols = Object.keys(data).join(', ');
+        const placeholders = Object.keys(data).map(() => '?').join(', ');
+        await tx.run(`INSERT INTO seguimiento (${cols}) VALUES (${placeholders})`, Object.values(data));
+      }
+      return items.length;
     });
-  }, () => { res.json({ imported }); });
+    res.json({ imported });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ============ RISK ZONES ============
@@ -1897,15 +2664,26 @@ app.post('/api/unidades', (req, res) => {
 });
 
 app.put('/api/unidades/:id', (req, res) => {
-  const { nombre, estatus, notas, tipo, samsara_id } = req.body;
-  db.run(
-    `UPDATE unidades SET nombre = ?, estatus = ?, notas = ?, tipo = ?, samsara_id = ?, updated_at = datetime('now') WHERE id = ?`,
-    [nombre, estatus, notas, tipo, samsara_id || '', req.params.id],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ updated: this.changes });
-    }
-  );
+  db.get('SELECT * FROM unidades WHERE id = ?', [req.params.id], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.status(404).json({ error: 'No encontrado' });
+    const has = (key) => Object.prototype.hasOwnProperty.call(req.body || {}, key);
+    const next = {
+      nombre: has('nombre') ? req.body.nombre : row.nombre,
+      estatus: has('estatus') ? req.body.estatus : row.estatus,
+      notas: has('notas') ? req.body.notas : row.notas,
+      tipo: has('tipo') ? req.body.tipo : row.tipo,
+      samsara_id: has('samsara_id') ? req.body.samsara_id : row.samsara_id,
+    };
+    db.run(
+      `UPDATE unidades SET nombre = ?, estatus = ?, notas = ?, tipo = ?, samsara_id = ?, updated_at = datetime('now') WHERE id = ?`,
+      [next.nombre, next.estatus, next.notas, next.tipo, next.samsara_id || '', req.params.id],
+      function (runErr) {
+        if (runErr) return res.status(500).json({ error: runErr.message });
+        res.json({ updated: this.changes });
+      }
+    );
+  });
 });
 
 app.delete('/api/unidades/:id', (req, res) => {
@@ -1918,22 +2696,40 @@ app.delete('/api/unidades/:id', (req, res) => {
 // ============ AUTO-CHECK INTERVALS ============
 
 const runAlertChecks = async () => {
-  try {
-    await fetch('http://localhost:' + PORT + '/api/check-geofences', { method: 'POST' });
-    await fetch('http://localhost:' + PORT + '/api/check-fuel', { method: 'POST' });
-  } catch (e) {}
+  await checkGeofences();
+  await checkFuel();
 };
 
+let liveSyncInFlight = null;
 const runLiveSync = async () => {
-  try {
+  if (liveSyncInFlight) return liveSyncInFlight;
+  liveSyncInFlight = (async () => {
     await refreshSamsaraVehicles();
     await runAlertChecks();
-  } catch (e) {}
+    broadcastLiveUpdate('reload', { source: 'scheduled-sync' });
+  })().catch(error => {
+    console.error('Error en sincronización programada:', error.message);
+  }).finally(() => {
+    liveSyncInFlight = null;
+  });
+  return liveSyncInFlight;
 };
 
-setTimeout(runLiveSync, 10000);
-setInterval(runLiveSync, 60000);
+async function startServer() {
+  await databaseReady;
+  const foreignKeys = await getQuery('PRAGMA foreign_keys');
+  if (!foreignKeys || Number(foreignKeys.foreign_keys) !== 1) {
+    throw new Error('SQLite foreign keys no pudieron habilitarse');
+  }
+  await ensureDefaultAdmin();
+  setTimeout(runLiveSync, 10000);
+  setInterval(runLiveSync, 60000);
+  app.listen(PORT, () => {
+    console.log(`Servidor GERS corriendo en puerto ${PORT}`);
+  });
+}
 
-app.listen(PORT, () => {
-  console.log(`Servidor GERS corriendo en puerto ${PORT}`);
+startServer().catch(error => {
+  console.error('No se pudo iniciar el servidor:', error.message);
+  process.exitCode = 1;
 });

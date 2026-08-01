@@ -1,12 +1,51 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
 const MapaUnidades = dynamic(() => import('../components/MapaUnidades'), { ssr: false });
 const RouteMap = dynamic(() => import('../components/RouteMap'), { ssr: false });
+const MOVEMENT_THRESHOLD_MPH = 1;
+const estaEnMovimiento = (speedMph) => Number(speedMph || 0) > MOVEMENT_THRESHOLD_MPH;
+const VIAJE_DEFAULT = { vehicle_id: '', vehicle_name: '', origen: '', destino: '', tipo_entrega: 'directo', destinos: ['', ''], conductor: '', telefono: '', fecha_inicio: '', fecha_fin: '', notas: '', remolque: '' };
+const parseDestinos = (value) => {
+  if (Array.isArray(value)) return value.map(item => String(item || '').trim()).filter(Boolean);
+  if (typeof value !== 'string' || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(item => String(item || '').trim()).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+};
+const destinosViaje = (viaje = {}) => {
+  const parsed = parseDestinos(viaje.destinos?.length ? viaje.destinos : viaje.destinos_json);
+  const reparto = viaje.tipo_entrega === 'reparto' || parsed.length > 1;
+  return reparto ? (parsed.length ? parsed : [viaje.destino].filter(Boolean)) : [viaje.destino].filter(Boolean);
+};
+const normalizarViaje = (viaje = {}) => {
+  const parsed = parseDestinos(viaje.destinos?.length ? viaje.destinos : viaje.destinos_json);
+  const tipo_entrega = viaje.tipo_entrega === 'reparto' || parsed.length > 1 ? 'reparto' : 'directo';
+  const destinos = tipo_entrega === 'reparto'
+    ? [...(parsed.length ? parsed : [viaje.destino].filter(Boolean)), '', ''].slice(0, Math.max(2, parsed.length || (viaje.destino ? 1 : 0)))
+    : ['', ''];
+  return { ...viaje, tipo_entrega, destinos, destino: viaje.destino || parsed.at(-1) || '' };
+};
+const payloadViaje = (viaje = {}) => {
+  const reparto = viaje.tipo_entrega === 'reparto';
+  const destinos = reparto ? parseDestinos(viaje.destinos) : [String(viaje.destino || '').trim()].filter(Boolean);
+  const { destinos_json, ...base } = viaje;
+  return { ...base, tipo_entrega: reparto ? 'reparto' : 'directo', destinos, destino: destinos.at(-1) || '' };
+};
+const activarConTeclado = (e, action) => {
+  if (e.target !== e.currentTarget) return;
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    action();
+  }
+};
 
 export default function Home() {
   const [apiUrl, setApiUrl] = useState('');
@@ -24,7 +63,7 @@ export default function Home() {
   const [filtroTurno, setFiltroTurno] = useState('');
   const [showPendienteModal, setShowPendienteModal] = useState(false);
   const [pendienteEditando, setPendienteEditando] = useState(null);
-  const [formPendiente, setFormPendiente] = useState({ titulo: '', descripcion: '', prioridad: 'media', asignado_a: '', turno: '', notas: '' });
+  const [formPendiente, setFormPendiente] = useState({ titulo: '', descripcion: '', prioridad: 'media', asignado_a: '', turno: '', notas: '', estado: 'pendiente' });
   const [draggedPendiente, setDraggedPendiente] = useState(null);
   const [dragOverColumn, setDragOverColumn] = useState(null);
   const [showHistorialModal, setShowHistorialModal] = useState(false);
@@ -34,11 +73,15 @@ export default function Home() {
   const [alertas, setAlertas] = useState([]);
   const [vehiculos, setVehiculos] = useState([]);
   const [reportes, setReportes] = useState([]);
+  const [reporteLoading, setReporteLoading] = useState(false);
+  const [reporteError, setReporteError] = useState('');
   const [comentarios, setComentarios] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const [filtroReporte, setFiltroReporte] = useState({ tipo: 'pendientes', fecha_inicio: '', fecha_fin: '', vehicle_id: '' });
-  const [formViaje, setFormViaje] = useState({ vehicle_id: '', vehicle_name: '', origen: '', destino: '', conductor: '', telefono: '', fecha_inicio: '', fecha_fin: '', notas: '', remolque: '' });
+  const [formViaje, setFormViaje] = useState(VIAJE_DEFAULT);
+  const [pendienteSaving, setPendienteSaving] = useState(false);
+  const [viajeSaving, setViajeSaving] = useState(false);
   const [vehicleFilter, setVehicleFilter] = useState('');
   const [nuevoComentario, setNuevoComentario] = useState({ vehicle_id: '', vehicle_name: '', tipo: 'seguimiento', titulo: '', contenido: '', estatus: '', remolque: '', grupo: '', origen: '', destino: '' });
   const [remolques, setRemolques] = useState([]);
@@ -47,6 +90,12 @@ export default function Home() {
   const [remolqueEditando, setRemolqueEditando] = useState(null);
   const [historialRemolque, setHistorialRemolque] = useState([]);
   const [selectedRemolque, setSelectedRemolque] = useState(null);
+  const [historialRemolqueLoading, setHistorialRemolqueLoading] = useState(false);
+  const [historialRemolqueError, setHistorialRemolqueError] = useState('');
+  const [remolqueDashVehicleId, setRemolqueDashVehicleId] = useState('');
+  const [remolqueDashModo, setRemolqueDashModo] = useState('sencillo');
+  const [remolqueDashSegundoId, setRemolqueDashSegundoId] = useState('');
+  const [remolqueDashSaving, setRemolqueDashSaving] = useState(false);
   const [seguimiento, setSeguimiento] = useState([]);
   const [seguimientoFilter, setSeguimientoFilter] = useState('');
   const [seguimientoEstatusFilter, setSeguimientoEstatusFilter] = useState('');
@@ -76,6 +125,11 @@ export default function Home() {
   const [turnoSummary, setTurnoSummary] = useState(null);
   const [turnoLoading, setTurnoLoading] = useState(false);
   const [turnoSaving, setTurnoSaving] = useState(false);
+  const [operadorDraft, setOperadorDraft] = useState('');
+  const [telefonoDraft, setTelefonoDraft] = useState('');
+  const [remolqueDraft, setRemolqueDraft] = useState('');
+  const [remolqueModo, setRemolqueModo] = useState('sencillo');
+  const [remolquesFullDraft, setRemolquesFullDraft] = useState(['', '']);
 
   const generarMensajeSeguimiento = (grupo) => {
     const filas = seguimiento.filter(row => row.grupo === grupo);
@@ -113,8 +167,10 @@ export default function Home() {
   };
 
   const enviarWhatsApp = () => {
+    if (!mensajeTexto.trim()) return;
     const msg = encodeURIComponent(mensajeTexto);
-    window.open(`https://wa.me/?text=${msg}`, '_blank');
+    const popup = window.open(`https://wa.me/?text=${msg}`, '_blank', 'noopener,noreferrer');
+    if (!popup) alert('El navegador bloqueó la ventana de WhatsApp. Permite ventanas emergentes e intenta de nuevo.');
   };
 
   const gruposUnicos = [...new Set(seguimiento.map(row => row.grupo).filter(Boolean))];
@@ -138,6 +194,11 @@ export default function Home() {
     const disponibles = seguimiento.filter(row => String(row.estatus || '').toLowerCase() === 'disponible').length;
     return { total, activos, disponibles };
   }, [seguimiento]);
+  const remolqueCategorias = useMemo(() => {
+    const base = ['Thermo Refrigerado', 'Caja Seca', 'Porta Contenedores', 'Tanque'];
+    const extras = [...new Set(remolques.map(r => r.categoria || 'Caja Seca').filter(cat => !base.includes(cat)))];
+    return [...base, ...extras];
+  }, [remolques]);
   const notasBitacora = comentarios.filter(c => ['bitacora', 'seguimiento', 'mantenimiento'].includes((c.tipo || '').toLowerCase()));
   const notasIncidencias = comentarios.filter(c => ['incidencia', 'incidente'].includes((c.tipo || '').toLowerCase()));
   const [notasTab, setNotasTab] = useState('bitacora');
@@ -145,6 +206,7 @@ export default function Home() {
   const [comentarioRapido, setComentarioRapido] = useState({ tipo: 'seguimiento', titulo: '', contenido: '' });
   const [destinoInput, setDestinoInput] = useState('');
   const [etaData, setEtaData] = useState(null);
+  const [etaError, setEtaError] = useState('');
   const [calculandoEta, setCalculandoEta] = useState(false);
   const [viajeEta, setViajeEta] = useState(null);
   const [viajeEtaError, setViajeEtaError] = useState('');
@@ -155,6 +217,7 @@ export default function Home() {
   const [hiddenUnits, setHiddenUnits] = useState([]);
   const [driverPhoneOverrides, setDriverPhoneOverrides] = useState({});
   const [filtroOperador, setFiltroOperador] = useState('');
+  const idStr = (value) => String(value ?? '');
   const [geofences, setGeofences] = useState([]);
   const [geofenceEvents, setGeofenceEvents] = useState([]);
   const [selectedGeofenceHistory, setSelectedGeofenceHistory] = useState(null);
@@ -178,7 +241,56 @@ export default function Home() {
     const sam = samsaraAddresses.map(a => ({ ...a, source: 'samsara', activa: 1 }));
     return [...sam, ...local];
   }, [geofences, samsaraAddresses]);
-  const [formGeofence, setFormGeofence] = useState({ nombre: '', latitud: '', longitud: '', radio_metros: '500', descripcion: '', color: '#3b82f6' });
+  const geofenceNames = useMemo(() => {
+    return [...new Set(allGeofences.filter(g => g.activa !== 0).map(g => g.nombre).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  }, [allGeofences]);
+  const normalizeGeofenceName = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+  const findGeofence = (value) => {
+    const normalized = normalizeGeofenceName(value);
+    return allGeofences.find(g => g.activa !== 0 && normalizeGeofenceName(g.nombre) === normalized) || null;
+  };
+  const geofenceOptions = (currentValue = '') => {
+    const current = String(currentValue || '').trim();
+    const isLegacyValue = current && !findGeofence(current);
+    return (
+      <>
+        <option value="">Seleccionar geocerca...</option>
+        {isLegacyValue && <option value={current}>{current} (histórico)</option>}
+        {geofenceNames.map(name => <option key={name} value={name}>{name}</option>)}
+      </>
+    );
+  };
+  const geocercasCoincidentes = (texto = '') => {
+    const normalize = (value) => String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+    const textoNorm = normalize(texto);
+    if (!textoNorm) return [];
+    const palabrasTexto = new Set(textoNorm.split(' ').filter(part => part.length > 2));
+    const puntuar = (candidate, esNombre) => {
+      if (!candidate) return 0;
+      if (candidate === textoNorm) return esNombre ? 100 : 90;
+      const minLength = Math.min(candidate.length, textoNorm.length);
+      if (minLength >= 10 && (textoNorm.includes(candidate) || candidate.includes(textoNorm))) return esNombre ? 80 : 65;
+      const palabras = [...new Set(candidate.split(' ').filter(part => part.length > 2))];
+      const comunes = palabras.filter(part => palabrasTexto.has(part)).length;
+      const proporcion = comunes / Math.max(1, Math.min(palabras.length, palabrasTexto.size));
+      if (comunes >= 3 && proporcion >= 0.6) return esNombre ? 60 + comunes : 45 + comunes;
+      if (comunes >= 2 && proporcion >= 0.8) return esNombre ? 55 : 40;
+      return 0;
+    };
+    const resultados = allGeofences.map(g => {
+      const nombre = normalize(g.nombre);
+      const direcciones = [g.direccion, g.formattedAddress].map(normalize).filter(Boolean);
+      const score = Math.max(puntuar(nombre, true), ...direcciones.map(value => puntuar(value, false)));
+      return { nombre: g.nombre || g.formattedAddress || '', score };
+    }).filter(item => item.nombre && item.score > 0).sort((a, b) => b.score - a.score || a.nombre.localeCompare(b.nombre));
+    return [...new Set(resultados.map(item => item.nombre))].slice(0, 2);
+  };
+  const [formGeofence, setFormGeofence] = useState({ nombre: '', direccion: '', latitud: '', longitud: '', radio_metros: '500', descripcion: '', color: '#3b82f6' });
   const [filtroAlertas, setFiltroAlertas] = useState('');
   const [busquedaUnidades, setBusquedaUnidades] = useState('');
   const [filtroUnidades, setFiltroUnidades] = useState('todas');
@@ -188,6 +300,12 @@ export default function Home() {
   const [routeVehicleId, setRouteVehicleId] = useState('');
   const [routeDate, setRouteDate] = useState('');
   const [routeLoading, setRouteLoading] = useState(false);
+  const [mapas, setMapas] = useState([]);
+  const [selectedMapa, setSelectedMapa] = useState(null);
+  const [mapaEditando, setMapaEditando] = useState(null);
+  const [formMapa, setFormMapa] = useState({ nombre: '', origen: '', destino: '', descripcion: '', url: '' });
+  const [mapaSaving, setMapaSaving] = useState(false);
+  const [mapasError, setMapasError] = useState('');
   const [dashTab, setDashTab] = useState('unidades');
   const [dashSearch, setDashSearch] = useState('');
   const [customRiskZones, setCustomRiskZones] = useState([]);
@@ -202,14 +320,33 @@ export default function Home() {
 
   const actualizarViaje = async () => {
     if (!viajeDetalle?.id) return;
-    await fetch(`${apiUrl}/viajes/${viajeDetalle.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(viajeForm),
-    });
-    setViajeDetalle(viajeForm);
-    setViajeEditando(false);
-    loadAll();
+    const payload = payloadViaje(viajeForm);
+    const destinosIncompletos = payload.tipo_entrega === 'reparto' && ((viajeForm.destinos || []).length < 2 || viajeForm.destinos.some(destino => !String(destino || '').trim()));
+    if (destinosIncompletos || !payload.destino) {
+      alert(payload.tipo_entrega === 'reparto' ? 'Ingresa al menos dos destinos para el reparto.' : 'Ingresa el destino del viaje.');
+      return;
+    }
+    const ubicaciones = [payload.origen, ...destinosViaje(payload)];
+    if (ubicaciones.some(value => !findGeofence(value))) {
+      alert('Selecciona el origen y todos los destinos de la lista de geocercas.');
+      return;
+    }
+    try {
+      setViajeSaving(true);
+      await apiJson(`${apiUrl}/viajes/${viajeDetalle.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      setViajeDetalle(normalizarViaje(payload));
+      setViajeForm(normalizarViaje(payload));
+      setViajeEditando(false);
+      await refreshViajes();
+    } catch (err) {
+      alert(err.message || 'No se pudo guardar el viaje');
+    } finally {
+      setViajeSaving(false);
+    }
   };
 
   const [showUnidadModal, setShowUnidadModal] = useState(false);
@@ -218,8 +355,46 @@ export default function Home() {
   const [monitoreoSelectedId, setMonitoreoSelectedId] = useState(null);
   const [monitoreoRouteHistory, setMonitoreoRouteHistory] = useState([]);
   const [monitoreoEta, setMonitoreoEta] = useState(null);
+  const [monitoreoRutaTotal, setMonitoreoRutaTotal] = useState(null);
+  const [monitoreoEtaLoading, setMonitoreoEtaLoading] = useState(false);
   const [monitoreoGeofenceMatch, setMonitoreoGeofenceMatch] = useState(null);
   const [viajesActivos, setViajesActivos] = useState([]);
+  const loadAllInFlightRef = useRef(null);
+  const loadAllQueuedRef = useRef(false);
+  const loadAllTimerRef = useRef(null);
+  const sseCooldownUntilRef = useRef(0);
+  const pendientesVersionRef = useRef(0);
+  const monitoreoRequestRef = useRef({ generation: 0, controller: null });
+  const etaRequestRef = useRef({ generation: 0, controller: null });
+  const viajeEtaRequestRef = useRef({ generation: 0, controller: null });
+  const remolqueHistoryRequestRef = useRef({ generation: 0, controller: null });
+  const pendienteRequestRef = useRef({ generation: 0, controller: null });
+  const routeHistoryRequestRef = useRef({ generation: 0, controller: null });
+  const routeDatesRequestRef = useRef({ generation: 0, controller: null });
+  const reportRequestRef = useRef({ generation: 0, controller: null });
+
+  const statusKey = (value) => String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+  const tripStatusByKey = {
+    disponible: 'disponible', programado: 'programado', enrutavacio: 'en_ruta_vacio', enrutacargado: 'en_ruta_cargado',
+    esperaingreso: 'espera_ingreso', procesocarga: 'proceso_carga', enprocesodecarga: 'proceso_carga',
+    procesodescarga: 'proceso_descarga', enprocesodedescarga: 'proceso_descarga', procesoliberacion: 'proceso_liberacion',
+    enresguardo: 'en_resguardo', completado: 'completado', cancelado: 'cancelado',
+  };
+  const seguimientoStatusByKey = {
+    disponible: 'Disponible', programado: 'Programado', enrutavacio: 'En ruta vacio', enrutacargado: 'En ruta cargado',
+    procesocarga: 'En proceso de carga', enprocesodecarga: 'En proceso de carga', procesodescarga: 'En proceso de descarga',
+    enprocesodedescarga: 'En proceso de descarga', enresguardo: 'En resguardo', nodisponible: 'No disponible',
+  };
+  const normalizarEstadoViaje = (value) => tripStatusByKey[statusKey(value)] || value || 'programado';
+  const normalizarEstatusSeguimiento = (value) => seguimientoStatusByKey[statusKey(value)] || value || 'Disponible';
+  const normalizarViajes = (rows) => Array.isArray(rows) ? rows.map(row => normalizarViaje({ ...row, estado: normalizarEstadoViaje(row.estado) })) : [];
+  const normalizarSeguimiento = (rows) => Array.isArray(rows) ? rows.map(row => ({ ...row, estatus: normalizarEstatusSeguimiento(row.estatus) })) : [];
+  const velocidadKmh = (mph) => Math.round((Number(mph) || 0) * 1.60934);
+  const whatsappDigits = (value) => String(value || '').replace(/\D/g, '');
 
   const defaultZonesList = [
     { name: 'Tamaulipas - Zona Norte', severity: 'critical', lat: 25.8811, lng: -97.4981 },
@@ -273,6 +448,36 @@ export default function Home() {
     localStorage.setItem('gers_driver_phone_overrides', JSON.stringify(driverPhoneOverrides));
   }, [driverPhoneOverrides]);
 
+  useEffect(() => () => {
+    clearTimeout(loadAllTimerRef.current);
+    monitoreoRequestRef.current.controller?.abort();
+    etaRequestRef.current.controller?.abort();
+    viajeEtaRequestRef.current.controller?.abort();
+    remolqueHistoryRequestRef.current.controller?.abort();
+    pendienteRequestRef.current.controller?.abort();
+    routeHistoryRequestRef.current.controller?.abort();
+    routeDatesRequestRef.current.controller?.abort();
+    reportRequestRef.current.controller?.abort();
+  }, []);
+
+  useEffect(() => {
+    const handleEscape = (e) => {
+      if (e.key !== 'Escape') return;
+      if (showTurnoModal) { setShowTurnoModal(false); setTurnoSummary(null); }
+      else if (showRemolqueModal) cerrarRemolqueModal();
+      else if (showHistorialModal) setShowHistorialModal(false);
+      else if (showPendienteModal) { pendienteRequestRef.current.controller?.abort(); pendienteRequestRef.current.generation += 1; setShowPendienteModal(false); setPendienteEditando(null); setNuevoComentarioPendiente(''); }
+      else if (showMensajeModal) setShowMensajeModal(false);
+      else if (showSeguimientoUpdateModal) setShowSeguimientoUpdateModal(false);
+      else if (showViajeModal) { setShowViajeModal(false); setViajeEditando(false); }
+      else if (selectedVehicle) setSelectedVehicle(null);
+      else if (showUnidadModal) setShowUnidadModal(false);
+      else if (showZoneModal) setShowZoneModal(false);
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [selectedVehicle, showHistorialModal, showMensajeModal, showPendienteModal, showRemolqueModal, showSeguimientoUpdateModal, showTurnoModal, showUnidadModal, showViajeModal, showZoneModal]);
+
   useEffect(() => {
     if (!apiUrl) return;
     const initAuth = async () => {
@@ -306,8 +511,12 @@ export default function Home() {
 
   useEffect(() => {
     if (!apiUrl || !currentUser) return;
-    const source = new EventSource(`${apiUrl}/live`);
-    const handleReload = () => loadAll();
+    const source = new EventSource(`${apiUrl}/live?token=${encodeURIComponent(authToken)}`);
+    const handleReload = () => {
+      if (Date.now() < sseCooldownUntilRef.current) return;
+      clearTimeout(loadAllTimerRef.current);
+      loadAllTimerRef.current = setTimeout(() => loadAll(), 750);
+    };
     const noop = () => {};
     source.addEventListener('reload', handleReload);
     source.addEventListener('vehicles', handleReload);
@@ -317,18 +526,33 @@ export default function Home() {
       source.removeEventListener('vehicles', handleReload);
       source.removeEventListener('connected', noop);
       source.close();
+      clearTimeout(loadAllTimerRef.current);
     };
-  }, [apiUrl, currentUser]);
+  }, [apiUrl, authToken, currentUser]);
 
   const apiRequest = (url, options = {}) => {
     const headers = { ...(options.headers || {}) };
     const isBackendUrl = typeof url === 'string' && apiUrl && url.startsWith(apiUrl);
     if (isBackendUrl && authToken && !headers.Authorization) headers.Authorization = `Bearer ${authToken}`;
-    return globalThis.fetch(url, { ...options, headers });
+    return globalThis.fetch(url, { ...options, headers }).then(async (res) => {
+      if (res.status === 401) {
+        localStorage.removeItem('gers_auth_token');
+        setAuthToken('');
+        setCurrentUser(null);
+        throw new Error('Sesión inválida o expirada');
+      }
+      return res;
+    });
   };
 
   const authFetch = apiRequest;
   const fetch = apiRequest;
+  const apiJson = async (url, options = {}) => {
+    const res = await fetch(url, options);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || data.message || `Error ${res.status}`);
+    return data;
+  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -423,32 +647,67 @@ export default function Home() {
   useEffect(() => {
     if (!apiUrl || !currentUser) return;
     const interval = setInterval(() => {
-      authFetch(`${apiUrl}/samsara/vehicles`).then(r => r.json()).then(v => {
-        setVehiculos(Array.isArray(v) ? v : (v.data || v.vehicles || []));
-      }).catch(() => {});
-    }, 60000);
+      loadAll();
+    }, 300000);
     return () => clearInterval(interval);
-  }, [apiUrl, currentUser, authToken]);
+  }, [apiUrl, currentUser]);
 
   useEffect(() => {
-    if (!destinoInput.trim() || !selectedVehicle?.location) { setEtaData(null); return; }
+    if (!destinoInput.trim() || !selectedVehicle?.location) { setEtaData(null); setEtaError(''); setCalculandoEta(false); return; }
     const vehicle = selectedVehicle;
     const timer = setTimeout(() => calcularETA(destinoInput, vehicle), 1500);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      etaRequestRef.current.controller?.abort();
+      etaRequestRef.current.generation += 1;
+    };
   }, [destinoInput, selectedVehicle?.id]);
 
   useEffect(() => {
-    if (!selectedVehicle) { setDestinoInput(''); setEtaData(null); }
-  }, [selectedVehicle]);
+    if (!selectedVehicle) {
+      setOperadorDraft('');
+      setTelefonoDraft('');
+      setRemolqueDraft('');
+      setRemolqueModo('sencillo');
+      setRemolquesFullDraft(['', '']);
+      return;
+    }
+    const key = idStr(selectedVehicle.id);
+    const savedOperador = operadores[key]?.nombre || '';
+    const savedTelefono = operadores[key]?.telefono || '';
+    const assigned = remolques.find(r => String(r.vehicle_id_asignado || '') === String(selectedVehicle.id) || String(r.unidad_asignada || '').toLowerCase() === String(selectedVehicle.name || '').toLowerCase());
+    const fullAsignado = String(assigned?.tipo_asignacion || '').toLowerCase() === 'full' || assigned?.grupo_full;
+    const miembrosFull = fullAsignado
+      ? remolques.filter(r => assigned.grupo_full && String(r.grupo_full) === String(assigned.grupo_full))
+      : [];
+    setOperadorDraft(savedOperador);
+    setTelefonoDraft(savedTelefono);
+    setRemolqueModo(fullAsignado ? 'full' : 'sencillo');
+    setRemolqueDraft(assigned && !fullAsignado ? String(assigned.id) : '');
+    setRemolquesFullDraft(fullAsignado ? [String(miembrosFull[0]?.id || ''), String(miembrosFull[1]?.id || '')] : ['', '']);
+  }, [selectedVehicle?.id]);
 
   useEffect(() => {
-    if (!formViaje.destino.trim() || !formViaje.vehicle_id) { setViajeEta(null); setViajeEtaError(''); return; }
+    setDestinoInput('');
+    setEtaData(null);
+    setEtaError('');
+    setCalculandoEta(false);
+  }, [selectedVehicle?.id]);
+
+  const primerDestinoForm = formViaje.tipo_entrega === 'reparto' ? formViaje.destinos?.[0] || '' : formViaje.destino;
+
+  useEffect(() => {
+    if (!primerDestinoForm.trim() || !formViaje.vehicle_id) { setViajeEta(null); setViajeEtaError(''); setCalculandoViajeEta(false); return; }
     const v = vehiculos.find(vh => String(vh.id) === formViaje.vehicle_id);
-    if (!v?.location) { setViajeEta(null); setViajeEtaError('Vehiculo sin ubicacion GPS'); return; }
+    if (!v?.location) { setViajeEta(null); setViajeEtaError('Vehiculo sin ubicacion GPS'); setCalculandoViajeEta(false); return; }
     setViajeEtaError('');
-    const timer = setTimeout(() => calcularViajeETA(formViaje.destino, v), 1500);
-    return () => clearTimeout(timer);
-  }, [formViaje.destino, formViaje.vehicle_id]);
+    const timer = setTimeout(() => calcularViajeETA(primerDestinoForm, v), 1500);
+    return () => {
+      clearTimeout(timer);
+      viajeEtaRequestRef.current.controller?.abort();
+      viajeEtaRequestRef.current.generation += 1;
+    };
+  }, [primerDestinoForm, formViaje.vehicle_id]);
 
   const parseFecha = (str) => {
     if (!str) return null;
@@ -456,128 +715,405 @@ export default function Home() {
     return new Date(str + 'Z');
   };
 
-  const loadAll = async () => {
-    setLoading(true);
-    try {
-      const [statsRes, pendientesRes, viajesRes, alertasRes, vehiculosRes, comentariosRes, operadoresRes, driversRes, geofencesRes, eventsRes, riskZonesRes, samsaraAddrRes, remolquesRes, seguimientoRes, unidadesRes] = await Promise.allSettled([
-        fetch(`${apiUrl}/reportes/resumen`).then(r => r.json()),
-        fetch(`${apiUrl}/pendientes`).then(r => r.json()),
-        fetch(`${apiUrl}/viajes`).then(r => r.json()),
-        fetch(`${apiUrl}/alertas`).then(r => r.json()),
-        fetch(`${apiUrl}/samsara/vehicles`).then(r => r.json()),
-        fetch(`${apiUrl}/comentarios`).then(r => r.json()),
-        fetch(`${apiUrl}/vehicle-operators`).then(r => r.json()),
-        fetch(`${apiUrl}/samsara/drivers`).then(r => r.json()),
-        fetch(`${apiUrl}/geofences`).then(r => r.json()),
-        fetch(`${apiUrl}/geofence-events?limit=100`).then(r => r.json()),
-        fetch(`${apiUrl}/risk-zones`).then(r => r.json()),
-        fetch(`${apiUrl}/samsara/addresses`).then(r => r.json()),
-        fetch(`${apiUrl}/remolques`).then(r => r.json()),
-        fetch(`${apiUrl}/seguimiento`).then(r => r.json()),
-        fetch(`${apiUrl}/unidades`).then(r => r.json()),
+  const parseFechaProgramada = (str) => {
+    if (!str) return null;
+    if (str.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(str)) return new Date(str);
+    return new Date(String(str).replace(' ', 'T'));
+  };
+
+  const formatFechaProgramada = (str) => {
+    const fecha = parseFechaProgramada(str);
+    return fecha && !Number.isNaN(fecha.getTime())
+      ? fecha.toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' })
+      : String(str || '');
+  };
+
+  const loadAll = () => {
+    if (loadAllInFlightRef.current) {
+      loadAllQueuedRef.current = true;
+      return loadAllInFlightRef.current;
+    }
+    const requestJson = async (url) => {
+      const res = await fetch(url);
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || data?.message || `Error ${res.status}`);
+      return data;
+    };
+    const pendientesVersion = pendientesVersionRef.current;
+    const run = async () => {
+      setLoading(true);
+      const [statsRes, pendientesRes, viajesRes, alertasRes, vehiculosRes, comentariosRes, operadoresRes, driversRes, geofencesRes, eventsRes, riskZonesRes, samsaraAddrRes, remolquesRes, seguimientoRes, unidadesRes, mapasRes] = await Promise.allSettled([
+        requestJson(`${apiUrl}/reportes/resumen`), requestJson(`${apiUrl}/pendientes`), requestJson(`${apiUrl}/viajes`),
+        requestJson(`${apiUrl}/alertas`), requestJson(`${apiUrl}/samsara/vehicles`), requestJson(`${apiUrl}/comentarios`),
+        requestJson(`${apiUrl}/vehicle-operators`), requestJson(`${apiUrl}/samsara/drivers`), requestJson(`${apiUrl}/geofences`),
+        requestJson(`${apiUrl}/geofence-events?limit=100`), requestJson(`${apiUrl}/risk-zones`), requestJson(`${apiUrl}/samsara/addresses`),
+        requestJson(`${apiUrl}/remolques`), requestJson(`${apiUrl}/seguimiento`), requestJson(`${apiUrl}/unidades`), requestJson(`${apiUrl}/mapas`),
       ]);
 
-      if (statsRes.status === 'fulfilled') setStats(statsRes.value);
-      if (pendientesRes.status === 'fulfilled') setPendientes(pendientesRes.value);
-      if (viajesRes.status === 'fulfilled') setViajes(viajesRes.value);
-      if (alertasRes.status === 'fulfilled') setAlertas(alertasRes.value);
-      if (comentariosRes.status === 'fulfilled') setComentarios(comentariosRes.value);
-      if (driversRes.status === 'fulfilled') setSamsaraDrivers(driversRes.value || []);
-      if (geofencesRes.status === 'fulfilled') setGeofences(geofencesRes.value || []);
-      if (eventsRes.status === 'fulfilled') setGeofenceEvents(eventsRes.value || []);
-      if (riskZonesRes.status === 'fulfilled') setCustomRiskZones(riskZonesRes.value || []);
-      if (samsaraAddrRes.status === 'fulfilled') setSamsaraAddresses(samsaraAddrRes.value || []);
-      if (remolquesRes.status === 'fulfilled') setRemolques(remolquesRes.value || []);
-      if (seguimientoRes.status === 'fulfilled') setSeguimiento(seguimientoRes.value || []);
-      if (unidadesRes.status === 'fulfilled') setUnidadesLocales(unidadesRes.value || []);
+      if (statsRes.status === 'fulfilled' && statsRes.value && !Array.isArray(statsRes.value)) setStats(statsRes.value);
+      if (pendientesRes.status === 'fulfilled' && Array.isArray(pendientesRes.value) && pendientesVersion === pendientesVersionRef.current) setPendientes(pendientesRes.value);
+      if (viajesRes.status === 'fulfilled' && Array.isArray(viajesRes.value)) setViajes(normalizarViajes(viajesRes.value));
+      if (alertasRes.status === 'fulfilled' && Array.isArray(alertasRes.value)) setAlertas(alertasRes.value);
+      if (comentariosRes.status === 'fulfilled' && Array.isArray(comentariosRes.value)) setComentarios(comentariosRes.value);
+      if (driversRes.status === 'fulfilled' && Array.isArray(driversRes.value)) setSamsaraDrivers(driversRes.value);
+      if (geofencesRes.status === 'fulfilled' && Array.isArray(geofencesRes.value)) setGeofences(geofencesRes.value);
+      if (eventsRes.status === 'fulfilled' && Array.isArray(eventsRes.value)) setGeofenceEvents(eventsRes.value);
+      if (riskZonesRes.status === 'fulfilled' && Array.isArray(riskZonesRes.value)) setCustomRiskZones(riskZonesRes.value);
+      if (samsaraAddrRes.status === 'fulfilled' && Array.isArray(samsaraAddrRes.value)) setSamsaraAddresses(samsaraAddrRes.value);
+      if (remolquesRes.status === 'fulfilled' && Array.isArray(remolquesRes.value)) setRemolques(remolquesRes.value);
+      if (seguimientoRes.status === 'fulfilled' && Array.isArray(seguimientoRes.value)) setSeguimiento(normalizarSeguimiento(seguimientoRes.value));
+      if (unidadesRes.status === 'fulfilled' && Array.isArray(unidadesRes.value)) setUnidadesLocales(unidadesRes.value);
+      if (mapasRes.status === 'fulfilled' && Array.isArray(mapasRes.value)) {
+        setMapas(mapasRes.value);
+        setSelectedMapa(prev => mapasRes.value.find(mapa => String(mapa.id) === String(prev?.id)) || mapasRes.value[0] || null);
+        setMapasError('');
+      } else if (mapasRes.status === 'rejected') {
+        setMapasError(mapasRes.reason?.message || 'No se pudieron cargar los mapas');
+      }
 
-      const viajesActivosRes = await fetch(`${apiUrl}/viajes/activos`).then(r => r.json()).catch(() => []);
-      setViajesActivos(Array.isArray(viajesActivosRes) ? viajesActivosRes : []);
-      if (operadoresRes.status === 'fulfilled') {
+      const viajesActivosRes = await requestJson(`${apiUrl}/viajes/activos`).catch(() => null);
+      if (Array.isArray(viajesActivosRes)) setViajesActivos(normalizarViajes(viajesActivosRes));
+      if (operadoresRes.status === 'fulfilled' && Array.isArray(operadoresRes.value)) {
         const map = {};
-        for (const op of (operadoresRes.value || [])) {
-          map[op.vehicle_id] = { nombre: op.operator_name, telefono: op.telefono || '' };
+        for (const op of operadoresRes.value) {
+          map[idStr(op.vehicle_id)] = { nombre: op.operator_name, telefono: op.telefono || '' };
         }
         setOperadores(map);
       }
       if (vehiculosRes.status === 'fulfilled') {
         const v = vehiculosRes.value;
-        setVehiculos(Array.isArray(v) ? v : (v.data || v.vehicles || []));
+        const rows = Array.isArray(v) ? v : (Array.isArray(v?.data) ? v.data : Array.isArray(v?.vehicles) ? v.vehicles : null);
+        if (rows) setVehiculos(rows);
       }
       if (currentUser?.rol === 'admin') {
-        const usersRes = await fetch(`${apiUrl}/users`).then(r => r.json()).catch(() => []);
-        setUsuarios(Array.isArray(usersRes) ? usersRes : []);
+        const usersRes = await requestJson(`${apiUrl}/users`).catch(() => null);
+        if (Array.isArray(usersRes)) setUsuarios(usersRes);
       }
-    } catch (e) {
-      console.error('Error cargando datos:', e);
+      sseCooldownUntilRef.current = Date.now() + 3000;
+    };
+    const promise = run().catch(e => console.error('Error cargando datos:', e)).finally(() => {
+      setLoading(false);
+      loadAllInFlightRef.current = null;
+      if (loadAllQueuedRef.current) {
+        loadAllQueuedRef.current = false;
+        setTimeout(() => loadAll(), 0);
+      }
+    });
+    loadAllInFlightRef.current = promise;
+    return promise;
+  };
+
+  const refreshAlertas = async () => {
+    const rows = await fetch(`${apiUrl}/alertas`).then(r => r.json()).catch(() => []);
+    setAlertas(Array.isArray(rows) ? rows : []);
+  };
+
+  const refreshRemolques = async () => {
+    const rows = await fetch(`${apiUrl}/remolques`).then(r => r.json()).catch(() => []);
+    setRemolques(Array.isArray(rows) ? rows : []);
+  };
+
+  const refreshSeguimiento = async () => {
+    const rows = await fetch(`${apiUrl}/seguimiento`).then(r => r.json()).catch(() => []);
+    setSeguimiento(normalizarSeguimiento(rows));
+  };
+
+  const refreshGeofences = async () => {
+    const [gRows, eRows] = await Promise.all([
+      fetch(`${apiUrl}/geofences`).then(r => r.json()).catch(() => []),
+      fetch(`${apiUrl}/geofence-events?limit=100`).then(r => r.json()).catch(() => []),
+    ]);
+    setGeofences(Array.isArray(gRows) ? gRows : []);
+    setGeofenceEvents(Array.isArray(eRows) ? eRows : []);
+  };
+
+  const refreshRiskZones = async () => {
+    const rows = await fetch(`${apiUrl}/risk-zones`).then(r => r.json()).catch(() => []);
+    setCustomRiskZones(Array.isArray(rows) ? rows : []);
+  };
+
+  const refreshUnidadesLocales = async () => {
+    const rows = await fetch(`${apiUrl}/unidades`).then(r => r.json()).catch(() => []);
+    setUnidadesLocales(Array.isArray(rows) ? rows : []);
+  };
+
+  const mapaUrl = (mapa) => mapa?.url || mapa?.url_google_maps || mapa?.google_maps_url || '';
+
+  const googleUrlSeguro = (value) => {
+    try {
+      const url = new URL(String(value || '').trim());
+      const hostname = url.hostname.toLowerCase();
+      if (url.protocol !== 'https:' || (hostname !== 'google.com' && !hostname.endsWith('.google.com'))) return '';
+      return url.href;
+    } catch {
+      return '';
     }
-    setLoading(false);
+  };
+
+  const googleMyMapsEmbedUrl = (value) => {
+    const segura = googleUrlSeguro(value);
+    if (!segura) return '';
+    const mid = new URL(segura).searchParams.get('mid')?.trim();
+    return mid ? `https://www.google.com/maps/d/embed?mid=${encodeURIComponent(mid)}` : '';
+  };
+
+  const refreshMapas = async (preferredId) => {
+    try {
+      const rows = await apiJson(`${apiUrl}/mapas`);
+      const lista = Array.isArray(rows) ? rows : [];
+      setMapas(lista);
+      setSelectedMapa(prev => lista.find(mapa => String(mapa.id) === String(preferredId ?? prev?.id)) || lista[0] || null);
+      setMapasError('');
+      return lista;
+    } catch (err) {
+      setMapasError(err.message || 'No se pudieron cargar los mapas');
+      return [];
+    }
+  };
+
+  const guardarMapa = async (e) => {
+    e.preventDefault();
+    const urlSegura = googleUrlSeguro(formMapa.url);
+    if (!formMapa.nombre.trim() || !urlSegura) {
+      setMapasError('Ingresa un nombre y una URL HTTPS válida de Google My Maps.');
+      return;
+    }
+    if ((formMapa.origen && !findGeofence(formMapa.origen)) || (formMapa.destino && !findGeofence(formMapa.destino))) {
+      setMapasError('Selecciona el origen y el destino de la lista de geocercas.');
+      return;
+    }
+    const urlNormalizada = googleMyMapsEmbedUrl(urlSegura) || urlSegura;
+    const payload = {
+      nombre: formMapa.nombre.trim(),
+      origen: formMapa.origen.trim(),
+      destino: formMapa.destino.trim(),
+      descripcion: formMapa.descripcion.trim(),
+      url: urlNormalizada,
+    };
+    try {
+      setMapaSaving(true);
+      setMapasError('');
+      const guardado = await apiJson(`${apiUrl}/mapas${mapaEditando?.id ? `/${mapaEditando.id}` : ''}`, {
+        method: mapaEditando?.id ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const preferredId = guardado?.id || mapaEditando?.id;
+      setFormMapa({ nombre: '', origen: '', destino: '', descripcion: '', url: '' });
+      setMapaEditando(null);
+      await refreshMapas(preferredId);
+    } catch (err) {
+      setMapasError(err.message || 'No se pudo guardar el mapa');
+    } finally {
+      setMapaSaving(false);
+    }
+  };
+
+  const editarMapa = (mapa) => {
+    setMapaEditando(mapa);
+    setFormMapa({
+      nombre: mapa.nombre || '',
+      origen: mapa.origen || '',
+      destino: mapa.destino || '',
+      descripcion: mapa.descripcion || '',
+      url: mapaUrl(mapa),
+    });
+    setMapasError('');
+  };
+
+  const cancelarEdicionMapa = () => {
+    setMapaEditando(null);
+    setFormMapa({ nombre: '', origen: '', destino: '', descripcion: '', url: '' });
+    setMapasError('');
+  };
+
+  const eliminarMapa = async (mapa) => {
+    if (!confirm(`¿Eliminar el mapa ${mapa.nombre}?`)) return;
+    try {
+      await apiJson(`${apiUrl}/mapas/${mapa.id}`, { method: 'DELETE' });
+      await refreshMapas();
+    } catch (err) {
+      setMapasError(err.message || 'No se pudo eliminar el mapa');
+    }
+  };
+
+  const refreshPendientes = async () => {
+    const rows = await fetch(`${apiUrl}/pendientes`).then(r => r.json()).catch(() => []);
+    setPendientes(Array.isArray(rows) ? rows : []);
+    return rows;
+  };
+
+  const refreshViajes = async () => {
+    const [rows, activos] = await Promise.all([
+      fetch(`${apiUrl}/viajes`).then(r => r.json()).catch(() => []),
+      fetch(`${apiUrl}/viajes/activos`).then(r => r.json()).catch(() => []),
+    ]);
+    setViajes(normalizarViajes(rows));
+    setViajesActivos(normalizarViajes(activos));
+    return rows;
   };
 
   const guardarPendiente = async (e) => {
-    e.preventDefault();
-    if (!pendienteEditando?.id && !formPendiente.titulo.trim()) return;
-    const url = pendienteEditando?.id
-      ? `${apiUrl}/pendientes/${pendienteEditando.id}`
-      : `${apiUrl}/pendientes`;
-    const method = pendienteEditando?.id ? 'PUT' : 'POST';
-    const payload = pendienteEditando?.id
-      ? { ...pendienteEditando, prioridad: formPendiente.prioridad || pendienteEditando.prioridad || 'media' }
-      : { ...formPendiente, estado: 'pendiente' };
-    await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    setFormPendiente({ titulo: '', descripcion: '', prioridad: 'media', asignado_a: '', turno: '', notas: '' });
-    setPendienteEditando(null);
-    setShowPendienteModal(false);
-    loadAll();
+    e?.preventDefault();
+    const editando = !!pendienteEditando?.id;
+    const payloadNuevo = {
+      titulo: formPendiente.titulo.trim(),
+      descripcion: formPendiente.descripcion || '',
+      prioridad: formPendiente.prioridad || 'media',
+      asignado_a: formPendiente.asignado_a || '',
+      turno: formPendiente.turno || '',
+      notas: '',
+      estado: formPendiente.estado || pendienteEditando?.estado || 'pendiente',
+    };
+    const payload = editando ? { prioridad: formPendiente.prioridad || 'media' } : payloadNuevo;
+    try {
+      setPendienteSaving(true);
+      await apiJson(`${apiUrl}/pendientes${editando ? `/${pendienteEditando.id}` : ''}`, {
+        method: editando ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      setFormPendiente({ titulo: '', descripcion: '', prioridad: 'media', asignado_a: '', turno: '', notas: '', estado: 'pendiente' });
+      setPendienteEditando(null);
+      setShowPendienteModal(false);
+      void refreshPendientes();
+      return true;
+    } catch (err) {
+      alert(err.message || 'No se pudo guardar el pendiente');
+      return false;
+    } finally {
+      setPendienteSaving(false);
+    }
+  };
+
+  const eliminarUsuario = async (user) => {
+    if (user.id === currentUser?.id) return;
+    if (!confirm(`¿Eliminar al usuario ${user.username}? Esta acción cerrará sus sesiones.`)) return;
+    setUsuarioMsg('');
+    try {
+      await apiJson(`${apiUrl}/users/${user.id}`, { method: 'DELETE' });
+      setUsuarios(prev => prev.filter(item => item.id !== user.id));
+      setUsuarioMsg(`Usuario ${user.username} eliminado`);
+    } catch (err) {
+      setUsuarioMsg(err.message || 'No se pudo eliminar el usuario');
+    }
   };
 
   const eliminarPendiente = async (id) => {
     if (!confirm('¿Eliminar este pendiente?')) return;
-    await fetch(`${apiUrl}/pendientes/${id}`, { method: 'DELETE' });
-    loadAll();
+    try {
+      const result = await apiJson(`${apiUrl}/pendientes/${id}`, { method: 'DELETE' });
+      if (result?.changes === 0) {
+        throw new Error('No se encontró el pendiente para eliminar');
+      }
+      setPendientes(prev => prev.filter(p => String(p.id) !== String(id)));
+      setHistorialPendientes(prev => prev.filter(p => String(p.id) !== String(id)));
+      void refreshPendientes();
+      return true;
+    } catch (err) {
+      alert(err.message || 'No se pudo eliminar el pendiente');
+      return false;
+    }
   };
 
   const cambiarEstadoPendiente = async (id, nuevoEstado) => {
     const p = pendientes.find(x => x.id === id);
     if (!p) return;
-    await fetch(`${apiUrl}/pendientes/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...p, estado: nuevoEstado }),
-    });
-    loadAll();
+    try {
+      await apiJson(`${apiUrl}/pendientes/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...p, estado: nuevoEstado }),
+      });
+      await refreshPendientes();
+    } catch (err) {
+      alert(err.message || 'No se pudo cambiar el estado');
+    }
   };
 
   const agregarComentarioPendiente = async (pendienteId, contenido) => {
     if (!contenido.trim()) return;
-    await fetch(`${apiUrl}/pendientes/${pendienteId}/comentarios`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contenido }),
+    const generation = pendienteRequestRef.current.generation;
+    try {
+      await apiJson(`${apiUrl}/pendientes/${pendienteId}/comentarios`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contenido }),
+      });
+      if (pendienteRequestRef.current.generation !== generation || String(pendienteEditando?.id) !== String(pendienteId)) return;
+      setNuevoComentarioPendiente('');
+      const res = await fetch(`${apiUrl}/pendientes/${pendienteId}/comentarios`);
+      const comentarios = await res.json().catch(() => []);
+      if (!res.ok) throw new Error('No se pudieron actualizar los comentarios');
+      if (pendienteRequestRef.current.generation === generation) {
+        setPendienteEditando(prev => String(prev?.id) === String(pendienteId) ? { ...prev, comentarios: Array.isArray(comentarios) ? comentarios : [] } : prev);
+      }
+    } catch (err) {
+      alert(err.message || 'No se pudo agregar el comentario');
+    }
+  };
+
+  const abrirPendiente = async (pendiente) => {
+    pendienteRequestRef.current.controller?.abort();
+    const controller = new AbortController();
+    const generation = pendienteRequestRef.current.generation + 1;
+    pendienteRequestRef.current = { generation, controller };
+    setPendienteEditando({ ...pendiente, comentarios: [] });
+    setFormPendiente({
+      titulo: pendiente.titulo || '', descripcion: pendiente.descripcion || '', prioridad: pendiente.prioridad || 'media',
+      asignado_a: pendiente.asignado_a || '', turno: pendiente.turno || '', notas: pendiente.notas || '', estado: pendiente.estado || 'pendiente',
     });
     setNuevoComentarioPendiente('');
-    const comentarios = await fetch(`${apiUrl}/pendientes/${pendienteId}/comentarios`).then(r => r.json());
-    setPendienteEditando({ ...pendienteEditando, comentarios });
+    setShowPendienteModal(true);
+    try {
+      const res = await fetch(`${apiUrl}/pendientes/${pendiente.id}/comentarios`, { signal: controller.signal });
+      const comentarios = await res.json().catch(() => []);
+      if (!res.ok) throw new Error('No se pudieron cargar los comentarios');
+      if (pendienteRequestRef.current.generation === generation) {
+        setPendienteEditando(prev => String(prev?.id) === String(pendiente.id) ? { ...prev, comentarios: Array.isArray(comentarios) ? comentarios : [] } : prev);
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError' && pendienteRequestRef.current.generation === generation) {
+        alert(err.message || 'No se pudieron cargar los comentarios');
+      }
+    }
+  };
+
+  const cerrarPendiente = () => {
+    pendienteRequestRef.current.controller?.abort();
+    pendienteRequestRef.current.generation += 1;
+    setShowPendienteModal(false);
+    setPendienteEditando(null);
+    setFormPendiente({ titulo: '', descripcion: '', prioridad: 'media', asignado_a: '', turno: '', notas: '', estado: 'pendiente' });
+    setNuevoComentarioPendiente('');
   };
 
   const archivarCompletados = async () => {
     const completados = pendientes.filter(p => p.estado === 'completado');
     if (completados.length === 0) { alert('No hay pendientes completados para archivar'); return; }
     if (!confirm(`¿Archivar ${completados.length} pendiente(s) completado(s)?`)) return;
-    const res = await fetch(`${apiUrl}/pendientes/archivar-completados`, { method: 'POST' });
-    const data = await res.json();
-    if (data.archived > 0) { alert(`${data.archived} pendiente(s) archivado(s)`); loadAll(); }
+    try {
+      const data = await apiJson(`${apiUrl}/pendientes/archivar-completados`, { method: 'POST' });
+      if (data.archived > 0) {
+        pendientesVersionRef.current += 1;
+        const idsArchivados = new Set(completados.map(item => String(item.id)));
+        setPendientes(prev => prev.filter(item => !idsArchivados.has(String(item.id))));
+        alert(`${data.archived} pendiente(s) archivado(s)`);
+        await refreshPendientes();
+      }
+    } catch (err) {
+      alert(err.message || 'No se pudieron archivar los pendientes');
+    }
   };
 
   const cargarHistorial = async () => {
     setShowHistorialModal(true);
-    const res = await fetch(`${apiUrl}/pendientes/historial`);
-    const data = await res.json();
-    setHistorialPendientes(data);
+    try {
+      const data = await fetch(`${apiUrl}/pendientes/historial`).then(r => r.json());
+      setHistorialPendientes(data);
+    } catch {
+      setHistorialPendientes([]);
+    }
   };
 
   const handleDragStart = (e, pendiente) => {
@@ -615,76 +1151,128 @@ export default function Home() {
 
   const crearViaje = async (e) => {
     e.preventDefault();
-    const res = await fetch(`${apiUrl}/viajes`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(formViaje),
-    });
-    if (formViaje.conductor && formViaje.vehicle_id) {
-      await fetch(`${apiUrl}/vehicle-operators/${formViaje.vehicle_id}`, {
-        method: 'PUT',
+    const payload = payloadViaje(formViaje);
+    const destinosIncompletos = payload.tipo_entrega === 'reparto' && (formViaje.destinos.length < 2 || formViaje.destinos.some(destino => !String(destino || '').trim()));
+    if (destinosIncompletos || !payload.destino) {
+      alert(payload.tipo_entrega === 'reparto' ? 'Ingresa al menos dos destinos para el reparto.' : 'Ingresa el destino del viaje.');
+      return;
+    }
+    const ubicaciones = [payload.origen, ...destinosViaje(payload)];
+    if (ubicaciones.some(value => !findGeofence(value))) {
+      alert('Selecciona el origen y todos los destinos de la lista de geocercas.');
+      return;
+    }
+    let whatsappPopup = null;
+    let whatsappUrl = '';
+    const tel = whatsappDigits(formViaje.telefono);
+    if (tel) {
+      const inicio = formViaje.fecha_inicio ? formatFechaProgramada(formViaje.fecha_inicio) : 'Por definir';
+      const fin = formViaje.fecha_fin ? formatFechaProgramada(formViaje.fecha_fin) : 'Por definir';
+      const directions = new URL('https://www.google.com/maps/dir/');
+      directions.searchParams.set('api', '1');
+      directions.searchParams.set('origin', formViaje.origen || '');
+      directions.searchParams.set('destination', payload.destino);
+      if (payload.tipo_entrega === 'reparto' && payload.destinos.length > 1) directions.searchParams.set('waypoints', payload.destinos.slice(0, -1).join('|'));
+      const detalleDestinos = payload.tipo_entrega === 'reparto'
+        ? `\n\n*Destinos de reparto:*\n${payload.destinos.map((destino, index) => `${index + 1}. ${destino}`).join('\n')}`
+        : '';
+      const nombreDestino = payload.tipo_entrega === 'reparto' ? `${payload.destinos.length} paradas (final: ${payload.destino})` : payload.destino;
+      const msg = encodeURIComponent(`*Saludos ${formViaje.conductor || 'Operador'}.*\nSe le ha asignado un nuevo viaje, a continuación los detalles:\n\n*Nombre de viaje:* ${formViaje.origen || '?'} --> ${nombreDestino || '?'}${detalleDestinos}\n\n*Unidad:* ${formViaje.vehicle_name || formViaje.vehicle_id}\n*Remolque:* ${formViaje.remolque || 'Sin remolque'}\n*Hora de salida:* ${inicio}\n*Hora de descarga:* ${fin}\n\n*Instrucciones Adicionales:* ${formViaje.notas || 'Ninguna'}\n\n*Link de ruta:* ${directions.toString()}\n\n=========================================`);
+      whatsappUrl = `https://wa.me/${tel}?text=${msg}`;
+      whatsappPopup = window.open('', '_blank');
+    }
+    try {
+      setViajeSaving(true);
+      await apiJson(`${apiUrl}/viajes`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vehicle_name: formViaje.vehicle_name, operator_name: formViaje.conductor, telefono: formViaje.telefono || '' }),
+        body: JSON.stringify(payload),
       });
-      setOperadores(prev => ({ ...prev, [formViaje.vehicle_id]: { nombre: formViaje.conductor, telefono: formViaje.telefono || '' } }));
+      if (whatsappUrl && whatsappPopup) whatsappPopup.location.href = whatsappUrl;
+      if (whatsappUrl && !whatsappPopup) alert('El viaje se guardó, pero el navegador bloqueó WhatsApp. Permite ventanas emergentes para enviar mensajes.');
+      setFormViaje(VIAJE_DEFAULT);
+      setViajeEta(null);
+      setViajeEtaError('');
+      await refreshViajes();
+    } catch (err) {
+      whatsappPopup?.close();
+      alert(err.message || 'No se pudo programar el viaje');
+    } finally {
+      setViajeSaving(false);
     }
-    if (formViaje.telefono) {
-      const tel = formViaje.telefono.replace(/[^0-9+]/g, '');
-      const inicio = formViaje.fecha_inicio ? new Date(formViaje.fecha_inicio + (formViaje.fecha_inicio.includes('Z') ? '' : 'Z')).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' }) : 'Por definir';
-      const fin = formViaje.fecha_fin ? new Date(formViaje.fecha_fin + (formViaje.fecha_fin.includes('Z') ? '' : 'Z')).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' }) : 'Por definir';
-      const msg = encodeURIComponent(`*Saludos ${formViaje.conductor || 'Operador'}.*\nSe le ha asignado un nuevo viaje, a continuación los detalles:\n\n*Nombre de viaje:* ${formViaje.origen || '?'} --> ${formViaje.destino || '?'}\n\n*Unidad:* ${formViaje.vehicle_name || formViaje.vehicle_id}\n*Remolque:* ${formViaje.remolque || 'Sin remolque'}\n*Hora de salida:* ${inicio}\n*Hora de descarga:* ${fin}\n\n*Instrucciones Adicionales:* ${formViaje.notas || 'Ninguna'}\n\n*Link de ruta:* https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(formViaje.origen || '')}&destination=${encodeURIComponent(formViaje.destino || '')}\n\n=========================================`);
-      window.open(`https://wa.me/${tel}?text=${msg}`, '_blank');
-    }
-    setFormViaje({ vehicle_id: '', vehicle_name: '', origen: '', destino: '', conductor: '', telefono: '', fecha_inicio: '', fecha_fin: '', notas: '' });
-    loadAll();
   };
 
   const actualizarEstadoViaje = async (id, estado) => {
-    await fetch(`${apiUrl}/viajes/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ estado }),
-    });
-    loadAll();
+    try {
+      setViajeSaving(true);
+      await apiJson(`${apiUrl}/viajes/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estado: normalizarEstadoViaje(estado) }),
+      });
+      await refreshViajes();
+    } catch (err) {
+      alert(err.message || 'No se pudo cambiar el estado del viaje');
+    } finally {
+      setViajeSaving(false);
+    }
   };
 
   const eliminarViaje = async (id) => {
     if (confirm('Eliminar este viaje?')) {
-      await fetch(`${apiUrl}/viajes/${id}`, { method: 'DELETE' });
-      loadAll();
+      try {
+        await apiJson(`${apiUrl}/viajes/${id}`, { method: 'DELETE' });
+        await refreshViajes();
+      } catch (err) {
+        alert(err.message || 'No se pudo eliminar el viaje');
+      }
     }
   };
 
   const marcarAlertaLeida = async (id) => {
-    await fetch(`${apiUrl}/alertas/${id}/leer`, { method: 'PUT' });
-    loadAll();
+    try {
+      await apiJson(`${apiUrl}/alertas/${id}/leer`, { method: 'PUT' });
+      await refreshAlertas();
+    } catch (err) {
+      alert(err.message || 'No se pudo marcar la alerta');
+    }
   };
 
   const eliminarAlerta = async (id) => {
-    await fetch(`${apiUrl}/alertas/${id}`, { method: 'DELETE' });
-    loadAll();
+    try {
+      await apiJson(`${apiUrl}/alertas/${id}`, { method: 'DELETE' });
+      await refreshAlertas();
+    } catch (err) {
+      alert(err.message || 'No se pudo eliminar la alerta');
+    }
   };
 
   const limpiarAlertas = async () => {
     if (!confirm('¿Limpiar todas las alertas? Esta acción no se puede deshacer.')) return;
-    await fetch(`${apiUrl}/alertas`, { method: 'DELETE' });
-    loadAll();
+    try {
+      await apiJson(`${apiUrl}/alertas`, { method: 'DELETE' });
+      await refreshAlertas();
+    } catch (err) {
+      alert(err.message || 'No se pudieron limpiar las alertas');
+    }
   };
 
   const crearRemolque = async () => {
     if (!formRemolque.numero.trim()) return;
     const isEditing = !!remolqueEditando;
-    const res = await fetch(`${apiUrl}/remolques${isEditing ? `/${remolqueEditando.id}` : ''}`, {
-      method: isEditing ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(formRemolque),
-    });
-    const data = await res.json();
-    if (data.error) { alert(data.error); return; }
-    setShowRemolqueModal(false);
-    setRemolqueEditando(null);
-    setFormRemolque({ numero: '', categoria: 'Caja Seca' });
-    loadAll();
+    try {
+      await apiJson(`${apiUrl}/remolques${isEditing ? `/${remolqueEditando.id}` : ''}`, {
+        method: isEditing ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formRemolque),
+      });
+      setShowRemolqueModal(false);
+      setRemolqueEditando(null);
+      setFormRemolque({ numero: '', categoria: 'Caja Seca' });
+      await refreshRemolques();
+    } catch (err) {
+      alert(err.message || 'No se pudo guardar el remolque');
+    }
   };
 
   const cerrarRemolqueModal = () => {
@@ -695,29 +1283,72 @@ export default function Home() {
 
   const eliminarRemolque = async (id) => {
     if (confirm('Eliminar este remolque?')) {
-      await fetch(`${apiUrl}/remolques/${id}`, { method: 'DELETE' });
-      loadAll();
+    try {
+      await apiJson(`${apiUrl}/remolques/${id}`, { method: 'DELETE' });
+        await refreshRemolques();
+      } catch (err) {
+        alert(err.message || 'No se pudo eliminar el remolque');
+      }
     }
   };
 
   const asignarRemolque = async (remolqueId, vehicleId, vehicleName) => {
-    await fetch(`${apiUrl}/remolques/${remolqueId}/asignar`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vehicle_id: vehicleId, vehicle_name: vehicleName }),
-    });
-    loadAll();
+    try {
+      await apiJson(`${apiUrl}/remolques/${remolqueId}/asignar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vehicle_id: vehicleId, vehicle_name: vehicleName }),
+      });
+      await refreshRemolques();
+    } catch (err) {
+      alert(err.message || 'No se pudo asignar el remolque');
+    }
+  };
+
+  const asignarFull = async (remolqueIds, vehicleId, vehicleName) => {
+    try {
+      await apiJson(`${apiUrl}/remolques/full/asignar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ remolque_ids: remolqueIds, vehicle_id: vehicleId, vehicle_name: vehicleName }),
+      });
+      await refreshRemolques();
+    } catch (err) {
+      alert(err.message || 'No se pudo asignar el Full');
+    }
   };
 
   const desasignarRemolque = async (remolqueId) => {
-    await fetch(`${apiUrl}/remolques/${remolqueId}/desasignar`, { method: 'POST' });
-    loadAll();
+    try {
+      await apiJson(`${apiUrl}/remolques/${remolqueId}/desasignar`, { method: 'POST' });
+      await refreshRemolques();
+    } catch (err) {
+      alert(err.message || 'No se pudo desasignar el remolque');
+    }
   };
 
   const cargarHistorialRemolque = async (remolqueId) => {
+    remolqueHistoryRequestRef.current.controller?.abort();
+    const controller = new AbortController();
+    const generation = remolqueHistoryRequestRef.current.generation + 1;
+    remolqueHistoryRequestRef.current = { generation, controller };
     setSelectedRemolque(remolqueId);
-    const res = await fetch(`${apiUrl}/remolques/${remolqueId}/historial`);
-    setHistorialRemolque(await res.json());
+    setHistorialRemolque([]);
+    setHistorialRemolqueError('');
+    setHistorialRemolqueLoading(true);
+    try {
+      const res = await fetch(`${apiUrl}/remolques/${remolqueId}/historial`, { signal: controller.signal });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || 'No se pudo cargar el historial');
+      if (!Array.isArray(data)) throw new Error('El historial recibido no es válido');
+      if (remolqueHistoryRequestRef.current.generation === generation) setHistorialRemolque(data);
+    } catch (err) {
+      if (err.name !== 'AbortError' && remolqueHistoryRequestRef.current.generation === generation) {
+        setHistorialRemolqueError(err.message || 'No se pudo cargar el historial');
+      }
+    } finally {
+      if (remolqueHistoryRequestRef.current.generation === generation) setHistorialRemolqueLoading(false);
+    }
   };
 
   const resetNotaForm = (tab = notasTab) => {
@@ -735,10 +1366,90 @@ export default function Home() {
     });
   };
 
+  const abrirRemolqueDashboard = (remolque) => {
+    const miembros = obtenerMiembrosFull(remolque);
+    const segundo = miembros.find(item => item.id !== remolque.id);
+    setRemolqueDashVehicleId(remolque.vehicle_id_asignado || '');
+    setRemolqueDashModo(miembros.length > 1 ? 'full' : 'sencillo');
+    setRemolqueDashSegundoId(segundo ? String(segundo.id) : '');
+    cargarHistorialRemolque(remolque.id);
+  };
+
+  const asignarRemolqueDesdeDashboard = async (remolque) => {
+    const vehicle = vehiculos.find(item => String(item.id) === String(remolqueDashVehicleId));
+    if (!vehicle) {
+      alert('Selecciona una unidad');
+      return;
+    }
+    if (remolqueDashModo === 'full' && !remolqueDashSegundoId) {
+      alert('Selecciona el segundo tanque del Full');
+      return;
+    }
+    setRemolqueDashSaving(true);
+    try {
+      if (remolqueDashModo === 'full') {
+        await apiJson(`${apiUrl}/remolques/full/asignar`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ remolque_ids: [remolque.id, Number(remolqueDashSegundoId)], vehicle_id: String(vehicle.id), vehicle_name: vehicle.name }),
+        });
+      } else {
+        await apiJson(`${apiUrl}/remolques/${remolque.id}/asignar`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ vehicle_id: String(vehicle.id), vehicle_name: vehicle.name }),
+        });
+      }
+      await refreshRemolques();
+      await cargarHistorialRemolque(remolque.id);
+    } catch (err) {
+      alert(err.message || 'No se pudo asignar el remolque');
+    } finally {
+      setRemolqueDashSaving(false);
+    }
+  };
+
+  const numeroRemolque = (numero) => `#${String(numero || '').replace(/^#+/, '')}`;
+
+  const obtenerMiembrosFull = (remolque) => {
+    if (!remolque || (!remolque.grupo_full && String(remolque.tipo_asignacion || '').toLowerCase() !== 'full')) return [];
+    const miembros = remolque.grupo_full
+      ? remolques.filter(r => String(r.grupo_full || '') === String(remolque.grupo_full))
+      : [remolque];
+    return miembros.sort((a, b) => String(a.numero || '').localeCompare(String(b.numero || ''), undefined, { numeric: true }));
+  };
+
+  const displayRemolque = (remolque) => {
+    const miembros = obtenerMiembrosFull(remolque);
+    return miembros.length > 1 ? miembros.map(r => numeroRemolque(r.numero)).join(' + ') : (remolque?.numero || '');
+  };
+
   const obtenerRemolqueAsignadoUnidad = (vehicleId, vehicleName = '') => {
     const unidad = String(vehicleName || vehiculos.find(v => String(v.id) === String(vehicleId))?.name || '').toLowerCase();
     const remolqueAsignado = remolques.find(r => String(r.vehicle_id_asignado || '') === String(vehicleId) || String(r.unidad_asignada || '').toLowerCase() === unidad);
-    return remolqueAsignado?.numero || '';
+    return displayRemolque(remolqueAsignado);
+  };
+
+  const obtenerOpcionesRemolque = (vehicleId) => {
+    const opciones = [];
+    const gruposIncluidos = new Set();
+    const vehicleName = vehiculos.find(v => String(v.id) === String(vehicleId))?.name || '';
+    remolques
+      .filter(r => !r.vehicle_id_asignado || String(r.vehicle_id_asignado) === String(vehicleId) || (vehicleName && String(r.unidad_asignada || '').toLowerCase() === vehicleName.toLowerCase()))
+      .forEach(r => {
+        const miembros = obtenerMiembrosFull(r);
+        if (miembros.length > 1) {
+          const grupo = String(r.grupo_full);
+          if (!gruposIncluidos.has(grupo)) {
+            gruposIncluidos.add(grupo);
+            const display = miembros.map(m => numeroRemolque(m.numero)).join(' + ');
+            opciones.push({ key: `full-${grupo}`, value: display, label: `Full: ${display}` });
+          }
+        } else {
+          opciones.push({ key: r.id, value: r.numero, label: numeroRemolque(r.numero) });
+        }
+      });
+    return opciones;
   };
 
   const aplicarSeguimientoDesdeUnidad = (vehicleId) => {
@@ -762,7 +1473,7 @@ export default function Home() {
         return new Date(b.fecha_inicio || b.created_at || 0) - new Date(a.fecha_inicio || a.created_at || 0);
       });
     const viajeMasReciente = viajesUnidad[0] || null;
-    const remolqueAsignado = remolques.find(r => String(r.vehicle_id_asignado || '') === String(vehicleId) || String(r.unidad_asignada || '').toLowerCase() === unidad.toLowerCase());
+    const remolqueAsignado = obtenerRemolqueAsignadoUnidad(vehicleId, unidad);
     const operadorAsignado = operadores[String(vehicleId)]?.nombre || '';
     const viajeOperador = viajeMasReciente?.conductor || '';
 
@@ -770,7 +1481,7 @@ export default function Home() {
     setFormSeguimiento({
       unidad,
       operador: operadorAsignado || base?.operador || viajeOperador || '',
-      remolque: remolqueAsignado?.numero || base?.remolque || viajeMasReciente?.remolque || '',
+      remolque: remolqueAsignado || base?.remolque || viajeMasReciente?.remolque || '',
       ruta: viajeMasReciente?.ruta || base?.ruta || [viajeMasReciente?.origen || base?.origen, viajeMasReciente?.destino || base?.destino].filter(Boolean).join(' - '),
       origen: viajeMasReciente?.origen || base?.origen || '',
       destino: viajeMasReciente?.destino || base?.destino || '',
@@ -778,7 +1489,7 @@ export default function Home() {
       cita_descarga: fechaValor(viajeMasReciente?.fecha_fin || base?.cita_descarga || base?.fecha_fin || ''),
       hora_llegada: base?.hora_llegada || '',
       hora_liberacion: base?.hora_liberacion || '',
-      estatus: viajeMasReciente?.estado || base?.estatus || 'Programado',
+      estatus: normalizarEstatusSeguimiento(viajeMasReciente?.estado || base?.estatus || 'Programado'),
       comentarios_cliente: base?.comentarios_cliente || '',
       comentarios_monitoreo: base?.comentarios_monitoreo || base?.notas || '',
       grupo: base?.grupo || '',
@@ -864,13 +1575,13 @@ export default function Home() {
     setSeguimientoModalError('');
     try {
       if (fila) {
-        await fetch(`${apiUrl}/seguimiento/${fila.id}`, {
+        await apiJson(`${apiUrl}/seguimiento/${fila.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...fila, comentarios_monitoreo: notaNueva }),
         });
       } else {
-        await fetch(`${apiUrl}/seguimiento`, {
+        await apiJson(`${apiUrl}/seguimiento`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -892,7 +1603,7 @@ export default function Home() {
         });
       }
       setSeguimientoModalNota('');
-      loadAll();
+      await refreshSeguimiento();
     } catch (err) {
       setSeguimientoModalError('No se pudo guardar la actualización');
     }
@@ -909,9 +1620,23 @@ export default function Home() {
     setShowSeguimientoForm(false);
   };
 
+  const abrirNuevoSeguimiento = () => {
+    setFormSeguimiento({
+      unidad: '', operador: '', remolque: '', ruta: '', origen: '', destino: '',
+      cita_carga: '', cita_descarga: '', hora_llegada: '', hora_liberacion: '',
+      estatus: 'Disponible', comentarios_cliente: '', comentarios_monitoreo: '', grupo: ''
+    });
+    setSeguimientoEditando(null);
+    setShowSeguimientoForm(true);
+  };
+
   const guardarSeguimiento = async (e) => {
     e.preventDefault();
     if (!formSeguimiento.unidad.trim()) return;
+    if ((formSeguimiento.origen && !findGeofence(formSeguimiento.origen)) || (formSeguimiento.destino && !findGeofence(formSeguimiento.destino))) {
+      alert('Selecciona el origen y el destino de la lista de geocercas.');
+      return;
+    }
     const payload = {
       unidad: formSeguimiento.unidad.trim(),
       operador: formSeguimiento.operador.trim(),
@@ -923,22 +1648,26 @@ export default function Home() {
       cita_descarga: formSeguimiento.cita_descarga,
       hora_llegada: formSeguimiento.hora_llegada,
       hora_liberacion: formSeguimiento.hora_liberacion,
-      estatus: formSeguimiento.estatus,
+      estatus: normalizarEstatusSeguimiento(formSeguimiento.estatus),
       comentarios_cliente: formSeguimiento.comentarios_cliente.trim(),
       comentarios_monitoreo: formSeguimiento.comentarios_monitoreo.trim(),
       grupo: formSeguimiento.grupo.trim(),
     };
     const url = seguimientoEditando?.id ? `${apiUrl}/seguimiento/${seguimientoEditando.id}` : `${apiUrl}/seguimiento`;
     const method = seguimientoEditando?.id ? 'PUT' : 'POST';
-    await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    limpiarSeguimientoForm();
-    setSeguimientoHistorial([]);
-    setSelectedSeguimiento(null);
-    loadAll();
+    try {
+      await apiJson(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      limpiarSeguimientoForm();
+      setSeguimientoHistorial([]);
+      setSelectedSeguimiento(null);
+      await refreshSeguimiento();
+    } catch (err) {
+      alert(err.message || 'No se pudo guardar el seguimiento');
+    }
   };
 
   const editarSeguimiento = (row) => {
@@ -955,7 +1684,7 @@ export default function Home() {
       cita_descarga: row.cita_descarga || '',
       hora_llegada: row.hora_llegada || '',
       hora_liberacion: row.hora_liberacion || '',
-      estatus: row.estatus || 'Disponible',
+      estatus: normalizarEstatusSeguimiento(row.estatus),
       comentarios_cliente: row.comentarios_cliente || '',
       comentarios_monitoreo: row.comentarios_monitoreo || '',
       grupo: row.grupo || '',
@@ -979,52 +1708,68 @@ export default function Home() {
 
   const eliminarSeguimiento = async (id) => {
     if (!confirm('Eliminar este registro de seguimiento?')) return;
-    await fetch(`${apiUrl}/seguimiento/${id}`, { method: 'DELETE' });
-    if (selectedSeguimiento?.id === id) {
-      setSelectedSeguimiento(null);
-      setSeguimientoHistorial([]);
+    try {
+      await apiJson(`${apiUrl}/seguimiento/${id}`, { method: 'DELETE' });
+      if (selectedSeguimiento?.id === id) {
+        setSelectedSeguimiento(null);
+        setSeguimientoHistorial([]);
+      }
+      await refreshSeguimiento();
+    } catch (err) {
+      alert(err.message || 'No se pudo eliminar el seguimiento');
     }
-    loadAll();
   };
 
   const crearComentario = async (e) => {
     e.preventDefault();
-    await fetch(`${apiUrl}/comentarios`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(nuevoComentario),
-    });
-    resetNotaForm();
-    loadAll();
+    try {
+      await apiJson(`${apiUrl}/comentarios`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(nuevoComentario),
+      });
+      resetNotaForm();
+      await fetch(`${apiUrl}/comentarios`).then(r => r.json()).then(setComentarios).catch(() => {});
+    } catch (err) {
+      alert(err.message || 'No se pudo guardar el comentario');
+    }
   };
 
   const eliminarComentario = async (id) => {
     if (confirm('Eliminar este comentario?')) {
-      await fetch(`${apiUrl}/comentarios/${id}`, { method: 'DELETE' });
-      loadAll();
+      try {
+        await apiJson(`${apiUrl}/comentarios/${id}`, { method: 'DELETE' });
+        await fetch(`${apiUrl}/comentarios`).then(r => r.json()).then(setComentarios).catch(() => {});
+      } catch (err) {
+        alert(err.message || 'No se pudo eliminar el comentario');
+      }
     }
   };
 
   const guardarUnidad = async (e) => {
     e.preventDefault();
     if (!formUnidad.nombre.trim()) return;
-    if (editUnidad) {
-      await fetch(`${apiUrl}/unidades/${editUnidad.localId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formUnidad),
-      });
-    } else {
-      await fetch(`${apiUrl}/unidades`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formUnidad),
-      });
+    try {
+      if (editUnidad) {
+        await apiJson(`${apiUrl}/unidades/${editUnidad.localId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(formUnidad),
+        });
+      } else {
+        await apiJson(`${apiUrl}/unidades`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(formUnidad),
+        });
+      }
+      setShowUnidadModal(false);
+      setEditUnidad(null);
+      setFormUnidad({ nombre: '', estatus: 'Activa', notas: '', tipo: 'manual', samsara_id: '' });
+      await refreshUnidadesLocales();
+    } catch (err) {
+      alert(err.message || 'No se pudo guardar la unidad');
     }
-    setShowUnidadModal(false);
-    setEditUnidad(null);
-    setFormUnidad({ nombre: '', estatus: 'Activa', notas: '', tipo: 'manual', samsara_id: '' });
-    loadAll();
   };
 
   const haversineKm = (lat1, lon1, lat2, lon2) => {
@@ -1035,30 +1780,82 @@ export default function Home() {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   };
 
+  const pointInsideGeofence = (latitude, longitude, geofence) => {
+    const lat = Number(latitude);
+    const lon = Number(longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || geofence?.activa === 0) return false;
+    const vertices = geofence?.polygon?.vertices;
+    if (Array.isArray(vertices) && vertices.length > 2) {
+      let inside = false;
+      for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+        const yi = Number(vertices[i].latitude);
+        const xi = Number(vertices[i].longitude);
+        const yj = Number(vertices[j].latitude);
+        const xj = Number(vertices[j].longitude);
+        if (![yi, xi, yj, xj].every(Number.isFinite)) continue;
+        if (((yi > lat) !== (yj > lat)) && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
+      }
+      return inside;
+    }
+    const centerLat = Number(geofence?.latitud);
+    const centerLon = Number(geofence?.longitud);
+    const radius = Number(geofence?.radio_metros);
+    return Number.isFinite(centerLat) && Number.isFinite(centerLon) && Number.isFinite(radius)
+      && haversineKm(lat, lon, centerLat, centerLon) * 1000 <= radius;
+  };
+
+  const geofenceAtLocation = (location) => {
+    if (!location) return null;
+    return allGeofences
+      .filter(geofence => pointInsideGeofence(location.latitude, location.longitude, geofence))
+      .sort((a, b) => (Number(a.radio_metros) || Number.MAX_SAFE_INTEGER) - (Number(b.radio_metros) || Number.MAX_SAFE_INTEGER))[0] || null;
+  };
+
   const selectMonitoreoVehicle = async (v) => {
+    monitoreoRequestRef.current.controller?.abort();
+    const controller = new AbortController();
+    const generation = monitoreoRequestRef.current.generation + 1;
+    monitoreoRequestRef.current = { generation, controller };
     setMonitoreoSelectedId(v.id);
     setMonitoreoEta(null);
+    setMonitoreoRutaTotal(null);
+    setMonitoreoEtaLoading(false);
     setMonitoreoGeofenceMatch(null);
     if (v.isLocal) { setMonitoreoRouteHistory([]); return; }
-    try {
-      const route = await fetch(`${apiUrl}/route-history/last?vehicle_id=${v.id}&hours=24`).then(r => r.json());
-      setMonitoreoRouteHistory(Array.isArray(route) ? route : []);
-    } catch (e) { setMonitoreoRouteHistory([]); }
     const fullVehicle = vehiculos.find(vh => String(vh.id) === String(v.id)) || v;
     const viaje = viajesActivos.find(vj => String(vj.vehicle_id) === String(v.id) || vj.vehicle_name === v.name || vj.vehicle_name === fullVehicle?.name);
-    if (viaje && fullVehicle?.location) {
-      const destino = viaje.destino || viaje.seg_destino || '';
-      if (destino) {
-        try {
-          const eta = await calcularRuta(destino, fullVehicle.location.latitude, fullVehicle.location.longitude);
+    const destino = viaje?.tipo_entrega === 'reparto' ? destinosViaje(viaje)[0] : (viaje?.destino || viaje?.seg_destino || '');
+    const historyPromise = (async () => {
+      try {
+        const res = await fetch(`${apiUrl}/route-history/last?vehicle_id=${encodeURIComponent(v.id)}&hours=24&stops_minutes=20`, { signal: controller.signal });
+        const route = await res.json().catch(() => null);
+        if (!res.ok) throw new Error('No se pudieron cargar las paradas');
+        if (monitoreoRequestRef.current.generation === generation) setMonitoreoRouteHistory(Array.isArray(route) ? route : []);
+      } catch (e) {
+        if (e.name !== 'AbortError' && monitoreoRequestRef.current.generation === generation) setMonitoreoRouteHistory([]);
+      }
+    })();
+    const etaPromise = (async () => {
+      if (destino && fullVehicle?.location) {
+        setMonitoreoEtaLoading(true);
+        const origin = viaje?.origen || viaje?.seg_origen || '';
+        const [etaResult, totalResult] = await Promise.allSettled([
+          calcularRuta(destino, fullVehicle.location.latitude, fullVehicle.location.longitude, controller.signal),
+          origin ? calcularRuta(destino, null, null, controller.signal, origin) : Promise.resolve(null),
+        ]);
+        if (monitoreoRequestRef.current.generation === generation) {
+          const eta = etaResult.status === 'fulfilled' ? etaResult.value : null;
           setMonitoreoEta(eta);
+          setMonitoreoRutaTotal(totalResult.status === 'fulfilled' ? totalResult.value : null);
+          setMonitoreoEtaLoading(false);
           if (eta?.destLat && eta?.destLon) {
-            const match = allGeofences.find(g => g.activa && haversineKm(eta.destLat, eta.destLon, g.latitud, g.longitud) * 1000 <= g.radio_metros);
+            const match = geofenceAtLocation({ latitude: eta.destLat, longitude: eta.destLon });
             setMonitoreoGeofenceMatch(match || null);
           }
-        } catch (e) { setMonitoreoEta(null); }
+        }
       }
-    }
+    })();
+    await Promise.allSettled([historyPromise, etaPromise]);
   };
 
   const guardarComentarioRapido = async () => {
@@ -1077,94 +1874,183 @@ export default function Home() {
       cita_descarga: filaSeguimiento?.cita_descarga || viajeActivo?.fecha_fin || '',
       hora_llegada: filaSeguimiento?.hora_llegada || '',
       hora_liberacion: filaSeguimiento?.hora_liberacion || '',
-      estatus: filaSeguimiento?.estatus || viajeActivo?.estado || 'Disponible',
+      estatus: normalizarEstatusSeguimiento(filaSeguimiento?.estatus || viajeActivo?.estado || 'Disponible'),
       comentarios_cliente: filaSeguimiento?.comentarios_cliente || '',
       comentarios_monitoreo: comentarioRapido.contenido.trim(),
       grupo: filaSeguimiento?.grupo || '',
     };
 
-    if (filaSeguimiento?.id) {
-      await fetch(`${apiUrl}/seguimiento/${filaSeguimiento.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payloadSeguimiento),
-      });
-    } else {
-      await fetch(`${apiUrl}/seguimiento`, {
+    try {
+      if (filaSeguimiento?.id) {
+        await apiJson(`${apiUrl}/seguimiento/${filaSeguimiento.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payloadSeguimiento),
+        });
+      } else {
+        await apiJson(`${apiUrl}/seguimiento`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payloadSeguimiento),
+        });
+      }
+
+      await apiJson(`${apiUrl}/comentarios`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payloadSeguimiento),
+        body: JSON.stringify({
+          vehicle_id: String(selectedVehicle.id),
+          vehicle_name: selectedVehicle.name,
+          tipo: comentarioRapido.tipo,
+          titulo: comentarioRapido.titulo || `Seguimiento ${selectedVehicle.name}`,
+          contenido: comentarioRapido.contenido
+        }),
       });
+      setComentarioRapido({ tipo: 'seguimiento', titulo: '', contenido: '' });
+      setDestinoInput('');
+      setEtaData(null);
+      await refreshSeguimiento();
+    } catch (err) {
+      alert(err.message || 'No se pudo guardar el comentario');
     }
-
-    await fetch(`${apiUrl}/comentarios`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        vehicle_id: String(selectedVehicle.id),
-        vehicle_name: selectedVehicle.name,
-        tipo: comentarioRapido.tipo,
-        titulo: comentarioRapido.titulo || `Seguimiento ${selectedVehicle.name}`,
-        contenido: comentarioRapido.contenido
-      }),
-    });
-    setComentarioRapido({ tipo: 'seguimiento', titulo: '', contenido: '' });
-    setDestinoInput('');
-    setEtaData(null);
-    loadAll();
   };
 
   const guardarOperador = async (vehicleId, vehicleName, nombre, telefono) => {
-    await fetch(`${apiUrl}/vehicle-operators/${vehicleId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vehicle_name: vehicleName, operator_name: nombre, telefono }),
-    });
-    setOperadores(prev => ({ ...prev, [vehicleId]: { nombre, telefono } }));
+    try {
+      await apiJson(`${apiUrl}/vehicle-operators/${vehicleId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vehicle_name: vehicleName, operator_name: nombre, telefono }),
+      });
+      setOperadores(prev => ({ ...prev, [idStr(vehicleId)]: { nombre, telefono } }));
+      fetch(`${apiUrl}/vehicle-operators`)
+        .then(r => r.json())
+        .then((ops) => {
+          const map = {};
+          for (const op of (ops || [])) map[idStr(op.vehicle_id)] = { nombre: op.operator_name, telefono: op.telefono || '' };
+          setOperadores(map);
+        })
+        .catch(() => {});
+    } catch (err) {
+      alert(err.message || 'No se pudo asignar el operador');
+    }
+  };
+
+  const seleccionarOperador = async (vehicleId, vehicleName, nombre, telefono) => {
+    setOperadorDraft(nombre);
+    setTelefonoDraft(telefono);
+    if (!nombre.trim()) return;
+    await guardarOperador(vehicleId, vehicleName, nombre, telefono);
+  };
+
+  const guardarRemolqueSeleccionado = async () => {
+    if (!selectedVehicle) return;
+    const actual = remolques.find(r => String(r.vehicle_id_asignado || '') === String(selectedVehicle.id) || String(r.unidad_asignada || '').toLowerCase() === String(selectedVehicle.name || '').toLowerCase());
+    if (remolqueModo === 'full') {
+      if (!remolquesFullDraft[0] && !remolquesFullDraft[1]) {
+        if (actual) await desasignarRemolque(actual.id);
+        return;
+      }
+      if (!remolquesFullDraft[0] || !remolquesFullDraft[1]) {
+        alert('Selecciona los dos tanques del Full');
+        return;
+      }
+      if (remolquesFullDraft[0] === remolquesFullDraft[1]) {
+        alert('Selecciona dos tanques distintos');
+        return;
+      }
+      await asignarFull(remolquesFullDraft, String(selectedVehicle.id), selectedVehicle.name);
+      return;
+    }
+    if (!remolqueDraft) {
+      if (actual) await desasignarRemolque(actual.id);
+      return;
+    }
+    const remolque = remolques.find(r => String(r.id) === String(remolqueDraft) || String(r.numero) === String(remolqueDraft).trim());
+    if (!remolque) {
+      alert('Selecciona un remolque existente');
+      return;
+    }
+    await asignarRemolque(remolque.id, String(selectedVehicle.id), selectedVehicle.name);
   };
 
   const crearGeofence = async (e) => {
     e.preventDefault();
-    await fetch(`${apiUrl}/geofences`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        nombre: formGeofence.nombre,
-        latitud: Number(formGeofence.latitud),
-        longitud: Number(formGeofence.longitud),
-        radio_metros: Number(formGeofence.radio_metros) || 500,
-        descripcion: formGeofence.descripcion,
-        color: formGeofence.color,
-      }),
-    });
-    setFormGeofence({ nombre: '', latitud: '', longitud: '', radio_metros: '500', descripcion: '', color: '#3b82f6' });
-    loadAll();
+    try {
+      const tieneLatitud = String(formGeofence.latitud).trim() !== '';
+      const tieneLongitud = String(formGeofence.longitud).trim() !== '';
+      let latitud = tieneLatitud ? Number(formGeofence.latitud) : NaN;
+      let longitud = tieneLongitud ? Number(formGeofence.longitud) : NaN;
+      let direccion = formGeofence.direccion || '';
+      if ((!Number.isFinite(latitud) || !Number.isFinite(longitud)) && direccion.trim()) {
+        const geo = await apiJson(`${apiUrl}/geocode-address`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ address: direccion }),
+        });
+        latitud = Number(geo.latitud);
+        longitud = Number(geo.longitud);
+        direccion = geo.direccion || direccion;
+      }
+      if (!Number.isFinite(latitud) || !Number.isFinite(longitud)) throw new Error('Ingresa coordenadas válidas o una dirección para geocodificar');
+      if (latitud < -90 || latitud > 90) throw new Error('La latitud debe estar entre -90 y 90');
+      if (longitud < -180 || longitud > 180) throw new Error('La longitud debe estar entre -180 y 180');
+      await apiJson(`${apiUrl}/geofences`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nombre: formGeofence.nombre,
+          direccion,
+          latitud,
+          longitud,
+          radio_metros: Number(formGeofence.radio_metros) || 500,
+          descripcion: formGeofence.descripcion,
+          color: formGeofence.color,
+        }),
+      });
+      setFormGeofence({ nombre: '', direccion: '', latitud: '', longitud: '', radio_metros: '500', descripcion: '', color: '#3b82f6' });
+      await refreshGeofences();
+    } catch (err) {
+      alert(err.message || 'No se pudo crear la geocerca');
+    }
   };
 
   const eliminarGeofence = async (id) => {
     if (confirm('Eliminar esta geocerca?')) {
-      await fetch(`${apiUrl}/geofences/${id}`, { method: 'DELETE' });
-      loadAll();
+    try {
+      await apiJson(`${apiUrl}/geofences/${id}`, { method: 'DELETE' });
+        await refreshGeofences();
+      } catch (err) {
+        alert(err.message || 'No se pudo eliminar la geocerca');
+      }
     }
   };
 
   const toggleGeofence = async (id, activa) => {
-    await fetch(`${apiUrl}/geofences/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ activa: activa ? 0 : 1 }),
-    });
-    loadAll();
+    try {
+      await apiJson(`${apiUrl}/geofences/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activa: activa ? 0 : 1 }),
+      });
+      await refreshGeofences();
+    } catch (err) {
+      alert(err.message || 'No se pudo actualizar la geocerca');
+    }
   };
 
   const toggleGeofencesBulk = async (ids, activa) => {
     if (!ids.length) return;
-    await fetch(`${apiUrl}/geofences/toggle`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids, activa }),
-    });
-    loadAll();
+    try {
+      await apiJson(`${apiUrl}/geofences/toggle`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids, activa }),
+      });
+      await refreshGeofences();
+    } catch (err) {
+      alert(err.message || 'No se pudieron actualizar las geocercas');
+    }
   };
 
   const toggleGeofencesByCategory = async (categoria, activa) => {
@@ -1173,8 +2059,12 @@ export default function Home() {
   };
 
   const ejecutarCheckGeofences = async () => {
-    await fetch(`${apiUrl}/check-geofences`, { method: 'POST' });
-    loadAll();
+    try {
+      await apiJson(`${apiUrl}/check-geofences`, { method: 'POST' });
+      await refreshGeofences();
+    } catch (err) {
+      alert(err.message || 'No se pudo ejecutar la revisión de geocercas');
+    }
   };
 
   const verHistorialGeocerca = async (geofence) => {
@@ -1214,118 +2104,227 @@ export default function Home() {
   };
 
   const ejecutarCheckFuel = async () => {
-    await fetch(`${apiUrl}/check-fuel`, { method: 'POST' });
-    loadAll();
+    try {
+      await apiJson(`${apiUrl}/check-fuel`, { method: 'POST' });
+      await refreshAlertas();
+    } catch (err) {
+      alert(err.message || 'No se pudo revisar combustible');
+    }
   };
 
-  const calcularRuta = async (destino, latOrigen, lonOrigen) => {
-    if (!destino.trim() || !latOrigen || !lonOrigen) return null;
+  const calcularRuta = async (destino, latOrigen, lonOrigen, signal, origen = '') => {
+    const hasCoordinates = latOrigen !== null && latOrigen !== undefined && latOrigen !== '' && lonOrigen !== null && lonOrigen !== undefined && lonOrigen !== '' && Number.isFinite(Number(latOrigen)) && Number.isFinite(Number(lonOrigen));
+    if (!destino.trim() || (!hasCoordinates && !origen.trim())) return null;
     try {
-      const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(destino)}&limit=1&accept-language=es`, {
-        headers: { 'User-Agent': 'GERS-Plataforma/1.0' }
-      });
-      const geoData = await geoRes.json();
-      if (!geoData.length) return null;
-      const destLat = parseFloat(geoData[0].lat);
-      const destLon = parseFloat(geoData[0].lon);
-      const routeRes = await fetch(`https://router.project-osrm.org/route/v1/driving/${lonOrigen},${latOrigen};${destLon},${destLat}?overview=false`);
-      const routeData = await routeRes.json();
-      if (routeData.code === 'Ok' && routeData.routes.length) {
-        const route = routeData.routes[0];
-        const factorTracto = 1.35;
-        const duracionTruck = route.duration * factorTracto;
-        const horas = Math.floor(duracionTruck / 3600);
-        const minutos = Math.round((duracionTruck % 3600) / 60);
-        const distanciaKm = (route.distance / 1000).toFixed(1);
-        const llegada = new Date(Date.now() + duracionTruck * 1000);
-        return {
-          duracion: `${horas > 0 ? horas + 'h ' : ''}${minutos}min`,
-          distancia: `${distanciaKm} km`,
-          distanciaMetros: route.distance,
-          duracionSegundos: duracionTruck,
-          horaLlegada: llegada.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }),
-          fechaLlegada: llegada.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }),
-          horaLlegadaISO: llegada.toISOString().slice(0, 16),
-          destinoNombre: geoData[0].display_name.split(',').slice(0, 3).join(','),
-          destLat, destLon
-        };
+      const destinationGeofence = findGeofence(destino);
+      const originGeofence = findGeofence(origen);
+      const payload = hasCoordinates
+        ? { destino: destino.trim(), lat_origen: Number(latOrigen), lon_origen: Number(lonOrigen) }
+        : { destino: destino.trim(), origen: origen.trim() };
+      if (destinationGeofence) {
+        payload.lat_destino = Number(destinationGeofence.latitud);
+        payload.lon_destino = Number(destinationGeofence.longitud);
       }
+      if (!hasCoordinates && originGeofence) {
+        payload.lat_origen = Number(originGeofence.latitud);
+        payload.lon_origen = Number(originGeofence.longitud);
+      }
+      const data = await apiJson(`${apiUrl}/calculate-route`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal,
+      });
+      const route = data.route || data.routes?.[0] || data;
+      const destination = data.destination || data.destino || {};
+      const routeDuration = Number(route.duration ?? route.durationSeconds ?? route.duracion_segundos);
+      const routeDistance = Number(route.distance ?? route.distanceMeters ?? route.distancia_metros);
+      const destLat = Number(data.destLat ?? destination.lat ?? destination.latitude ?? destination.latitud);
+      const destLon = Number(data.destLon ?? destination.lon ?? destination.lng ?? destination.longitude ?? destination.longitud);
+      if (!Number.isFinite(routeDuration) || !Number.isFinite(routeDistance)) throw new Error('El servidor no devolvió una ruta válida');
+
+      const factorTracto = 1.35;
+      const duracionTruck = routeDuration * factorTracto;
+      const horas = Math.floor(duracionTruck / 3600);
+      const minutos = Math.round((duracionTruck % 3600) / 60);
+      const distanciaKm = (routeDistance / 1000).toFixed(1);
+      const llegada = new Date(Date.now() + duracionTruck * 1000);
+      const displayName = data.destinoNombre || data.display_name || destination.display_name || destination.nombre || destino;
+      return {
+        duracion: `${horas > 0 ? horas + 'h ' : ''}${minutos}min`,
+        distancia: `${distanciaKm} km`,
+        distanciaMetros: routeDistance,
+        duracionSegundos: duracionTruck,
+        horaLlegada: llegada.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }),
+        fechaLlegada: llegada.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }),
+        horaLlegadaISO: llegada.toISOString().slice(0, 16),
+        destinoNombre: String(displayName).split(',').slice(0, 3).join(','),
+        destLat: Number.isFinite(destLat) ? destLat : null,
+        destLon: Number.isFinite(destLon) ? destLon : null,
+      };
     } catch (e) {
+      if (e.name === 'AbortError') throw e;
       console.error('Error calculando ruta:', e);
+      throw new Error(e.message || 'No se pudo calcular la ruta desde el servidor');
     }
-    return null;
   };
 
   const calcularETA = async (destino, vehicle) => {
     if (!destino.trim() || !vehicle?.location) return;
+    etaRequestRef.current.controller?.abort();
+    const controller = new AbortController();
+    const generation = etaRequestRef.current.generation + 1;
+    etaRequestRef.current = { generation, controller };
     setCalculandoEta(true);
-    const eta = await calcularRuta(destino, vehicle.location.latitude, vehicle.location.longitude);
-    if (eta) {
-      setEtaData(eta);
-      setComentarioRapido(prev => ({ ...prev, titulo: `ETA ${eta.fechaLlegada || eta.horaLlegada} | ${eta.distancia}` }));
-    } else {
-      setEtaData(null);
+    setEtaError('');
+    try {
+      const eta = await calcularRuta(destino, vehicle.location.latitude, vehicle.location.longitude, controller.signal);
+      if (etaRequestRef.current.generation !== generation) return;
+      if (eta) {
+        setEtaData(eta);
+        setComentarioRapido(prev => ({ ...prev, titulo: `ETA ${eta.fechaLlegada || eta.horaLlegada} | ${eta.distancia}` }));
+      } else {
+        setEtaData(null);
+        setEtaError('No se pudo calcular la ruta. Verifica el destino e intenta de nuevo.');
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError' && etaRequestRef.current.generation === generation) {
+        setEtaData(null);
+        setEtaError(err.message || 'No se pudo calcular la ruta. Verifica el destino e intenta de nuevo.');
+      }
+    } finally {
+      if (etaRequestRef.current.generation === generation) setCalculandoEta(false);
     }
-    setCalculandoEta(false);
   };
 
   const calcularViajeETA = async (destino, vehicle) => {
     if (!destino.trim() || !vehicle?.location) { setViajeEta(null); setViajeEtaError(vehicle?.location ? '' : 'Vehiculo sin ubicacion GPS'); return; }
+    viajeEtaRequestRef.current.controller?.abort();
+    const controller = new AbortController();
+    const generation = viajeEtaRequestRef.current.generation + 1;
+    viajeEtaRequestRef.current = { generation, controller };
     setCalculandoViajeEta(true);
     setViajeEtaError('');
-    const eta = await calcularRuta(destino, vehicle.location.latitude, vehicle.location.longitude);
-    setViajeEta(eta);
-    if (!eta) setViajeEtaError('No se pudo calcular la ruta. Intenta con una ciudad o direccion mas especifica.');
-    setCalculandoViajeEta(false);
+    try {
+      const eta = await calcularRuta(destino, vehicle.location.latitude, vehicle.location.longitude, controller.signal);
+      if (viajeEtaRequestRef.current.generation !== generation) return;
+      setViajeEta(eta);
+      if (!eta) setViajeEtaError('No se pudo calcular la ruta. Intenta con una ciudad o direccion mas especifica.');
+    } catch (err) {
+      if (err.name !== 'AbortError' && viajeEtaRequestRef.current.generation === generation) {
+        setViajeEta(null);
+        setViajeEtaError(err.message || 'No se pudo calcular la ruta. Intenta con una ciudad o direccion mas especifica.');
+      }
+    } finally {
+      if (viajeEtaRequestRef.current.generation === generation) setCalculandoViajeEta(false);
+    }
   };
 
   const cargarHistorialRuta = async () => {
     if (!routeVehicleId || !routeDate) return;
+    routeHistoryRequestRef.current.controller?.abort();
+    const controller = new AbortController();
+    const generation = routeHistoryRequestRef.current.generation + 1;
+    routeHistoryRequestRef.current = { generation, controller };
     setRouteLoading(true);
     try {
-      const res = await fetch(`${apiUrl}/route-history?vehicle_id=${routeVehicleId}&fecha_inicio=${routeDate}&fecha_fin=${routeDate}&limit=5000`);
-      const data = await res.json();
-      setRouteHistory(data);
-    } catch (e) { console.error(e); }
-    setRouteLoading(false);
+      const res = await fetch(`${apiUrl}/route-history?vehicle_id=${routeVehicleId}&fecha_inicio=${routeDate}&fecha_fin=${routeDate}&limit=5000`, { signal: controller.signal });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || 'No se pudo cargar el historial');
+      if (routeHistoryRequestRef.current.generation === generation) setRouteHistory(Array.isArray(data) ? data : []);
+    } catch (e) {
+      if (e.name !== 'AbortError' && routeHistoryRequestRef.current.generation === generation) {
+        setRouteHistory([]);
+        alert(e.message || 'No se pudo cargar el historial');
+      }
+    } finally {
+      if (routeHistoryRequestRef.current.generation === generation) setRouteLoading(false);
+    }
   };
 
   const cargarFechasRuta = async (vid) => {
+    routeHistoryRequestRef.current.controller?.abort();
+    routeHistoryRequestRef.current.generation += 1;
+    routeDatesRequestRef.current.controller?.abort();
+    const controller = new AbortController();
+    const generation = routeDatesRequestRef.current.generation + 1;
+    routeDatesRequestRef.current = { generation, controller };
     setRouteVehicleId(vid);
     setRouteHistory([]);
+    setRouteDate('');
+    setRouteLoading(false);
     if (!vid) { setRouteDates([]); return; }
     try {
-      const res = await fetch(`${apiUrl}/route-history/dates?vehicle_id=${vid}`);
-      const data = await res.json();
-      setRouteDates(data);
-    } catch (e) { console.error(e); }
+      const res = await fetch(`${apiUrl}/route-history/dates?vehicle_id=${vid}`, { signal: controller.signal });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || 'No se pudieron cargar las fechas');
+      if (routeDatesRequestRef.current.generation === generation) setRouteDates(Array.isArray(data) ? data : []);
+    } catch (e) {
+      if (e.name !== 'AbortError' && routeDatesRequestRef.current.generation === generation) setRouteDates([]);
+    }
   };
 
-  const cargarReporte = async () => {
+  const cambiarFechaRuta = (fecha) => {
+    routeHistoryRequestRef.current.controller?.abort();
+    routeHistoryRequestRef.current.generation += 1;
+    setRouteLoading(false);
+    setRouteHistory([]);
+    setRouteDate(fecha);
+  };
+
+  const solicitarReporte = async (filtros) => {
+    reportRequestRef.current.controller?.abort();
+    const controller = new AbortController();
+    const generation = reportRequestRef.current.generation + 1;
+    reportRequestRef.current = { generation, controller };
     const params = new URLSearchParams();
-    if (filtroReporte.fecha_inicio) params.append('fecha_inicio', filtroReporte.fecha_inicio);
-    if (filtroReporte.fecha_fin) params.append('fecha_fin', filtroReporte.fecha_fin);
-    if (filtroReporte.vehicle_id) params.append('vehicle_id', filtroReporte.vehicle_id);
-    const endpoint = filtroReporte.tipo === 'pendientes-completados'
+    if (filtros.fecha_inicio) params.append('fecha_inicio', filtros.fecha_inicio);
+    if (filtros.fecha_fin) params.append('fecha_fin', filtros.fecha_fin);
+    if (filtros.vehicle_id) params.append('vehicle_id', filtros.vehicle_id);
+    const tipoNotas = filtros.tipo === 'incidencias' ? 'incidencia' : filtros.tipo;
+    const endpoint = filtros.tipo === 'pendientes-completados'
       ? 'reportes/pendientes-completados'
-      : filtroReporte.tipo === 'bitacora' || filtroReporte.tipo === 'incidencias'
-        ? `reportes/notas?tipo=${encodeURIComponent(filtroReporte.tipo)}&${params}`
-        : `reportes/${filtroReporte.tipo}?${params}`;
-    const res = await fetch(`${apiUrl}/${endpoint}`);
-    const data = await res.json();
-    setReportes(data);
+      : filtros.tipo === 'bitacora' || filtros.tipo === 'incidencias'
+        ? 'reportes/notas'
+        : `reportes/${filtros.tipo}`;
+    if (filtros.tipo === 'bitacora' || filtros.tipo === 'incidencias') params.set('tipo', tipoNotas);
+    setReporteLoading(true);
+    setReporteError('');
+    try {
+      const query = params.toString();
+      const res = await fetch(`${apiUrl}/${endpoint}${query ? `?${query}` : ''}`, { signal: controller.signal });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || data?.message || 'No se pudo generar el reporte');
+      if (!Array.isArray(data)) throw new Error('El reporte recibido no es válido');
+      if (reportRequestRef.current.generation === generation) setReportes(data);
+    } catch (err) {
+      if (err.name !== 'AbortError' && reportRequestRef.current.generation === generation) {
+        setReportes([]);
+        setReporteError(err.message || 'No se pudo generar el reporte');
+      }
+    } finally {
+      if (reportRequestRef.current.generation === generation) setReporteLoading(false);
+    }
+  };
+
+  const cargarReporte = () => solicitarReporte(filtroReporte);
+
+  const actualizarFiltroReporte = (cambio) => {
+    reportRequestRef.current.controller?.abort();
+    reportRequestRef.current.generation += 1;
+    setReporteLoading(false);
+    setReporteError('');
+    setReportes([]);
+    setFiltroReporte(prev => ({ ...prev, ...cambio }));
   };
 
   const abrirReporteDirecto = async (tipo) => {
-    setFiltroReporte({ tipo, fecha_inicio: '', fecha_fin: '', vehicle_id: '' });
+    const filtros = { tipo, fecha_inicio: '', fecha_fin: '', vehicle_id: '' };
+    setFiltroReporte(filtros);
+    setReportes([]);
+    setReporteError('');
     setActiveTab('reportes');
-    const endpoint = tipo === 'pendientes-completados'
-      ? `${apiUrl}/reportes/pendientes-completados`
-      : tipo === 'bitacora' || tipo === 'incidencias'
-        ? `${apiUrl}/reportes/notas?tipo=${encodeURIComponent(tipo)}`
-        : `${apiUrl}/reportes/${tipo}`;
-    const data = await fetch(endpoint).then(r => r.json()).catch(() => []);
-    setReportes(Array.isArray(data) ? data : []);
+    await solicitarReporte(filtros);
   };
 
   const generarPDF = () => {
@@ -1406,33 +2405,41 @@ export default function Home() {
 
   const crearZonaRiesgo = async (e) => {
     e.preventDefault();
-    await fetch(`${apiUrl}/risk-zones`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...newZone, lat: parseFloat(newZone.lat), lng: parseFloat(newZone.lng), radius: parseInt(newZone.radius) }),
-    });
-    setShowZoneModal(false);
-    setNewZone({ name: '', description: '', severity: 'high', lat: '', lng: '', radius: 5000 });
-    loadAll();
+    try {
+      await apiJson(`${apiUrl}/risk-zones`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...newZone, lat: parseFloat(newZone.lat), lng: parseFloat(newZone.lng), radius: parseInt(newZone.radius) }),
+      });
+      setShowZoneModal(false);
+      setNewZone({ name: '', description: '', severity: 'high', lat: '', lng: '', radius: 5000 });
+      await refreshRiskZones();
+    } catch (err) {
+      alert(err.message || 'No se pudo crear la zona de riesgo');
+    }
   };
 
   const eliminarZonaRiesgo = async (id) => {
     if (!confirm('¿Eliminar esta zona de riesgo?')) return;
-    await fetch(`${apiUrl}/risk-zones/${id}`, { method: 'DELETE' });
-    loadAll();
+    try {
+      await apiJson(`${apiUrl}/risk-zones/${id}`, { method: 'DELETE' });
+      await refreshRiskZones();
+    } catch (err) {
+      alert(err.message || 'No se pudo eliminar la zona de riesgo');
+    }
   };
 
   const vehiculosOnline = vehiculos.filter(v => v.isOnline);
   const vehiculosOffline = vehiculos.filter(v => !v.isOnline);
   const alertasNoLeidas = alertas.filter(a => !a.leida);
-  const vehiculosEnMovimiento = useMemo(() => vehiculos.filter(v => v.location?.speed > 1), [vehiculos]);
+  const vehiculosEnMovimiento = useMemo(() => vehiculos.filter(v => estaEnMovimiento(v.location?.speed)), [vehiculos]);
 
   const todasLasUnidades = useMemo(() => {
     const samsaraMapped = vehiculos.map(v => ({
       ...v,
       isLocal: false,
       nombre: v.name,
-      estatus: v.isOnline ? (v.location?.speed > 1 ? 'En Movimiento' : 'Detenida') : 'Sin Señal',
+      estatus: v.isOnline ? (estaEnMovimiento(v.location?.speed) ? 'En Movimiento' : 'Detenida') : 'Sin Señal',
     }));
     const localMapped = unidadesLocales.map(u => ({
       id: `local-${u.id}`,
@@ -1491,6 +2498,7 @@ export default function Home() {
     { key: 'alertas', label: 'Alertas', icon: '🔔', badge: alertasNoLeidas.length },
     { key: 'operadores', label: 'Operadores', icon: '👤' },
     { key: 'remolques', label: 'Remolques', icon: '🚛' },
+    { key: 'mapas', label: 'Mapas', icon: '🗺️' },
     { key: 'rutas', label: 'Historial Rutas', icon: '🛤️' },
     { key: 'reportes', label: 'Reportes', icon: '📈' },
     ...(currentUser?.rol === 'admin' ? [{ key: 'usuarios', label: 'Usuarios', icon: '🔐' }] : []),
@@ -1528,10 +2536,10 @@ export default function Home() {
   const inputStyle = { width: '100%', background: 'transparent', border: '1px solid transparent', borderRadius: '4px', color: '#ffffff', fontSize: '0.75rem', padding: '3px 6px', outline: 'none', fontFamily: 'inherit', transition: 'border-color 0.15s, background 0.15s' };
 
   return (
-    <div style={s.container}>
-      <aside style={{ ...s.sidebar, width: sidebarCollapsed ? '56px' : '240px', transition: 'width 0.2s ease' }}>
+    <div className="app-shell" style={s.container}>
+      <aside className="app-sidebar" style={{ ...s.sidebar, width: sidebarCollapsed ? '56px' : '240px', transition: 'width 0.2s ease' }}>
         <div style={{ ...s.logo, padding: sidebarCollapsed ? '1.5rem 0.5rem' : '1.5rem', justifyContent: sidebarCollapsed ? 'center' : 'flex-start' }}>
-          <span style={{ fontSize: '1.5rem', cursor: 'pointer' }} onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>🚛</span>
+          <button type="button" aria-label={sidebarCollapsed ? 'Expandir navegación' : 'Contraer navegación'} style={{ fontSize: '1.5rem', cursor: 'pointer', background: 'none', border: 0 }} onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>🚛</button>
           {!sidebarCollapsed && (
             <div>
               <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>GERS</div>
@@ -1570,15 +2578,15 @@ export default function Home() {
         )}
       </aside>
 
-      <main style={{ ...s.main, overflow: activeTab === 'dashboard' ? 'hidden' : 'auto' }}>
+      <main className="app-main" style={{ ...s.main, overflow: activeTab === 'dashboard' ? 'hidden' : 'auto' }}>
         {activeTab === 'dashboard' && (
-          <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 3rem)', margin: '-1.5rem -2rem', overflow: 'hidden' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', padding: '0.75rem 1.5rem', background: '#111111', borderBottom: '1px solid #1a3d1a', flexShrink: 0 }}>
+          <div className="dashboard-shell" style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 3rem)', margin: '-1.5rem -2rem', overflow: 'hidden' }}>
+            <div className="dashboard-header" style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', padding: '0.75rem 1.5rem', background: '#111111', borderBottom: '1px solid #1a3d1a', flexShrink: 0 }}>
               <span style={{ fontSize: '1.1rem', fontWeight: 700, color: '#e0e0e0', marginRight: '0.5rem' }}>GERS</span>
               {[
                 { label: 'Unidades', value: vehiculos.length, icon: '🚛', color: '#3b82f6' },
-                { label: 'Activas', value: vehiculosOnline.filter(v => v.location?.speed > 1).length, dot: '#4ade80' },
-                { label: 'Detenidas', value: vehiculosOnline.filter(v => v.location?.speed <= 1).length, dot: '#60a5fa' },
+                { label: 'Activas', value: vehiculosOnline.filter(v => estaEnMovimiento(v.location?.speed)).length, dot: '#4ade80' },
+                { label: 'Detenidas', value: vehiculosOnline.filter(v => !estaEnMovimiento(v.location?.speed)).length, dot: '#60a5fa' },
                 { label: 'Sin Señal', value: vehiculosOffline.length, dot: '#facc15' },
               ].map((item, i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
@@ -1613,8 +2621,8 @@ export default function Home() {
               <button onClick={() => { setTurnoSummary(null); setShowTurnoModal(true); }} style={{ padding: '6px 14px', background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>Entregar turno</button>
             </div>
 
-            <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-              <div style={{ width: '320px', background: '#111111', borderRight: '1px solid #1a3d1a', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+            <div className="dashboard-content" style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+              <div className="dashboard-sidebar" style={{ width: '320px', background: '#111111', borderRight: '1px solid #1a3d1a', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
                 <div style={{ display: 'flex', borderBottom: '1px solid #1a3d1a' }}>
                   {[
                     { key: 'unidades', label: 'Unidades', icon: '🚛' },
@@ -1641,12 +2649,12 @@ export default function Home() {
                     </div>
                     <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 12px' }}>
                       {vehiculos.filter(v => !dashSearch || v.name.toLowerCase().includes(dashSearch.toLowerCase()) || (operadores[String(v.id)]?.nombre || '').toLowerCase().includes(dashSearch.toLowerCase())).map(v => {
-                        const isMoving = v.location?.speed > 1;
+                        const isMoving = estaEnMovimiento(v.location?.speed);
                         const statusColor = v.isOnline ? (isMoving ? '#4ade80' : '#60a5fa') : '#facc15';
                         const statusLabel = v.isOnline ? (isMoving ? 'Movimiento' : 'Detenida') : 'Sin señal';
 
   return (
-                          <div key={v.id} onClick={() => setSelectedVehicle(v)} style={{ background: '#1a1a1a', borderRadius: '8px', padding: '12px', marginBottom: '8px', cursor: 'pointer', border: '1px solid transparent', transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: '10px' }}
+                          <div key={v.id} role="button" tabIndex={0} aria-label={`Abrir unidad ${v.name}`} onKeyDown={(e) => activarConTeclado(e, () => setSelectedVehicle(v))} onClick={() => setSelectedVehicle(v)} style={{ background: '#1a1a1a', borderRadius: '8px', padding: '12px', marginBottom: '8px', cursor: 'pointer', border: '1px solid transparent', transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: '10px' }}
                             onMouseEnter={e => { e.currentTarget.style.borderColor = '#00ff41'; e.currentTarget.style.transform = 'translateX(2px)'; }}
                             onMouseLeave={e => { e.currentTarget.style.borderColor = 'transparent'; e.currentTarget.style.transform = 'none'; }}>
                             <div style={{ width: 36, height: 36, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0, background: `${statusColor}15`, color: statusColor }}>🚛</div>
@@ -1654,7 +2662,7 @@ export default function Home() {
                               <div style={{ fontWeight: 600, fontSize: '13px', color: '#e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{v.name}</div>
                               <div style={{ fontSize: '11px', color: '#6a9b6a', display: 'flex', gap: '8px', marginTop: 2 }}>
                                 <span>👤 {operadores[String(v.id)]?.nombre || 'Sin op.'}</span>
-                                {v.location && <span>🏎 {Math.round(v.location.speed || 0)} km/h</span>}
+                                {v.location && <span>🏎 {velocidadKmh(v.location.speed)} km/h</span>}
                               </div>
                             </div>
                             <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', flexShrink: 0, background: `${statusColor}15`, color: statusColor }}>{statusLabel}</span>
@@ -1749,7 +2757,8 @@ export default function Home() {
                             <span style={{ fontWeight: 600, fontSize: '13px', color: '#e0e0e0' }}>{seqLabel} · {v.vehicle_name || v.vehicle_id}</span>
                             <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', background: `${viajeColor}15`, color: viajeColor }}>{viajeLabel}</span>
                           </div>
-                          <div style={{ fontSize: '11px', color: '#6a9b6a' }}>📍 {v.origen || '?'} → {v.destino || '?'}</div>
+                           <div style={{ fontSize: '11px', color: '#6a9b6a' }}>📍 {v.origen || '?'} → {v.tipo_entrega === 'reparto' ? destinosViaje(v).map((destino, index) => `${index + 1}. ${destino}`).join(' · ') : (v.destino || '?')}</div>
+                           {v.tipo_entrega === 'reparto' && <span className="trip-reparto-badge">Reparto</span>}
                           <div style={{ fontSize: '11px', color: '#4a8a4a', marginTop: 2 }}>👤 {v.conductor || 'Sin asignar'}</div>
                         </div>
                       );
@@ -1758,7 +2767,7 @@ export default function Home() {
                 )}
               </div>
 
-              <div style={{ flex: 1, position: 'relative' }}>
+              <div className="dashboard-map" style={{ flex: 1, position: 'relative' }}>
                 {placingZone && <div style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', background: 'rgba(15,23,42,0.9)', backdropFilter: 'blur(10px)', padding: '10px 20px', borderRadius: '8px', fontSize: '13px', color: '#e0e0e0', zIndex: 1000, border: '1px solid #f87171', pointerEvents: 'none' }}>
                   🎯 Haz clic en el mapa para colocar la zona de riesgo
                 </div>}
@@ -1779,8 +2788,8 @@ export default function Home() {
             const coincideFiltro = filtroUnidades === 'todas' ||
               (filtroUnidades === 'online' && v.isOnline) ||
               (filtroUnidades === 'offline' && !v.isOnline && !v.isLocal) ||
-              (filtroUnidades === 'movimiento' && v.location?.speed > 1) ||
-              (filtroUnidades === 'detenida' && v.isOnline && (v.location?.speed || 0) <= 1) ||
+              (filtroUnidades === 'movimiento' && estaEnMovimiento(v.location?.speed)) ||
+              (filtroUnidades === 'detenida' && v.isOnline && !estaEnMovimiento(v.location?.speed)) ||
               (filtroUnidades === 'bajo_diesel' && v.fuelLevelPercent !== null && v.fuelLevelPercent < 0.25) ||
               (filtroUnidades === 'manual' && v.isLocal);
             return coincideBusqueda && coincideFiltro;
@@ -1813,7 +2822,7 @@ export default function Home() {
                   { label: 'Sin Señal', value: vehiculosOffline.length, icon: '🔴', color: '#ef4444', filter: 'offline' },
                   { label: 'Diesel Bajo', value: vehiculos.filter(v => v.fuelLevelPercent !== null && v.fuelLevelPercent < 0.25).length, icon: '⛽', color: '#f59e0b', filter: 'bajo_diesel' },
                 ].map((card) => (
-                  <div key={card.label} onClick={() => setFiltroUnidades(card.filter)}
+                  <div key={card.label} role="button" tabIndex={0} aria-pressed={filtroUnidades === card.filter} onKeyDown={(e) => activarConTeclado(e, () => setFiltroUnidades(card.filter))} onClick={() => setFiltroUnidades(card.filter)}
                     style={{ ...s.statCard(card.color), cursor: 'pointer', opacity: filtroUnidades === card.filter ? 1 : 0.7, transition: 'opacity 0.2s' }}
                     onMouseEnter={e => e.currentTarget.style.opacity = '1'}
                     onMouseLeave={e => e.currentTarget.style.opacity = filtroUnidades === card.filter ? '1' : '0.7'}>
@@ -1902,7 +2911,7 @@ export default function Home() {
                           No se encontraron unidades con los filtros aplicados
                         </td></tr>
                       ) : unidadesFiltradas.map((v) => (
-                        <tr key={v.id} onClick={() => !v.isLocal && setSelectedVehicle(v)} style={{ cursor: v.isLocal ? 'default' : 'pointer' }}
+                        <tr key={v.id} role={v.isLocal ? undefined : 'button'} tabIndex={v.isLocal ? undefined : 0} onKeyDown={v.isLocal ? undefined : (e) => activarConTeclado(e, () => setSelectedVehicle(v))} onClick={() => !v.isLocal && setSelectedVehicle(v)} style={{ cursor: v.isLocal ? 'default' : 'pointer' }}
                           onMouseEnter={e => e.currentTarget.style.background = '#152015'}
                           onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                           <td style={{ ...s.td, fontWeight: '600', color: v.isLocal ? '#f59e0b' : '#00ff41' }}>
@@ -1916,8 +2925,8 @@ export default function Home() {
                                 {v.estatus || 'Sin estatus'}
                               </span>
                             ) : (
-                              <span style={s.badge(v.isOnline ? (v.location?.speed > 1 ? '#10b981' : '#3b82f6') : '#ef4444')}>
-                                {v.isOnline ? (v.location?.speed > 1 ? 'Movimiento' : 'Detenida') : 'Sin señal'}
+                              <span style={s.badge(v.isOnline ? (estaEnMovimiento(v.location?.speed) ? '#10b981' : '#3b82f6') : '#ef4444')}>
+                                {v.isOnline ? (estaEnMovimiento(v.location?.speed) ? 'Movimiento' : 'Detenida') : 'Sin señal'}
                               </span>
                             )}
                           </td>
@@ -1925,7 +2934,7 @@ export default function Home() {
                             {v.isLocal ? (v.notas || <span style={{ color: '#4a8a4a' }}>Sin notas</span>) : (v.location?.location || <span style={{ color: '#4a8a4a' }}>Sin ubicación</span>)}
                           </td>
                           <td style={s.td}>
-                            {v.isLocal ? <span style={{ color: '#6a9b6a' }}>-</span> : (v.location ? <span>{Math.round(v.location.speed || 0)} mph</span> : <span style={{ color: '#4a8a4a' }}>-</span>)}
+                            {v.isLocal ? <span style={{ color: '#6a9b6a' }}>-</span> : (v.location ? <span>{velocidadKmh(v.location.speed)} km/h</span> : <span style={{ color: '#4a8a4a' }}>-</span>)}
                           </td>
                           <td style={s.td}>
                             {v.isLocal ? <span style={{ color: '#6a9b6a' }}>-</span> : (v.fuelLevelPercent !== null ? (
@@ -1939,7 +2948,7 @@ export default function Home() {
                               <div style={{ display: 'flex', gap: '0.3rem' }}>
                                 <button onClick={(e) => { e.stopPropagation(); setEditUnidad(v); setFormUnidad({ nombre: v.nombre, estatus: v.estatus, notas: v.notas, tipo: v.tipo, samsara_id: v.samsara_id || '' }); setShowUnidadModal(true); }}
                                   style={{ padding: '0.2rem 0.5rem', borderRadius: '6px', border: '1px solid #3b82f6', background: '#3b82f620', color: '#3b82f6', cursor: 'pointer', fontSize: '0.7rem' }}>Editar</button>
-                                <button onClick={async (e) => { e.stopPropagation(); if (confirm('Eliminar esta unidad?')) { await fetch(`${apiUrl}/unidades/${v.localId}`, { method: 'DELETE' }); loadAll(); } }}
+                                <button onClick={async (e) => { e.stopPropagation(); if (confirm('Eliminar esta unidad?')) { try { await apiJson(`${apiUrl}/unidades/${v.localId}`, { method: 'DELETE' }); await refreshUnidadesLocales(); } catch (err) { alert(err.message || 'No se pudo eliminar la unidad'); } } }}
                                   style={{ padding: '0.2rem 0.5rem', borderRadius: '6px', border: '1px solid #ef4444', background: '#ef444420', color: '#ef4444', cursor: 'pointer', fontSize: '0.7rem' }}>X</button>
                               </div>
                             ) : (v.lastSeen !== null && v.lastSeen !== undefined ? `hace ${v.lastSeen}min` : '-')}
@@ -1965,44 +2974,70 @@ export default function Home() {
         {activeTab === 'monitoreo' && (() => {
           const selVehicle = monitoreoSelectedId ? vehiculos.find(v => String(v.id) === String(monitoreoSelectedId)) : null;
           const selViaje = monitoreoSelectedId ? viajesActivos.find(vj => String(vj.vehicle_id) === String(monitoreoSelectedId) || vj.vehicle_name === selVehicle?.name) : null;
-          const selSeg = selViaje ? { destino: selViaje.destino || selViaje.seg_destino || '', remolque: selViaje.seg_remolque || '', origen: selViaje.origen || selViaje.seg_origen || '', estatus: selViaje.estado || selViaje.seg_estatus || '' } : {};
+          const selSeg = selViaje ? { destino: selViaje.tipo_entrega === 'reparto' ? destinosViaje(selViaje)[0] : (selViaje.destino || selViaje.seg_destino || ''), tipo_entrega: selViaje.tipo_entrega, destinos: destinosViaje(selViaje), remolque: selViaje.seg_remolque || '', origen: selViaje.origen || selViaje.seg_origen || '', estatus: selViaje.estado || selViaje.seg_estatus || '' } : {};
+          const currentGeofence = geofenceAtLocation(selVehicle?.location);
+          const currentLocationLabel = currentGeofence?.nombre || selVehicle?.location?.location || 'Sin ubicación';
           const routeLen = monitoreoRouteHistory.length;
-          const startPt = routeLen > 0 ? monitoreoRouteHistory[0] : null;
-          const endPt = routeLen > 0 ? monitoreoRouteHistory[routeLen - 1] : null;
           let avancePct = 0;
           let avanceLabel = 'Sin datos';
-          if (routeLen > 1 && monitoreoEta?.distanciaMetros) {
-            let distanciaRecorridaM = 0;
-            for (let i = 1; i < routeLen; i++) {
-              distanciaRecorridaM += haversineKm(
-                monitoreoRouteHistory[i - 1].latitude, monitoreoRouteHistory[i - 1].longitude,
-                monitoreoRouteHistory[i].latitude, monitoreoRouteHistory[i].longitude
-              ) * 1000;
-            }
-            avancePct = Math.min(99, Math.round((distanciaRecorridaM / monitoreoEta.distanciaMetros) * 100));
+          let avanceEsperadoPct = null;
+          let avanceEsperadoLabel = '';
+          let estadoAvance = null;
+          if (monitoreoEta?.distanciaMetros && monitoreoRutaTotal?.distanciaMetros) {
+            const totalM = monitoreoRutaTotal.distanciaMetros;
+            const distanciaRecorridaM = Math.max(0, totalM - monitoreoEta.distanciaMetros);
+            avancePct = Math.min(100, Math.round((distanciaRecorridaM / totalM) * 100));
             const recorridosKm = (distanciaRecorridaM / 1000).toFixed(1);
-            const totalKm = (monitoreoEta.distanciaMetros / 1000).toFixed(1);
+            const totalKm = (totalM / 1000).toFixed(1);
             avanceLabel = `${avancePct}% · ${recorridosKm} / ${totalKm} km`;
-          } else if (routeLen > 1) {
-            let distanciaRecorridaM = 0;
-            for (let i = 1; i < routeLen; i++) {
-              distanciaRecorridaM += haversineKm(
-                monitoreoRouteHistory[i - 1].latitude, monitoreoRouteHistory[i - 1].longitude,
-                monitoreoRouteHistory[i].latitude, monitoreoRouteHistory[i].longitude
-              ) * 1000;
+
+            const parseTripDate = (value) => {
+              if (!value) return null;
+              const normalized = String(value).includes('T') ? String(value) : String(value).replace(' ', 'T');
+              const date = new Date(normalized);
+              return Number.isNaN(date.getTime()) ? null : date;
+            };
+            const scheduledStart = parseTripDate(selViaje?.fecha_inicio || selViaje?.cita_carga);
+            let scheduledEnd = parseTripDate(selViaje?.fecha_fin || selViaje?.cita_descarga);
+            if (scheduledStart && (!scheduledEnd || scheduledEnd <= scheduledStart) && monitoreoRutaTotal.duracionSegundos) {
+              scheduledEnd = new Date(scheduledStart.getTime() + monitoreoRutaTotal.duracionSegundos * 1000);
             }
-            avanceLabel = `${(distanciaRecorridaM / 1000).toFixed(1)} km · ${routeLen} puntos`;
+            if (scheduledStart && scheduledEnd && scheduledEnd > scheduledStart) {
+              const scheduleDurationMs = scheduledEnd.getTime() - scheduledStart.getTime();
+              avanceEsperadoPct = Math.max(0, Math.min(100, Math.round(((Date.now() - scheduledStart.getTime()) / scheduleDurationMs) * 100)));
+              const expectedKm = totalM * avanceEsperadoPct / 100 / 1000;
+              avanceEsperadoLabel = `Esperado: ${avanceEsperadoPct}% · ${expectedKm.toFixed(1)} km`;
+              const differencePct = avancePct - avanceEsperadoPct;
+              const differenceMinutes = Math.round(Math.abs(differencePct) / 100 * scheduleDurationMs / 60000);
+              const differenceKm = Math.abs(differencePct) / 100 * totalM / 1000;
+              if (Date.now() < scheduledStart.getTime()) {
+                estadoAvance = { label: 'Aún no inicia', color: '#94a3b8' };
+              } else if (differenceMinutes <= 10) {
+                estadoAvance = { label: 'En tiempo', color: '#10b981' };
+              } else if (differencePct < 0) {
+                estadoAvance = { label: `Retraso estimado: ${differenceMinutes} min · ${differenceKm.toFixed(1)} km`, color: '#ef4444' };
+              } else {
+                estadoAvance = { label: `Adelanto estimado: ${differenceMinutes} min · ${differenceKm.toFixed(1)} km`, color: '#3b82f6' };
+              }
+            }
+          } else if (monitoreoEtaLoading) {
+            avanceLabel = 'Calculando ruta...';
+          } else {
+            avanceLabel = 'Ruta no disponible';
           }
           let etaText = '-';
           let horaLlegada = '-';
           if (monitoreoEta) {
             etaText = monitoreoEta.duracion;
             horaLlegada = monitoreoEta.horaLlegada;
+          } else if (monitoreoEtaLoading) {
+            etaText = 'Calculando...';
+            horaLlegada = '...';
           } else if (selVehicle?.location && selSeg.destino) {
             const lastSeenMin = selVehicle.lastSeen != null ? selVehicle.lastSeen : 999;
             if (lastSeenMin < 15) {
-              etaText = 'Calculando...';
-              horaLlegada = '...';
+              etaText = 'No disponible';
+              horaLlegada = 'N/A';
             } else {
               etaText = 'Detenida';
               horaLlegada = 'N/A';
@@ -2011,7 +3046,9 @@ export default function Home() {
           const formatDate = (dt) => {
             if (!dt) return '-';
             try {
-              const d = new Date(dt.endsWith('Z') ? dt : dt + 'Z');
+              const value = typeof dt === 'string' && !dt.endsWith('Z') && !dt.includes('+') ? `${dt}Z` : dt;
+              const d = new Date(value);
+              if (Number.isNaN(d.getTime())) return '-';
               return d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short' }) + ' ' + d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
             } catch (e) { return dt; }
           };
@@ -2022,11 +3059,11 @@ export default function Home() {
                 <h2 style={{ margin: 0, fontSize: '1.5rem' }}>Monitoreo en Tiempo Real</h2>
                 <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>
                   {vehiculosOnline.length} en línea | {vehiculos.filter(v => !v.isOnline).length} sin señal | {viajesActivos.length} viajes activos
-                  {monitoreoSelectedId && <span style={{ color: '#00ff41' }}> · Ruta: {routeLen} puntos</span>}
+                  {monitoreoSelectedId && <span style={{ color: '#00ff41' }}> · {routeLen} paradas de más de 20 min</span>}
                 </p>
               </div>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
-                {monitoreoSelectedId && <button onClick={() => { setMonitoreoSelectedId(null); setMonitoreoRouteHistory([]); setMonitoreoEta(null); }} style={{ ...s.button('#ef4444'), background: '#ef444420', border: '1px solid #ef4444', color: '#ef4444' }}>Limpiar Ruta</button>}
+                {monitoreoSelectedId && <button onClick={() => { monitoreoRequestRef.current.controller?.abort(); monitoreoRequestRef.current.generation += 1; setMonitoreoSelectedId(null); setMonitoreoRouteHistory([]); setMonitoreoEta(null); setMonitoreoRutaTotal(null); setMonitoreoEtaLoading(false); setMonitoreoGeofenceMatch(null); }} style={{ ...s.button('#ef4444'), background: '#ef444420', border: '1px solid #ef4444', color: '#ef4444' }}>Limpiar Ruta</button>}
                 <button onClick={loadAll} style={s.button()}>Actualizar</button>
               </div>
             </div>
@@ -2040,9 +3077,12 @@ export default function Home() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                         <span style={{ fontSize: '1.3rem' }}>🚛</span>
-                        <div>
-                          <h3 style={{ margin: 0, fontSize: '1rem', color: '#00ff41' }}>{selVehicle.name}</h3>
-                          <span style={{ fontSize: '0.75rem', color: '#6a9b6a' }}>{operadores[String(selVehicle.id)]?.nombre || 'Sin operador'}{selSeg.remolque ? ` · 🚛 ${selSeg.remolque}` : ''}</span>
+                         <div>
+                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+                             <h3 style={{ margin: 0, fontSize: '1rem', color: '#00ff41' }}>{selVehicle.name}</h3>
+                             <span style={{ fontSize: '0.75rem', color: currentGeofence?.color || '#94a3b8', fontWeight: currentGeofence ? 700 : 500 }}>📍 {currentLocationLabel}</span>
+                           </div>
+                           <span style={{ fontSize: '0.75rem', color: '#6a9b6a' }}>{operadores[String(selVehicle.id)]?.nombre || 'Sin operador'}{selSeg.remolque ? ` · 🚛 ${selSeg.remolque}` : ''}</span>
                         </div>
                       </div>
                       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -2053,12 +3093,11 @@ export default function Home() {
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
                       <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
                         <div style={{ fontSize: '0.65rem', color: '#4a8a4a', marginBottom: '0.2rem', textTransform: 'uppercase' }}>Origen Hoy</div>
-                        <div style={{ fontSize: '0.8rem', color: '#e0e0e0', fontWeight: 600 }}>{selSeg.origen || (startPt?.location || '-')}</div>
-                        {startPt && <div style={{ fontSize: '0.65rem', color: '#4a8a4a', marginTop: '0.15rem' }}>{formatDate(startPt.recorded_at)}</div>}
+                         <div style={{ fontSize: '0.8rem', color: '#e0e0e0', fontWeight: 600 }}>{selSeg.origen || '-'}</div>
                       </div>
                       <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
-                        <div style={{ fontSize: '0.65rem', color: '#4a8a4a', marginBottom: '0.2rem', textTransform: 'uppercase' }}>Destino</div>
-                        <div style={{ fontSize: '0.8rem', color: '#60a5fa', fontWeight: 600 }}>{selSeg.destino || '-'}</div>
+                         <div style={{ fontSize: '0.65rem', color: '#4a8a4a', marginBottom: '0.2rem', textTransform: 'uppercase' }}>{selSeg.tipo_entrega === 'reparto' ? 'Primera parada' : 'Destino'}</div>
+                         <div style={{ fontSize: '0.8rem', color: '#60a5fa', fontWeight: 600 }}>{selSeg.destino || '-'}</div>
                         {monitoreoGeofenceMatch && (
                           <div style={{ fontSize: '0.65rem', color: monitoreoGeofenceMatch.color || '#10b981', marginTop: '0.2rem', fontWeight: 600 }}>
                             📍 {monitoreoGeofenceMatch.nombre}
@@ -2066,7 +3105,7 @@ export default function Home() {
                         )}
                       </div>
                       <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
-                        <div style={{ fontSize: '0.65rem', color: '#4a8a4a', marginBottom: '0.2rem', textTransform: 'uppercase' }}>ETA (+1h)</div>
+                         <div style={{ fontSize: '0.65rem', color: '#4a8a4a', marginBottom: '0.2rem', textTransform: 'uppercase' }}>{selSeg.tipo_entrega === 'reparto' ? 'ETA primera parada (+1h)' : 'ETA (+1h)'}</div>
                         <div style={{ fontSize: '0.8rem', color: '#00ff41', fontWeight: 700 }}>{etaText}</div>
                         {monitoreoEta ? (
                           <div style={{ fontSize: '0.65rem', color: '#f59e0b', marginTop: '0.15rem' }}>Llegada: {horaLlegada} · {monitoreoEta.distancia}</div>
@@ -2077,21 +3116,27 @@ export default function Home() {
                       <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
                         <div style={{ fontSize: '0.65rem', color: '#4a8a4a', marginBottom: '0.2rem', textTransform: 'uppercase' }}>Ubicación Actual</div>
                         <div style={{ fontSize: '0.8rem', color: '#e0e0e0', fontWeight: 600 }}>{selVehicle.location?.location || 'Sin ubicación'}</div>
-                        {selVehicle.location && <div style={{ fontSize: '0.65rem', color: '#94a3b8', marginTop: '0.15rem' }}>{Math.round((selVehicle.location.speed || 0) * 1.60934)} km/h · {endPt ? formatDate(endPt.recorded_at) : '-'}</div>}
+                        {selVehicle.location && <div style={{ fontSize: '0.65rem', color: '#94a3b8', marginTop: '0.15rem' }}>{velocidadKmh(selVehicle.location.speed)} km/h · {formatDate(selVehicle.location.timeMs)}</div>}
                       </div>
                     </div>
                     <div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
                         <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Avance en Ruta</span>
-                        <span style={{ fontSize: '0.75rem', color: '#00ff41', fontWeight: 600 }}>{avanceLabel}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                          {estadoAvance && <span style={{ fontSize: '0.7rem', color: estadoAvance.color, border: `1px solid ${estadoAvance.color}66`, borderRadius: '10px', padding: '2px 8px', fontWeight: 700 }}>{estadoAvance.label}</span>}
+                          <span style={{ fontSize: '0.75rem', color: '#00ff41', fontWeight: 600 }}>{avanceLabel}</span>
+                        </div>
                       </div>
-                      <div style={{ width: '100%', height: '12px', background: '#1a1a1a', borderRadius: '6px', overflow: 'hidden', border: '1px solid #1a3d1a' }}>
+                      <div style={{ position: 'relative', width: '100%', height: '12px', background: '#1a1a1a', borderRadius: '6px', border: '1px solid #1a3d1a' }}>
                         <div style={{ width: `${avancePct}%`, height: '100%', background: avancePct >= 80 ? 'linear-gradient(90deg, #10b981, #00ff41)' : avancePct >= 40 ? 'linear-gradient(90deg, #f59e0b, #10b981)' : 'linear-gradient(90deg, #3b82f6, #10b981)', borderRadius: '6px', transition: 'width 0.5s ease', boxShadow: `0 0 10px ${avancePct >= 80 ? '#00ff4144' : '#3b82f644'}` }} />
+                        {avanceEsperadoPct !== null && (
+                          <div title={avanceEsperadoLabel} style={{ position: 'absolute', left: `${avanceEsperadoPct}%`, top: '-5px', width: '3px', height: '20px', background: '#facc15', borderRadius: '2px', transform: 'translateX(-1px)', boxShadow: '0 0 7px #facc15' }} />
+                        )}
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.25rem', fontSize: '0.65rem', color: '#4a8a4a' }}>
-                        <span>📍 Inicio: {startPt ? startPt.location || 'GPS' : '-'}</span>
-                        <span>{routeLen > 1 ? `${Math.round(routeLen)} pts · ${formatDate(startPt?.recorded_at)} → ${formatDate(endPt?.recorded_at)}` : 'Sin historial hoy'}</span>
-                        <span>🏁 Fin</span>
+                        <span>📍 {selSeg.origen || 'Sin origen'}</span>
+                        <span>{avanceEsperadoLabel || `${routeLen} paradas de más de 20 min`}</span>
+                        <span>🏁 {selSeg.destino || 'Sin destino'}</span>
                       </div>
                     </div>
                   </div>
@@ -2104,11 +3149,12 @@ export default function Home() {
                     {viajesActivos.slice(0, 8).map((vj) => {
                       const vehicleNow = vehiculos.find(v => String(v.id) === String(vj.vehicle_id) || v.name === vj.vehicle_name);
                       const hasLoc = vehicleNow?.location;
-                      const destino = vj.destino || vj.seg_destino || '';
+                       const destinos = vj.tipo_entrega === 'reparto' ? destinosViaje(vj) : [];
+                       const destino = vj.destino || vj.seg_destino || '';
                       const remolque = vj.seg_remolque || '';
                       const estatus = vj.estado || vj.seg_estatus || '';
                       return (
-                        <div key={vj.id} onClick={() => selectMonitoreoVehicle({ id: vj.vehicle_id, name: vj.vehicle_name })} style={{ padding: '0.5rem', borderBottom: '1px solid #1a1a1a', cursor: 'pointer', borderRadius: '6px', transition: 'background 0.15s', background: monitoreoSelectedId === String(vj.vehicle_id) ? '#00ff4110' : 'transparent' }}
+                        <div key={vj.id} role="button" tabIndex={0} onKeyDown={(e) => activarConTeclado(e, () => selectMonitoreoVehicle({ id: vj.vehicle_id, name: vj.vehicle_name }))} onClick={() => selectMonitoreoVehicle({ id: vj.vehicle_id, name: vj.vehicle_name })} style={{ padding: '0.5rem', borderBottom: '1px solid #1a1a1a', cursor: 'pointer', borderRadius: '6px', transition: 'background 0.15s', background: monitoreoSelectedId === String(vj.vehicle_id) ? '#00ff4110' : 'transparent' }}
                           onMouseEnter={e => e.currentTarget.style.background = '#152015'}
                           onMouseLeave={e => e.currentTarget.style.background = monitoreoSelectedId === String(vj.vehicle_id) ? '#00ff4110' : 'transparent'}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
@@ -2116,9 +3162,10 @@ export default function Home() {
                             {hasLoc && <span style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: '8px', background: vehicleNow.isOnline ? '#003311' : '#3a1111', color: vehicleNow.isOnline ? '#00ff41' : '#ef4444', border: `1px solid ${vehicleNow.isOnline ? '#00ff4133' : '#ef444433'}` }}>{vehicleNow.isOnline ? 'Online' : 'Offline'}</span>}
                           </div>
                           {remolque && <div style={{ fontSize: '0.7rem', color: '#f59e0b' }}>🚛 {remolque}</div>}
-                          {destino && <div style={{ fontSize: '0.7rem', color: '#60a5fa' }}>🏁 {destino}</div>}
-                          <div style={{ marginTop: '0.2rem' }}>
-                            <span style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: '8px', background: '#1a1a1a', color: '#94a3b8', border: '1px solid #333' }}>{estatus}</span>
+                           {vj.tipo_entrega === 'reparto' ? destinos.map((stop, index) => <div key={`${vj.id}-monitor-stop-${index}`} style={{ fontSize: '0.7rem', color: '#60a5fa' }}>{index + 1}. {stop}</div>) : destino && <div style={{ fontSize: '0.7rem', color: '#60a5fa' }}>🏁 {destino}</div>}
+                           <div style={{ marginTop: '0.2rem' }}>
+                             <span style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: '8px', background: '#1a1a1a', color: '#94a3b8', border: '1px solid #333' }}>{estatus}</span>
+                             {vj.tipo_entrega === 'reparto' && <span className="trip-reparto-badge">Reparto</span>}
                           </div>
                         </div>
                       );
@@ -2128,7 +3175,7 @@ export default function Home() {
                 <div style={{ ...s.card, overflow: 'auto', flex: 1, padding: '0.75rem' }}>
                   <h3 style={{ marginTop: 0, fontSize: '0.9rem', marginBottom: '0.75rem' }}>Todas las Unidades ({vehiculos.length})</h3>
                   {vehiculos.map((v) => (
-                    <div key={v.id} onClick={() => selectMonitoreoVehicle(v)} style={{ padding: '0.5rem', borderBottom: '1px solid #0d1f0d', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', transition: 'background 0.15s', borderRadius: '6px', paddingLeft: '6px', paddingRight: '6px', background: monitoreoSelectedId === v.id ? '#00ff4110' : 'transparent' }}
+                    <div key={v.id} role="button" tabIndex={0} onKeyDown={(e) => activarConTeclado(e, () => selectMonitoreoVehicle(v))} onClick={() => selectMonitoreoVehicle(v)} style={{ padding: '0.5rem', borderBottom: '1px solid #0d1f0d', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', transition: 'background 0.15s', borderRadius: '6px', paddingLeft: '6px', paddingRight: '6px', background: monitoreoSelectedId === v.id ? '#00ff4110' : 'transparent' }}
                       onMouseEnter={e => e.currentTarget.style.background = '#152015'}
                       onMouseLeave={e => e.currentTarget.style.background = monitoreoSelectedId === v.id ? '#00ff4110' : 'transparent'}>
                       <div>
@@ -2137,7 +3184,7 @@ export default function Home() {
                           {operadores[String(v.id)]?.nombre || 'Sin operador'}
                         </div>
                         <div style={{ fontSize: '0.75rem', color: '#4a8a4a' }}>
-                          {v.location ? `${Math.round(v.location.speed || 0)} mph` : 'Sin ubicación'}
+                          {v.location ? `${velocidadKmh(v.location.speed)} km/h` : 'Sin ubicación'}
                           {v.fuelLevelPercent !== null && ` · ${Math.round(v.fuelLevelPercent * 100)}%`}
                           {v.lastSeen !== null && v.lastSeen !== undefined && ` · hace ${v.lastSeen}min`}
                         </div>
@@ -2299,8 +3346,8 @@ export default function Home() {
                   <option value="geocerca">Geocercas</option>
                   <option value="combustible_bajo">Combustible Bajo</option>
                 </select>
-                <button onClick={async () => { await fetch(`${apiUrl}/check-geofences`, { method: 'POST' }); await loadAll(); }} style={s.button('#8b5cf6')}>Revisar geocercas</button>
-                <button onClick={async () => { await fetch(`${apiUrl}/check-fuel`, { method: 'POST' }); await loadAll(); }} style={s.button('#f59e0b')}>Revisar combustible</button>
+                <button onClick={async () => { try { await apiJson(`${apiUrl}/check-geofences`, { method: 'POST' }); await refreshAlertas(); } catch (err) { alert(err.message || 'No se pudo revisar geocercas'); } }} style={s.button('#8b5cf6')}>Revisar geocercas</button>
+                <button onClick={async () => { try { await apiJson(`${apiUrl}/check-fuel`, { method: 'POST' }); await refreshAlertas(); } catch (err) { alert(err.message || 'No se pudo revisar combustible'); } }} style={s.button('#f59e0b')}>Revisar combustible</button>
                 <button onClick={loadAll} style={s.button()}>Actualizar</button>
                 <button onClick={limpiarAlertas} style={s.button('#ef4444')}>Limpiar alertas</button>
               </div>
@@ -2361,11 +3408,11 @@ export default function Home() {
                 <button onClick={cargarHistorial} style={s.button('#1d4ed8')}>Historial</button>
                 <button onClick={() => abrirReporteDirecto('pendientes-completados')} style={s.button('#3b82f6')}>Reporte</button>
                 <button onClick={archivarCompletados} style={s.button('#f59e0b')}>Archivar completados</button>
-                <button onClick={() => { setPendienteEditando(null); setFormPendiente({ titulo: '', descripcion: '', prioridad: 'media', asignado_a: '', turno: '', notas: '' }); setShowPendienteModal(true); }} style={s.button('#10b981')}>+ Nuevo Pendiente</button>
+                <button onClick={() => { setPendienteEditando(null); setFormPendiente({ titulo: '', descripcion: '', prioridad: 'media', asignado_a: '', turno: '', notas: '', estado: 'pendiente' }); setShowPendienteModal(true); }} style={s.button('#10b981')}>+ Nuevo Pendiente</button>
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
+            <div className="pending-board" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
               {['pendiente', 'en_proceso', 'completado'].map(estado => {
                 const estadoLabel = { pendiente: 'Pendiente', en_proceso: 'En Proceso', completado: 'Completado' }[estado];
                 const estadoColor = { pendiente: '#f59e0b', en_proceso: '#3b82f6', completado: '#10b981' }[estado];
@@ -2409,12 +3456,11 @@ export default function Home() {
                               opacity: isDragging ? 0.5 : 1,
                               transition: 'opacity 0.2s ease'
                             }}
-                            onClick={async () => { 
-                              const comentarios = await fetch(`${apiUrl}/pendientes/${p.id}/comentarios`).then(r => r.json()).catch(() => []);
-                              setPendienteEditando({ ...p, comentarios }); 
-                              setFormPendiente({ titulo: p.titulo, descripcion: p.descripcion || '', prioridad: p.prioridad || 'media', asignado_a: p.asignado_a || '', turno: p.turno || '', notas: p.notas || '' }); 
-                              setShowPendienteModal(true); 
-                            }}>
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`Abrir pendiente ${p.titulo}`}
+                            onKeyDown={(e) => activarConTeclado(e, () => abrirPendiente(p))}
+                            onClick={() => abrirPendiente(p)}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
                               <div style={{ fontSize: '0.9rem', fontWeight: '600', color: '#e0e0e0', flex: 1 }}>
                                 <span style={{ color: '#4a4a4a', marginRight: '0.5rem', cursor: 'grab' }}>⋮⋮</span>
@@ -2466,13 +3512,15 @@ export default function Home() {
                     <select style={s.select} value={formViaje.vehicle_id} onChange={(e) => {
                       const v = vehiculos.find(vh => String(vh.id) === e.target.value);
                       const op = operadores[e.target.value];
+                      const remolqueAsignado = obtenerRemolqueAsignadoUnidad(e.target.value, v?.name || '');
                       setFormViaje({
                         ...formViaje,
                         vehicle_id: e.target.value,
                         vehicle_name: v?.name || '',
-                        origen: v?.location?.location || formViaje.origen,
+                        origen: '',
                         conductor: op?.nombre || '',
                         telefono: op?.telefono || '',
+                        remolque: v ? remolqueAsignado : '',
                       });
                     }}>
                       <option value="">Seleccionar...</option>
@@ -2484,7 +3532,7 @@ export default function Home() {
                       <label style={s.label}>Conductor</label>
                       <select style={s.select} value={formViaje.conductor} onChange={(e) => {
                         const driver = samsaraDrivers.find(d => d.name === e.target.value);
-                        setFormViaje({ ...formViaje, conductor: e.target.value, telefono: driver?.phone || formViaje.telefono });
+                        setFormViaje({ ...formViaje, conductor: e.target.value, telefono: driver ? (driverPhoneOverrides[driver.id] ?? driver.phone ?? '') : '' });
                       }}>
                         <option value="">Seleccionar...</option>
                         {samsaraDrivers.filter(d => d.status === 'active').sort((a, b) => a.name.localeCompare(b.name)).map(d => (
@@ -2497,16 +3545,34 @@ export default function Home() {
                       <input style={s.input} placeholder="Auto-del conductor" value={formViaje.telefono} onChange={(e) => setFormViaje({ ...formViaje, telefono: e.target.value })} />
                     </div>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                  <div style={{ marginBottom: '0.75rem' }}>
                     <div>
                       <label style={s.label}>Origen</label>
-                      <input style={s.input} placeholder="Ciudad de origen" value={formViaje.origen} onChange={(e) => setFormViaje({ ...formViaje, origen: e.target.value })} />
-                    </div>
-                    <div>
-                      <label style={s.label}>Destino</label>
-                      <input style={s.input} placeholder="Ciudad de destino" value={formViaje.destino} onChange={(e) => setFormViaje({ ...formViaje, destino: e.target.value })} />
+                       <select style={s.select} value={formViaje.origen} onChange={(e) => setFormViaje({ ...formViaje, origen: e.target.value })}>{geofenceOptions(formViaje.origen)}</select>
                     </div>
                   </div>
+                  <div className="trip-delivery-type" role="group" aria-label="Tipo de entrega">
+                    <button type="button" className={formViaje.tipo_entrega !== 'reparto' ? 'active' : ''} onClick={() => setFormViaje(prev => ({ ...prev, tipo_entrega: 'directo', destino: parseDestinos(prev.destinos).at(-1) || prev.destino }))}>Destino único</button>
+                    <button type="button" className={formViaje.tipo_entrega === 'reparto' ? 'active' : ''} onClick={() => setFormViaje(prev => ({ ...prev, tipo_entrega: 'reparto', destinos: parseDestinos(prev.destinos).length >= 2 ? prev.destinos : [prev.destino || '', ''] }))}>Reparto</button>
+                  </div>
+                  {formViaje.tipo_entrega === 'reparto' ? (
+                    <div className="trip-stops-editor">
+                      <label style={s.label}>Destinos en orden</label>
+                      {formViaje.destinos.map((destino, index) => (
+                        <div className="trip-stop-input" key={index}>
+                          <span>{index + 1}</span>
+                           <select style={s.select} aria-label={`Destino ${index + 1}`} value={destino} onChange={(e) => setFormViaje(prev => ({ ...prev, destinos: prev.destinos.map((item, itemIndex) => itemIndex === index ? e.target.value : item) }))}>{geofenceOptions(destino)}</select>
+                          <button type="button" disabled={formViaje.destinos.length <= 2} onClick={() => setFormViaje(prev => ({ ...prev, destinos: prev.destinos.filter((_, itemIndex) => itemIndex !== index) }))} aria-label={`Eliminar destino ${index + 1}`}>Quitar</button>
+                        </div>
+                      ))}
+                      <button type="button" className="trip-add-stop" onClick={() => setFormViaje(prev => ({ ...prev, destinos: [...prev.destinos, ''] }))}>+ Agregar destino</button>
+                    </div>
+                  ) : (
+                    <div style={{ marginBottom: '0.75rem' }}>
+                      <label style={s.label}>Destino</label>
+                       <select style={s.select} value={formViaje.destino} onChange={(e) => setFormViaje({ ...formViaje, destino: e.target.value })}>{geofenceOptions(formViaje.destino)}</select>
+                    </div>
+                  )}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
                     <div>
                       <label style={s.label}>Fecha Inicio</label>
@@ -2521,8 +3587,8 @@ export default function Home() {
                     <label style={s.label}>Remolque</label>
                     <select style={s.select} value={formViaje.remolque} onChange={(e) => setFormViaje({ ...formViaje, remolque: e.target.value })}>
                       <option value="">Sin remolque</option>
-                      {remolques.filter(r => !r.vehicle_id_asignado || r.vehicle_id_asignado === formViaje.vehicle_id).map(r => (
-                        <option key={r.id} value={r.numero}>#{r.numero}</option>
+                      {obtenerOpcionesRemolque(formViaje.vehicle_id).map(r => (
+                        <option key={r.key} value={r.value}>{r.label}</option>
                       ))}
                     </select>
                   </div>
@@ -2554,7 +3620,7 @@ export default function Home() {
                       )}
                       {viajeEta && !calculandoViajeEta && (
                         <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #10b98133' }}>
-                          <div style={{ fontWeight: '600', fontSize: '0.8rem', color: '#10b981', marginBottom: '0.5rem', textTransform: 'uppercase' }}>ETA Calculado (Tractocamión)</div>
+                           <div style={{ fontWeight: '600', fontSize: '0.8rem', color: '#10b981', marginBottom: '0.5rem', textTransform: 'uppercase' }}>{formViaje.tipo_entrega === 'reparto' ? 'ETA a primera parada (Tractocamión)' : 'ETA Calculado (Tractocamión)'}</div>
                           <div style={{ display: 'flex', justifyContent: 'space-around', textAlign: 'center' }}>
                             <div>
                               <div style={{ fontSize: '0.65rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Llegada</div>
@@ -2614,7 +3680,7 @@ export default function Home() {
                       {items.length === 0 ? (
                         <div style={{ color: '#4a8a4a', fontSize: '0.8rem', textAlign: 'center', padding: '1rem 0' }}>Sin viajes</div>
                       ) : items.sort((a, b) => new Date(a.fecha_inicio || a.created_at || 0) - new Date(b.fecha_inicio || b.created_at || 0)).map(v => (
-                        <div key={v.id} onClick={() => { setViajeDetalle(v); setViajeForm(v); setShowViajeModal(true); setViajeEditando(false); }}
+                        <div key={v.id} role="button" tabIndex={0} onKeyDown={(e) => activarConTeclado(e, () => { setViajeDetalle(v); setViajeForm(v); setShowViajeModal(true); setViajeEditando(false); })} onClick={() => { setViajeDetalle(v); setViajeForm(v); setShowViajeModal(true); setViajeEditando(false); }}
                           style={{ background: '#111', border: `1px solid ${col.color}33`, borderRadius: '10px', padding: '0.75rem', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'flex-start' }}>
                             <div>
@@ -2628,9 +3694,22 @@ export default function Home() {
                               ].map(st => <option key={st} value={st}>{st.replace(/_/g, ' ')}</option>)}
                             </select>
                           </div>
-                          <div style={{ fontSize: '0.8rem', color: '#e0e0e0' }}>{v.origen || '-'} → {v.destino || '-'}</div>
+                           {v.tipo_entrega === 'reparto' ? (
+                             <><div style={{ fontSize: '0.8rem', color: '#e0e0e0' }}><strong>{v.origen || '-'}</strong> →</div><div className="trip-stops-display">
+                               {destinosViaje(v).map((destino, index) => <div key={`${v.id}-stop-${index}`}><span>{index + 1}</span>{destino}</div>)}
+                             </div></>
+                           ) : <div style={{ fontSize: '0.8rem', color: '#e0e0e0' }}>{v.origen || '-'} → {v.destino || '-'}</div>}
+                           <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                            {geocercasCoincidentes(v.origen).map(name => (
+                              <span key={`o-${v.id}-${name}`} style={{ fontSize: '0.68rem', padding: '2px 8px', borderRadius: '10px', background: '#2a1d00', color: '#f59e0b', border: '1px solid #f59e0b33' }}>📍 {name}</span>
+                            ))}
+                             {destinosViaje(v).flatMap((destino, stopIndex) => geocercasCoincidentes(destino).map(name => (
+                               <span key={`d-${v.id}-${stopIndex}-${name}`} style={{ fontSize: '0.68rem', padding: '2px 8px', borderRadius: '10px', background: '#001f33', color: '#3b82f6', border: '1px solid #3b82f633' }}>📍 {v.tipo_entrega === 'reparto' ? `${stopIndex + 1}. ` : ''}{name}</span>
+                             )))}
+                          </div>
                           <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                            <span style={s.badge(estadoColors[v.estado] || col.color)}>{v.estado || 'programado'}</span>
+                             <span style={s.badge(estadoColors[v.estado] || col.color)}>{v.estado || 'programado'}</span>
+                             {v.tipo_entrega === 'reparto' && <span className="trip-reparto-badge">Reparto</span>}
                             {v.remolque && <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: '#332200', color: '#f59e0b', border: '1px solid #f59e0b33' }}>🚛 {v.remolque}</span>}
                           </div>
                           <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
@@ -2723,7 +3802,7 @@ export default function Home() {
               <button onClick={() => { setRemolqueEditando(null); setFormRemolque({ numero: '', categoria: 'Caja Seca' }); setShowRemolqueModal(true); }} style={{ padding: '0.5rem 1rem', background: '#00ff41', color: '#000', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 700 }}>+ Nuevo</button>
             </div>
 
-            {['Thermo Refrigerado', 'Caja Seca', 'Porta Contenedores', 'Tanque'].map(cat => {
+            {remolqueCategorias.map(cat => {
               const filas = remolques.filter(r => (r.categoria || 'Caja Seca') === cat);
               return (
                 <div key={cat} style={{ background: '#111', border: '1px solid #1a3d1a', borderRadius: '10px', padding: '1rem' }}>
@@ -2735,23 +3814,36 @@ export default function Home() {
                     {filas.length === 0 ? (
                       <div style={{ color: '#6a9b6a', fontSize: '0.85rem', fontStyle: 'italic' }}>Sin remolques</div>
                     ) : filas.map(r => (
-                      <div key={r.id} onClick={() => cargarHistorialRemolque(r.id)}
+                      <div key={r.id} role="button" tabIndex={0} onKeyDown={(e) => activarConTeclado(e, () => abrirRemolqueDashboard(r))} onClick={() => abrirRemolqueDashboard(r)}
                         style={{ background: selectedRemolque === r.id ? '#1a3d1a' : '#111', border: `1px solid ${selectedRemolque === r.id ? '#00ff41' : '#1a3d1a'}`, borderRadius: '10px', padding: '1rem', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span style={{ color: '#00ff41', fontWeight: 700, fontSize: '1.1rem' }}>#{r.numero}</span>
+                          <span style={{ color: '#00ff41', fontWeight: 700, fontSize: '1.1rem' }}>{numeroRemolque(r.numero)}</span>
                           <div style={{ display: 'flex', gap: '0.25rem' }}>
                             <button onClick={(e) => { e.stopPropagation(); setRemolqueEditando(r); setFormRemolque({ numero: r.numero, categoria: r.categoria || 'Caja Seca' }); setShowRemolqueModal(true); }} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '0.9rem' }}>✏️</button>
                             <button onClick={(e) => { e.stopPropagation(); eliminarRemolque(r.id); }} style={{ background: 'none', border: 'none', color: '#ff4444', cursor: 'pointer', fontSize: '0.9rem' }}>✕</button>
                           </div>
                         </div>
                         <div style={{ fontSize: '0.75rem', color: '#f59e0b', textTransform: 'uppercase' }}>{r.categoria || 'Caja Seca'}</div>
-                        {r.unidad_asignada ? (
+                        {(r.unidad_asignada || r.vehicle_id_asignado) ? (
                           <div style={{ fontSize: '0.85rem', color: '#00ff41', background: '#002200', padding: '0.3rem 0.6rem', borderRadius: '6px', display: 'inline-block', alignSelf: 'flex-start' }}>
-                            🚛 {r.unidad_asignada}
+                            {(String(r.tipo_asignacion || '').toLowerCase() === 'full' || r.grupo_full) && obtenerMiembrosFull(r).length > 1
+                              ? `FULL: ${obtenerMiembrosFull(r).map(m => numeroRemolque(m.numero)).join(' + ')} · ${r.unidad_asignada || r.vehicle_id_asignado}`
+                              : `🚛 ${r.unidad_asignada || r.vehicle_id_asignado}`}
                           </div>
                         ) : (
                           <div style={{ fontSize: '0.85rem', color: '#888', fontStyle: 'italic' }}>Sin asignar</div>
                         )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (r.vehicle_id_asignado || r.unidad_asignada) desasignarRemolque(r.id);
+                            else abrirRemolqueDashboard(r);
+                          }}
+                          style={{ ...s.button((r.vehicle_id_asignado || r.unidad_asignada) ? '#ef4444' : '#3b82f6'), marginTop: '0.25rem', width: '100%' }}
+                        >
+                          {(r.vehicle_id_asignado || r.unidad_asignada) ? 'Desasignar' : 'Asignar a unidad'}
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -2759,9 +3851,58 @@ export default function Home() {
               );
             })}
 
-            {selectedRemolque && historialRemolque.length > 0 && (
+            {selectedRemolque && (
               <div style={{ background: '#111', border: '1px solid #1a3d1a', borderRadius: '10px', padding: '1rem' }}>
+                {(() => {
+                  const remolque = remolques.find(item => item.id === selectedRemolque);
+                  if (!remolque) return null;
+                  const asignado = remolque.vehicle_id_asignado || remolque.unidad_asignada;
+                  const esTanque = String(remolque.categoria || '').toLowerCase() === 'tanque';
+                  return (
+                    <div style={{ marginBottom: '1rem', paddingBottom: '1rem', borderBottom: '1px solid #1a3d1a' }}>
+                      <h3 style={{ color: '#00ff41', margin: '0 0 0.75rem 0' }}>Asignación de {numeroRemolque(remolque.numero)}</h3>
+                      {asignado ? (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                          <span style={{ color: '#e0e0e0' }}>
+                            {obtenerMiembrosFull(remolque).length > 1 ? `FULL: ${displayRemolque(remolque)}` : numeroRemolque(remolque.numero)} · {remolque.unidad_asignada || remolque.vehicle_id_asignado}
+                          </span>
+                          <button type="button" onClick={() => desasignarRemolque(remolque.id)} style={s.button('#ef4444')}>Desasignar</button>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                          {esTanque && (
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                              {['sencillo', 'full'].map(modo => (
+                                <button key={modo} type="button" onClick={() => { setRemolqueDashModo(modo); if (modo === 'sencillo') setRemolqueDashSegundoId(''); }} style={{ ...s.button(remolqueDashModo === modo ? '#f59e0b' : '#6b7280'), flex: 1 }}>
+                                  {modo === 'full' ? 'Armar Full' : 'Sencillo'}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          <select value={remolqueDashVehicleId} onChange={e => setRemolqueDashVehicleId(e.target.value)} style={s.select}>
+                            <option value="">Seleccionar unidad...</option>
+                            {vehiculos.map(vehicle => <option key={vehicle.id} value={String(vehicle.id)}>{vehicle.name}</option>)}
+                          </select>
+                          {remolqueDashModo === 'full' && esTanque && (
+                            <select value={remolqueDashSegundoId} onChange={e => setRemolqueDashSegundoId(e.target.value)} style={s.select}>
+                              <option value="">Seleccionar segundo tanque...</option>
+                              {remolques.filter(item => item.id !== remolque.id && String(item.categoria || '').toLowerCase() === 'tanque' && !item.vehicle_id_asignado).map(item => (
+                                <option key={item.id} value={String(item.id)}>{numeroRemolque(item.numero)}</option>
+                              ))}
+                            </select>
+                          )}
+                          <button type="button" disabled={remolqueDashSaving} onClick={() => asignarRemolqueDesdeDashboard(remolque)} style={s.button('#10b981')}>
+                            {remolqueDashSaving ? 'Asignando...' : remolqueDashModo === 'full' && esTanque ? 'Asignar Full' : 'Asignar remolque'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
                 <h3 style={{ color: '#e0e0e0', margin: '0 0 0.75rem 0', fontSize: '0.95rem' }}>Historial de asignaciones</h3>
+                {historialRemolqueLoading && <div style={{ color: '#6a9b6a' }}>Cargando historial...</div>}
+                {historialRemolqueError && <div style={{ color: '#f87171' }}>{historialRemolqueError}</div>}
+                {!historialRemolqueLoading && !historialRemolqueError && historialRemolque.length === 0 && <div style={{ color: '#6a9b6a' }}>Sin asignaciones registradas.</div>}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                   {historialRemolque.map((h, i) => (
                     <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.6rem 0.75rem', background: h.activa ? '#002200' : '#1a1a1a', borderRadius: '8px', border: `1px solid ${h.activa ? '#00ff4133' : '#333'}` }}>
@@ -2799,7 +3940,7 @@ export default function Home() {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {!showSeguimientoForm && (
-                <button onClick={() => setShowSeguimientoForm(true)} style={{ ...s.button('#10b981'), alignSelf: 'flex-start' }}>+ Nuevo seguimiento</button>
+                <button onClick={abrirNuevoSeguimiento} style={{ ...s.button('#10b981'), alignSelf: 'flex-start' }}>+ Nuevo seguimiento</button>
               )}
               {showSeguimientoForm && (
               <div style={s.card}>
@@ -2845,11 +3986,11 @@ export default function Home() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
                     <div>
                       <label style={s.label}>Origen</label>
-                      <input style={s.input} value={formSeguimiento.origen} onChange={e => setFormSeguimiento({ ...formSeguimiento, origen: e.target.value })} placeholder="Origen" />
+                       <select style={s.select} value={formSeguimiento.origen} onChange={e => setFormSeguimiento({ ...formSeguimiento, origen: e.target.value })}>{geofenceOptions(formSeguimiento.origen)}</select>
                     </div>
                     <div>
                       <label style={s.label}>Destino</label>
-                      <input style={s.input} value={formSeguimiento.destino} onChange={e => setFormSeguimiento({ ...formSeguimiento, destino: e.target.value })} placeholder="Destino" />
+                       <select style={s.select} value={formSeguimiento.destino} onChange={e => setFormSeguimiento({ ...formSeguimiento, destino: e.target.value })}>{geofenceOptions(formSeguimiento.destino)}</select>
                     </div>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
@@ -2922,7 +4063,7 @@ export default function Home() {
                     <button onClick={() => { setSeguimientoFilter(''); setSeguimientoUnidadFilter(''); setSeguimientoEstatusFilter(''); setSeguimientoGrupoFilter(''); }} style={s.button('#6b7280')}>Limpiar</button>
                   </div>
                   <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    <button onClick={() => { limpiarSeguimientoForm(); setActiveTab('seguimiento'); }} style={s.button('#3b82f6')}>+ Nuevo</button>
+                    <button onClick={abrirNuevoSeguimiento} style={s.button('#3b82f6')}>+ Nuevo</button>
                     <button onClick={abrirActualizarSeguimiento} style={s.button('#10b981')}>Actualizar Seguimiento</button>
                     <button onClick={abrirGeneradorMensajes} style={s.button('#8b5cf6')}>📲 Generar Mensaje</button>
                   </div>
@@ -3106,14 +4247,18 @@ export default function Home() {
                     <label style={s.label}>Nombre *</label>
                     <input style={s.input} placeholder="Ej: Planta GERS Chihuahua" value={formGeofence.nombre} onChange={e => setFormGeofence({...formGeofence, nombre: e.target.value})} required />
                   </div>
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <label style={s.label}>Dirección</label>
+                    <input style={s.input} placeholder="Escribe una dirección para geocodificar" value={formGeofence.direccion || ''} onChange={e => setFormGeofence({...formGeofence, direccion: e.target.value})} />
+                  </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
                     <div>
                       <label style={s.label}>Latitud *</label>
-                      <input style={s.input} type="number" step="any" placeholder="28.6353" value={formGeofence.latitud} onChange={e => setFormGeofence({...formGeofence, latitud: e.target.value})} required />
+                      <input style={s.input} type="number" step="any" placeholder="28.6353" value={formGeofence.latitud} onChange={e => setFormGeofence({...formGeofence, latitud: e.target.value})} />
                     </div>
                     <div>
                       <label style={s.label}>Longitud *</label>
-                      <input style={s.input} type="number" step="any" placeholder="-106.0889" value={formGeofence.longitud} onChange={e => setFormGeofence({...formGeofence, longitud: e.target.value})} required />
+                      <input style={s.input} type="number" step="any" placeholder="-106.0889" value={formGeofence.longitud} onChange={e => setFormGeofence({...formGeofence, longitud: e.target.value})} />
                     </div>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
@@ -3224,6 +4369,122 @@ export default function Home() {
           </div>
         )}
 
+        {activeTab === 'mapas' && (
+          <div className="mapas-page">
+            <div className="mapas-header">
+              <div>
+                <h2>Mapas</h2>
+                <p>Rutas operativas guardadas en Google My Maps</p>
+              </div>
+              <button type="button" onClick={() => refreshMapas()} style={s.button()}>Actualizar</button>
+            </div>
+
+            {mapasError && <div className="mapas-error" role="alert">{mapasError}</div>}
+
+            <div className="mapas-layout">
+              <aside className="mapas-sidebar">
+                <form className="mapas-form" onSubmit={guardarMapa}>
+                  <h3>{mapaEditando ? 'Editar mapa' : 'Nuevo mapa'}</h3>
+                  <label>
+                    <span>Nombre</span>
+                    <input required value={formMapa.nombre} onChange={e => setFormMapa({ ...formMapa, nombre: e.target.value })} placeholder="Ruta Bajío" />
+                  </label>
+                  <div className="mapas-form-route">
+                    <label>
+                      <span>Origen</span>
+                       <select value={formMapa.origen} onChange={e => setFormMapa({ ...formMapa, origen: e.target.value })}>{geofenceOptions(formMapa.origen)}</select>
+                    </label>
+                    <label>
+                      <span>Destino</span>
+                       <select value={formMapa.destino} onChange={e => setFormMapa({ ...formMapa, destino: e.target.value })}>{geofenceOptions(formMapa.destino)}</select>
+                    </label>
+                  </div>
+                  <label>
+                    <span>Descripción</span>
+                    <textarea rows="3" value={formMapa.descripcion} onChange={e => setFormMapa({ ...formMapa, descripcion: e.target.value })} placeholder="Paradas, restricciones y referencias de la ruta" />
+                  </label>
+                  <label>
+                    <span>URL Google My Maps</span>
+                    <input
+                      required
+                      type="url"
+                      value={formMapa.url}
+                      onChange={e => setFormMapa({ ...formMapa, url: e.target.value })}
+                      onBlur={() => {
+                        const embedUrl = googleMyMapsEmbedUrl(formMapa.url);
+                        if (embedUrl) setFormMapa(prev => ({ ...prev, url: embedUrl }));
+                      }}
+                      placeholder="https://www.google.com/maps/d/viewer?mid=..."
+                    />
+                  </label>
+                  <div className="mapas-form-actions">
+                    {mapaEditando && <button type="button" onClick={cancelarEdicionMapa} style={s.button('#9ca3af')}>Cancelar</button>}
+                    <button type="submit" disabled={mapaSaving} style={s.button()}>{mapaSaving ? 'Guardando...' : mapaEditando ? 'Actualizar' : 'Guardar mapa'}</button>
+                  </div>
+                </form>
+
+                <div className="mapas-list" aria-label="Mapas guardados">
+                  {mapas.length === 0 ? (
+                    <div className="mapas-empty">No hay mapas guardados.</div>
+                  ) : mapas.map(mapa => (
+                    <article
+                      key={mapa.id}
+                      className={`mapa-card${String(selectedMapa?.id) === String(mapa.id) ? ' selected' : ''}`}
+                      role="button"
+                      tabIndex="0"
+                      onClick={() => setSelectedMapa(mapa)}
+                      onKeyDown={e => activarConTeclado(e, () => setSelectedMapa(mapa))}
+                    >
+                      <div className="mapa-card-title">{mapa.nombre}</div>
+                      <div className="mapa-card-route">{mapa.origen || 'Origen sin definir'} <span>→</span> {mapa.destino || 'Destino sin definir'}</div>
+                      {mapa.descripcion && <p>{mapa.descripcion}</p>}
+                      <div className="mapa-card-actions">
+                        <button type="button" onClick={e => { e.stopPropagation(); editarMapa(mapa); }} style={s.button('#60a5fa')}>Editar</button>
+                        <button type="button" onClick={e => { e.stopPropagation(); eliminarMapa(mapa); }} style={s.button('#ef4444')}>Eliminar</button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </aside>
+
+              <section className="mapas-viewer">
+                {!selectedMapa ? (
+                  <div className="mapas-viewer-empty">
+                    <span>🗺️</span>
+                    <p>Selecciona un mapa para visualizarlo.</p>
+                  </div>
+                ) : (() => {
+                  const urlSegura = googleUrlSeguro(mapaUrl(selectedMapa));
+                  const embedUrl = googleMyMapsEmbedUrl(urlSegura);
+                  return (
+                    <>
+                      <div className="mapas-viewer-header">
+                        <div>
+                          <h3>{selectedMapa.nombre}</h3>
+                          <p>{selectedMapa.origen || 'Origen sin definir'} → {selectedMapa.destino || 'Destino sin definir'}</p>
+                        </div>
+                        {urlSegura && <a href={urlSegura} target="_blank" rel="noopener noreferrer">Abrir en Google</a>}
+                      </div>
+                      {selectedMapa.descripcion && <div className="mapas-viewer-description">{selectedMapa.descripcion}</div>}
+                      {embedUrl ? (
+                        <div className="mapas-iframe-wrap">
+                          <iframe src={embedUrl} title={`Mapa ${selectedMapa.nombre}`} loading="lazy" referrerPolicy="no-referrer-when-downgrade" allowFullScreen />
+                        </div>
+                      ) : (
+                        <div className="mapas-not-embeddable">
+                          <strong>Este enlace no se puede incrustar.</strong>
+                          <p>Abre el mapa en Google o edítalo y pega una URL de Google My Maps que incluya el parámetro mid.</p>
+                          {urlSegura && <a href={urlSegura} target="_blank" rel="noopener noreferrer">Abrir enlace en Google</a>}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </section>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'rutas' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
@@ -3244,7 +4505,7 @@ export default function Home() {
               <div>
                 <label style={s.label}>Fecha</label>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <input style={{ ...s.input, flex: 1 }} type="date" value={routeDate} onChange={e => setRouteDate(e.target.value)} />
+                  <input style={{ ...s.input, flex: 1 }} type="date" value={routeDate} onChange={e => cambiarFechaRuta(e.target.value)} />
                   <button onClick={cargarHistorialRuta} style={s.button()}>Buscar</button>
                 </div>
               </div>
@@ -3255,7 +4516,7 @@ export default function Home() {
                 <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.9rem', color: '#e0e0e0' }}>Días disponibles</h3>
                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                   {routeDates.map(d => (
-                    <button key={d.fecha} onClick={() => { setRouteDate(d.fecha); }}
+                    <button key={d.fecha} onClick={() => cambiarFechaRuta(d.fecha)}
                       style={{ padding: '0.4rem 0.8rem', borderRadius: '8px', border: `1px solid ${routeDate === d.fecha ? '#00ff41' : '#1a3d1a'}`, background: routeDate === d.fecha ? '#00ff4115' : '#111', color: routeDate === d.fecha ? '#00ff41' : '#c0c0c0', cursor: 'pointer', fontSize: '0.8rem' }}>
                       {d.fecha} ({d.puntos} pts)
                     </button>
@@ -3270,7 +4531,7 @@ export default function Home() {
               </div>
               <div style={{ ...s.card, overflow: 'auto', maxHeight: 'calc(100vh - 320px)' }}>
                 {(() => {
-                  const routeStops = routeHistory.filter((p, i) => i > 0 && Number(p.speed || 0) < 1 && Number(routeHistory[i - 1]?.speed || 0) >= 1);
+                  const routeStops = routeHistory.filter((p, i) => i > 0 && !estaEnMovimiento(p.speed) && estaEnMovimiento(routeHistory[i - 1]?.speed));
                   return (
                     <>
                       <h3 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.9rem', color: '#e0e0e0' }}>
@@ -3298,7 +4559,7 @@ export default function Home() {
                               <div key={p.id} style={{ padding: '0.5rem 0', borderBottom: '1px solid #0d1f0d', fontSize: '0.8rem' }}>
                                 <div style={{ color: '#c0c0c0' }}>
                                   <span style={{ color: '#00ff41', fontWeight: '600' }}>{parseFecha(p.recorded_at)?.toLocaleTimeString()}</span>
-                                  {' · '}{Math.round(p.speed || 0)} mph
+                                  {' · '}{velocidadKmh(p.speed)} km/h
                                 </div>
                                 <div style={{ color: '#4a8a4a', fontSize: '0.75rem' }}>{p.location || 'Sin dirección'}</div>
                               </div>
@@ -3318,13 +4579,39 @@ export default function Home() {
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <div>
-                <h2 style={{ margin: 0, fontSize: '1.5rem', color: '#e0e0e0' }}>Citas por Unidad</h2>
-                <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>Unidades con citas próximas en seguimiento y viajes</p>
+                <h2 style={{ margin: 0, fontSize: '1.5rem', color: '#e0e0e0' }}>Citas por Día de Entrega</h2>
+                <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>Cargas agrupadas por la fecha de descarga para mejor control operativo</p>
               </div>
               <button onClick={loadAll} style={s.button()}>Actualizar</button>
             </div>
 
             {(() => {
+              const parseFlexibleDate = (value) => {
+                if (!value) return null;
+                const normalized = String(value).trim().replace(' ', 'T');
+                const date = new Date(normalized);
+                return Number.isNaN(date.getTime()) ? null : date;
+              };
+              const deliveryKey = (item) => {
+                const date = parseFlexibleDate(item.cita_descarga || item.fecha_fin || item.cita_carga || item.fecha_inicio || '');
+                if (!date) return 'sin-fecha';
+                const y = date.getFullYear();
+                const m = String(date.getMonth() + 1).padStart(2, '0');
+                const d = String(date.getDate()).padStart(2, '0');
+                return `${y}-${m}-${d}`;
+              };
+              const deliveryLabel = (key) => {
+                if (key === 'sin-fecha') return 'Sin fecha de entrega';
+                const [y, m, d] = key.split('-').map(Number);
+                const date = new Date(y, m - 1, d);
+                return date.toLocaleDateString('es-MX', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+              };
+              const etaLabel = (value) => {
+                const date = parseFlexibleDate(value);
+                if (!date) return '-';
+                const cushion = new Date(date.getTime() + 60 * 60 * 1000);
+                return cushion.toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' });
+              };
               const items = [
                 ...seguimiento.filter(r => r.cita_carga || r.cita_descarga).map(r => ({
                   id: `seg-${r.id}`,
@@ -3336,6 +4623,8 @@ export default function Home() {
                   cita_descarga: r.cita_descarga,
                   remolque: r.remolque,
                   estatus: r.estatus,
+                  geocercas_origen: geocercasCoincidentes(r.origen),
+                  geocercas_destino: geocercasCoincidentes(r.destino),
                 })),
                 ...viajes.filter(v => v.fecha_inicio || v.fecha_fin).map(v => ({
                   id: `via-${v.id}`,
@@ -3347,8 +4636,26 @@ export default function Home() {
                   cita_descarga: v.fecha_fin,
                   remolque: v.remolque,
                   estatus: v.estado,
+                  geocercas_origen: geocercasCoincidentes(v.origen),
+                  geocercas_destino: geocercasCoincidentes(v.destino),
                 })),
-              ].sort((a, b) => new Date((a.cita_carga || a.cita_descarga || 0)).getTime() - new Date((b.cita_carga || b.cita_descarga || 0)).getTime());
+              ].sort((a, b) => {
+                const da = parseFlexibleDate(a.cita_descarga || a.fecha_fin || a.cita_carga || a.fecha_inicio || '');
+                const db = parseFlexibleDate(b.cita_descarga || b.fecha_fin || b.cita_carga || b.fecha_inicio || '');
+                return (da?.getTime() || 0) - (db?.getTime() || 0);
+              });
+
+              const grouped = items.reduce((acc, item) => {
+                const key = deliveryKey(item);
+                if (!acc[key]) acc[key] = [];
+                acc[key].push(item);
+                return acc;
+              }, {});
+              const groups = Object.entries(grouped).sort((a, b) => {
+                if (a[0] === 'sin-fecha') return 1;
+                if (b[0] === 'sin-fecha') return -1;
+                return a[0].localeCompare(b[0]);
+              });
 
               return items.length === 0 ? (
                 <div style={{ ...s.card, textAlign: 'center', padding: '3rem', color: '#6a9b6a' }}>
@@ -3356,20 +4663,51 @@ export default function Home() {
                   <p>No hay unidades con citas registradas</p>
                 </div>
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
-                  {items.map(item => (
-                    <div key={item.id} style={{ ...s.card, borderLeft: `4px solid ${item.tipo === 'Viaje' ? '#3b82f6' : '#f59e0b'}`, padding: '1rem' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  {groups.map(([key, rows]) => (
+                    <div key={key} style={{ ...s.card, padding: '1rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', marginBottom: '0.9rem', flexWrap: 'wrap' }}>
                         <div>
-                          <div style={{ fontWeight: 700, color: '#00ff41' }}>{item.unidad || '-'}</div>
-                          <div style={{ fontSize: '0.75rem', color: '#6a9b6a' }}>{item.tipo}</div>
+                          <div style={{ fontSize: '1rem', fontWeight: 800, color: '#00ff41' }}>{deliveryLabel(key)}</div>
+                          <div style={{ fontSize: '0.8rem', color: '#6a9b6a' }}>{rows.length} cita(s)</div>
                         </div>
-                        <span style={s.badge(item.tipo === 'Viaje' ? '#3b82f6' : '#f59e0b')}>{item.estatus || 'pendiente'}</span>
+                        <span style={s.badge('#3b82f6')}>Entrega</span>
                       </div>
-                      <div style={{ fontSize: '0.85rem', color: '#e0e0e0', marginBottom: '0.35rem' }}>{item.origen || '-'} → {item.destino || '-'}</div>
-                      <div style={{ fontSize: '0.8rem', color: '#c0c0c0' }}>Carga: <strong>{item.cita_carga || '-'}</strong></div>
-                      <div style={{ fontSize: '0.8rem', color: '#c0c0c0' }}>Descarga: <strong>{item.cita_descarga || '-'}</strong></div>
-                      {item.remolque && <div style={{ marginTop: '0.35rem', fontSize: '0.75rem', color: '#f59e0b' }}>🚛 {item.remolque}</div>}
+
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={s.table}>
+                          <thead>
+                            <tr>
+                              <th style={s.th}>Unidad</th>
+                              <th style={s.th}>Tipo</th>
+                              <th style={s.th}>Destino</th>
+                              <th style={s.th}>Geocerca Destino</th>
+                              <th style={s.th}>ETA</th>
+                              <th style={s.th}>Entrega</th>
+                              <th style={s.th}>Remolque</th>
+                              <th style={s.th}>Estatus</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rows.map(item => (
+                              <tr key={item.id}>
+                                <td style={s.td}><strong style={{ color: '#00ff41' }}>{item.unidad || '-'}</strong></td>
+                                <td style={s.td}>{item.tipo}</td>
+                                <td style={s.td}>{item.destino || '-'}</td>
+                                <td style={s.td}>
+                                  {item.geocercas_destino?.length ? item.geocercas_destino.map(name => (
+                                    <div key={name} style={{ fontSize: '0.75rem', color: '#3b82f6' }}>📍 {name}</div>
+                                  )) : '-'}
+                                </td>
+                                <td style={s.td}>{etaLabel(item.cita_descarga || item.cita_carga)}</td>
+                                <td style={s.td}>{item.cita_descarga || '-'}</td>
+                                <td style={s.td}>{item.remolque || '-'}</td>
+                                <td style={s.td}><span style={s.badge(item.tipo === 'Viaje' ? '#3b82f6' : '#f59e0b')}>{item.estatus || 'pendiente'}</span></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -3412,19 +4750,33 @@ export default function Home() {
               <table style={s.table}>
                 <thead>
                   <tr>
+                    <th style={s.th}>Usuario</th>
                     <th style={s.th}>Nombre</th>
                     <th style={s.th}>Rol</th>
                     <th style={s.th}>Estado</th>
                     <th style={s.th}>Creado</th>
+                    <th style={s.th}>Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
                   {usuarios.map((u) => (
                     <tr key={u.id}>
+                      <td style={s.td}>{u.username}</td>
                       <td style={s.td}>{u.nombre || '-'}</td>
                       <td style={s.td}>{u.rol}</td>
                       <td style={s.td}>{u.activo ? 'Activo' : 'Inactivo'}</td>
                       <td style={s.td}>{u.created_at || '-'}</td>
+                      <td style={s.td}>
+                        <button
+                          type="button"
+                          disabled={u.id === currentUser?.id}
+                          onClick={() => eliminarUsuario(u)}
+                          title={u.id === currentUser?.id ? 'No puedes eliminar tu propia cuenta' : `Eliminar ${u.username}`}
+                          style={{ ...s.button('#ef4444'), opacity: u.id === currentUser?.id ? 0.45 : 1, cursor: u.id === currentUser?.id ? 'not-allowed' : 'pointer' }}
+                        >
+                          Eliminar
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -3440,7 +4792,7 @@ export default function Home() {
               <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                 <div>
                   <label style={s.label}>Tipo</label>
-                  <select style={s.select} value={filtroReporte.tipo} onChange={(e) => setFiltroReporte({ ...filtroReporte, tipo: e.target.value })}>
+                  <select style={s.select} value={filtroReporte.tipo} onChange={(e) => actualizarFiltroReporte({ tipo: e.target.value, vehicle_id: '' })}>
                     <option value="pendientes">Pendientes</option>
                     <option value="pendientes-completados">Pendientes completados</option>
                     <option value="viajes">Viajes</option>
@@ -3452,7 +4804,7 @@ export default function Home() {
                 {(filtroReporte.tipo === 'seguimiento' || filtroReporte.tipo === 'bitacora' || filtroReporte.tipo === 'incidencias') && (
                   <div>
                     <label style={s.label}>Unidad</label>
-                    <select style={s.select} value={filtroReporte.vehicle_id || ''} onChange={(e) => setFiltroReporte({ ...filtroReporte, vehicle_id: e.target.value })}>
+                    <select style={s.select} value={filtroReporte.vehicle_id || ''} onChange={(e) => actualizarFiltroReporte({ vehicle_id: e.target.value })}>
                       <option value="">Todas</option>
                       {vehiculos.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
                     </select>
@@ -3460,18 +4812,20 @@ export default function Home() {
                 )}
                 <div>
                   <label style={s.label}>Fecha Inicio</label>
-                  <input style={s.input} type="date" value={filtroReporte.fecha_inicio} onChange={(e) => setFiltroReporte({ ...filtroReporte, fecha_inicio: e.target.value })} />
+                  <input style={s.input} type="date" value={filtroReporte.fecha_inicio} onChange={(e) => actualizarFiltroReporte({ fecha_inicio: e.target.value })} />
                 </div>
                 <div>
                   <label style={s.label}>Fecha Fin</label>
-                  <input style={s.input} type="date" value={filtroReporte.fecha_fin} onChange={(e) => setFiltroReporte({ ...filtroReporte, fecha_fin: e.target.value })} />
+                  <input style={s.input} type="date" value={filtroReporte.fecha_fin} onChange={(e) => actualizarFiltroReporte({ fecha_fin: e.target.value })} />
                 </div>
-                <button onClick={cargarReporte} style={s.button('#10b981')}>Generar</button>
+                <button onClick={cargarReporte} disabled={reporteLoading} style={s.button('#10b981')}>{reporteLoading ? 'Generando...' : 'Generar'}</button>
                 {reportes.length > 0 && <button onClick={generarPDF} style={s.button('#ef4444')}>Descargar PDF</button>}
               </div>
             </div>
             <div style={s.card}>
-              {reportes.length === 0 ? (
+              {reporteError ? (
+                <div role="alert" style={{ padding: '1rem', color: '#f87171' }}>{reporteError}</div>
+              ) : reportes.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '3rem', color: '#6a9b6a' }}>
                   <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>📈</div>
                   <p>Selecciona filtros y haz clic en &quot;Generar&quot;</p>
@@ -3507,9 +4861,9 @@ export default function Home() {
       </main>
 
       {showZoneModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}
+        <div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}
           onClick={() => setShowZoneModal(false)}>
-          <div style={{ background: '#0d0d0d', borderRadius: '16px', width: '420px', maxHeight: '85vh', overflow: 'auto', boxShadow: '0 25px 50px rgba(0,0,0,0.5), 0 0 30px rgba(248,113,113,0.1)', border: '1px solid #3d1a1a' }}
+          <div className="modal-panel" role="dialog" aria-modal="true" aria-label="Nueva zona de riesgo" style={{ background: '#0d0d0d', borderRadius: '16px', width: '420px', maxHeight: '85vh', overflow: 'auto', boxShadow: '0 25px 50px rgba(0,0,0,0.5), 0 0 30px rgba(248,113,113,0.1)', border: '1px solid #3d1a1a' }}
             onClick={e => e.stopPropagation()}>
             <div style={{ padding: '1.5rem', borderBottom: '1px solid #3d1a1a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#e0e0e0' }}>⚠️ Nueva Zona de Riesgo</h3>
@@ -3527,11 +4881,11 @@ export default function Home() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
                 <div>
                   <label style={s.label}>Latitud</label>
-                  <input style={s.input} value={newZone.lat} readOnly placeholder="Haz clic en el mapa" />
+                  <input style={s.input} type="number" step="any" min="-90" max="90" value={newZone.lat} onChange={e => setNewZone({ ...newZone, lat: e.target.value })} required placeholder="Ej: 28.6353" />
                 </div>
                 <div>
                   <label style={s.label}>Longitud</label>
-                  <input style={s.input} value={newZone.lng} readOnly placeholder="Haz clic en el mapa" />
+                  <input style={s.input} type="number" step="any" min="-180" max="180" value={newZone.lng} onChange={e => setNewZone({ ...newZone, lng: e.target.value })} required placeholder="Ej: -106.0889" />
                 </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1.5rem' }}>
@@ -3557,9 +4911,9 @@ export default function Home() {
       )}
 
       {showUnidadModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}
+        <div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}
           onClick={() => setShowUnidadModal(false)}>
-          <div style={{ background: '#0d0d0d', borderRadius: '16px', width: '440px', maxHeight: '85vh', overflow: 'auto', boxShadow: '0 25px 50px rgba(0,0,0,0.5), 0 0 30px rgba(0,255,65,0.1)', border: '1px solid #1a3d1a' }}
+          <div className="modal-panel" role="dialog" aria-modal="true" aria-label={editUnidad ? 'Editar unidad' : 'Nueva unidad'} style={{ background: '#0d0d0d', borderRadius: '16px', width: '440px', maxHeight: '85vh', overflow: 'auto', boxShadow: '0 25px 50px rgba(0,0,0,0.5), 0 0 30px rgba(0,255,65,0.1)', border: '1px solid #1a3d1a' }}
             onClick={e => e.stopPropagation()}>
             <div style={{ padding: '1.5rem', borderBottom: '1px solid #1a3d1a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#e0e0e0' }}>{editUnidad ? '✏️ Editar Unidad' : '➕ Nueva Unidad'}</h3>
@@ -3596,9 +4950,9 @@ export default function Home() {
       )}
 
       {selectedVehicle && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+        <div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
           onClick={() => setSelectedVehicle(null)}>
-          <div style={{ background: '#0d0d0d', borderRadius: '16px', width: '520px', maxHeight: '85vh', overflow: 'auto', boxShadow: '0 25px 50px rgba(0,0,0,0.5), 0 0 30px rgba(0,255,65,0.1)', border: '1px solid #1a3d1a' }}
+          <div className="modal-panel" role="dialog" aria-modal="true" aria-label={`Detalles de ${selectedVehicle.name}`} style={{ background: '#0d0d0d', borderRadius: '16px', width: '520px', maxHeight: '85vh', overflow: 'auto', boxShadow: '0 25px 50px rgba(0,0,0,0.5), 0 0 30px rgba(0,255,65,0.1)', border: '1px solid #1a3d1a' }}
             onClick={e => e.stopPropagation()}>
             <div style={{ padding: '1.5rem', borderBottom: '1px solid #1a3d1a' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -3634,30 +4988,33 @@ export default function Home() {
               <div style={{ background: '#1a1a1a', borderRadius: '10px', padding: '1rem', marginBottom: '1.5rem' }}>
                 <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.5rem' }}>Operador Asignado</div>
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
-                  <select
-                    value={operadores[String(selectedVehicle.id)]?.nombre || ''}
+                  <input
+                    list="samsara-drivers-suggestions"
+                    value={operadorDraft}
                     onChange={e => {
                       const nombre = e.target.value;
                       const driver = samsaraDrivers.find(d => d.name === nombre);
-                      setOperadores(prev => ({ ...prev, [String(selectedVehicle.id)]: { nombre, telefono: driver?.phone || prev[String(selectedVehicle.id)]?.telefono || '' } }));
+                      setOperadorDraft(nombre);
+                      setTelefonoDraft(driver ? (driverPhoneOverrides[driver.id] ?? driver.phone ?? '') : telefonoDraft);
                     }}
+                    placeholder="Escribe o elige operador"
                     style={{ flex: 1, padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem', background: '#ffffff', color: '#000000' }}
-                  >
-                    <option value="">Seleccionar operador...</option>
+                  />
+                  <datalist id="samsara-drivers-suggestions">
                     {samsaraDrivers.filter(d => d.status === 'active').sort((a, b) => a.name.localeCompare(b.name)).map(d => (
-                      <option key={d.id} value={d.name}>{d.name}</option>
+                      <option key={d.id} value={d.name} />
                     ))}
-                  </select>
+                  </datalist>
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
                   <input
                     placeholder="Telefono WhatsApp (521XXXXXXXXXX)"
-                    value={operadores[String(selectedVehicle.id)]?.telefono || ''}
-                    onChange={e => setOperadores(prev => ({ ...prev, [String(selectedVehicle.id)]: { ...(prev[String(selectedVehicle.id)] || {}), telefono: e.target.value } }))}
+                    value={telefonoDraft}
+                    onChange={e => setTelefonoDraft(e.target.value)}
                     style={{ flex: 1, padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem', background: '#ffffff', color: '#000000' }}
                   />
                   <button
-                    onClick={() => guardarOperador(selectedVehicle.id, selectedVehicle.name, operadores[String(selectedVehicle.id)]?.nombre || '', operadores[String(selectedVehicle.id)]?.telefono || '')}
+                    onClick={() => guardarOperador(selectedVehicle.id, selectedVehicle.name, operadorDraft || '', telefonoDraft || '')}
                     style={{ padding: '0.55rem 0.75rem', background: '#10b981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600', whiteSpace: 'nowrap' }}>
                     Asignar
                   </button>
@@ -3666,26 +5023,51 @@ export default function Home() {
 
               <div style={{ background: '#1a1a1a', borderRadius: '10px', padding: '1rem', marginBottom: '1.5rem' }}>
                 <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.5rem' }}>Remolque Asignado</div>
+                {(() => {
+                  const asignado = remolques.find(r => String(r.vehicle_id_asignado || '') === String(selectedVehicle.id) || String(r.unidad_asignada || '').toLowerCase() === String(selectedVehicle.name || '').toLowerCase());
+                  const esFull = asignado && obtenerMiembrosFull(asignado).length > 1;
+                  return asignado ? (
+                    <div style={{ color: '#f59e0b', fontWeight: 700, marginBottom: '0.75rem' }}>
+                      {esFull ? `Full · ${displayRemolque(asignado)}` : numeroRemolque(asignado.numero)}
+                    </div>
+                  ) : null;
+                })()}
+                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                  {['sencillo', 'full'].map(modo => (
+                    <button key={modo} type="button" onClick={() => setRemolqueModo(modo)} style={{ flex: 1, padding: '0.45rem', borderRadius: '7px', cursor: 'pointer', fontWeight: 700, border: `1px solid ${remolqueModo === modo ? '#f59e0b' : '#444'}`, background: remolqueModo === modo ? '#332200' : '#111', color: remolqueModo === modo ? '#f59e0b' : '#aaa' }}>
+                      {modo === 'full' ? 'Full' : 'Sencillo'}
+                    </button>
+                  ))}
+                </div>
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                  <select
-                    value={remolques.find(r => r.vehicle_id_asignado === String(selectedVehicle.id))?.id || ''}
-                    onChange={e => {
-                      const remolqueId = e.target.value;
-                      const vName = selectedVehicle.name;
-                      if (remolqueId) {
-                        asignarRemolque(remolqueId, String(selectedVehicle.id), vName);
-                      } else {
-                        const actual = remolques.find(r => r.vehicle_id_asignado === String(selectedVehicle.id));
-                        if (actual) desasignarRemolque(actual.id);
-                      }
-                    }}
-                    style={{ flex: 1, padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem', background: '#ffffff', color: '#000000' }}
-                  >
-                    <option value="">Sin remolque</option>
-                    {remolques.map(r => (
-                      <option key={r.id} value={r.id} disabled={r.vehicle_id_asignado && r.vehicle_id_asignado !== String(selectedVehicle.id)}>#{r.numero}{r.unidad_asignada ? ` (${r.unidad_asignada})` : ''}</option>
-                    ))}
-                  </select>
+                  {remolqueModo === 'sencillo' ? (
+                    <>
+                      <select
+                        value={remolqueDraft}
+                        onChange={e => setRemolqueDraft(e.target.value)}
+                        style={{ flex: 1, padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem', background: '#ffffff', color: '#000000' }}
+                      >
+                        <option value="">Sin remolque</option>
+                        {remolques.filter(r => !r.vehicle_id_asignado || String(r.vehicle_id_asignado) === String(selectedVehicle.id)).map(r => (
+                          <option key={r.id} value={String(r.id)}>{numeroRemolque(r.numero)}{r.unidad_asignada ? ` (${r.unidad_asignada})` : ''}</option>
+                        ))}
+                      </select>
+                    </>
+                  ) : [0, 1].map(index => (
+                    <select key={index} aria-label={`Tanque ${index + 1}`} value={remolquesFullDraft[index]} onChange={e => setRemolquesFullDraft(draft => draft.map((id, i) => i === index ? e.target.value : id))} style={{ ...s.select, flex: 1 }}>
+                      <option value="">Tanque {index + 1}</option>
+                      {remolques.filter(r => String(r.categoria || '').toLowerCase() === 'tanque'
+                        && (!r.vehicle_id_asignado || String(r.vehicle_id_asignado) === String(selectedVehicle.id) || String(r.unidad_asignada || '').toLowerCase() === String(selectedVehicle.name || '').toLowerCase())
+                        && String(r.id) !== String(remolquesFullDraft[index === 0 ? 1 : 0])).map(r => (
+                          <option key={r.id} value={String(r.id)}>{numeroRemolque(r.numero)}</option>
+                        ))}
+                    </select>
+                  ))}
+                  <button
+                    onClick={guardarRemolqueSeleccionado}
+                    style={{ padding: '0.55rem 0.75rem', background: '#f59e0b', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600', whiteSpace: 'nowrap' }}>
+                    Guardar
+                  </button>
                 </div>
               </div>
 
@@ -3706,15 +5088,14 @@ export default function Home() {
                       <div key={v.id} style={{ padding: '0.75rem', background: idx === 0 ? '#0d2e0d' : '#111', borderRadius: '8px', border: `1px solid ${viajeColor}33`, marginBottom: '0.5rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.3rem' }}>
                           <span style={{ fontSize: '0.65rem', background: viajeColor, color: '#000', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: '700', textTransform: 'uppercase' }}>{seqLabel}</span>
-                          <span style={{ fontSize: '0.65rem', background: `${viajeColor}33`, color: viajeColor, padding: '0.15rem 0.45rem', borderRadius: '4px', fontWeight: '700', textTransform: 'uppercase' }}>{viajeLabel}</span>
-                          <span style={{ fontSize: '0.7rem', color: '#6a9b6a' }}>{v.fecha_inicio ? parseFecha(v.fecha_inicio).toLocaleDateString('es-MX') : '-'}</span>
+                           <span style={{ fontSize: '0.65rem', background: `${viajeColor}33`, color: viajeColor, padding: '0.15rem 0.45rem', borderRadius: '4px', fontWeight: '700', textTransform: 'uppercase' }}>{viajeLabel}</span>
+                           {v.tipo_entrega === 'reparto' && <span className="trip-reparto-badge">Reparto</span>}
+                          <span style={{ fontSize: '0.7rem', color: '#6a9b6a' }}>{v.fecha_inicio ? parseFechaProgramada(v.fecha_inicio).toLocaleDateString('es-MX') : '-'}</span>
                         </div>
-                        <div style={{ fontSize: '0.82rem', color: '#e0e0e0' }}>
-                          <strong>{v.origen}</strong> → <strong>{v.destino}</strong>
-                        </div>
+                         {v.tipo_entrega === 'reparto' ? <><div style={{ fontSize: '0.82rem', color: '#e0e0e0' }}><strong>{v.origen}</strong> →</div><div className="trip-stops-display">{destinosViaje(v).map((destino, stopIndex) => <div key={`${v.id}-vehicle-stop-${stopIndex}`}><span>{stopIndex + 1}</span>{destino}</div>)}</div></> : <div style={{ fontSize: '0.82rem', color: '#e0e0e0' }}><strong>{v.origen}</strong> → <strong>{v.destino}</strong></div>}
                         {v.conductor && <div style={{ fontSize: '0.72rem', color: '#6a9b6a', marginTop: '0.15rem' }}>Conductor: {v.conductor}</div>}
                         <div style={{ fontSize: '0.7rem', color: '#4a8a4a', marginTop: '0.15rem' }}>
-                          {v.fecha_inicio ? parseFecha(v.fecha_inicio).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : '--'} - {v.fecha_fin ? parseFecha(v.fecha_fin).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : '--'}
+                          {v.fecha_inicio ? parseFechaProgramada(v.fecha_inicio).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : '--'} - {v.fecha_fin ? parseFechaProgramada(v.fecha_fin).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : '--'}
                         </div>
                       </div>
                       );
@@ -3729,12 +5110,11 @@ export default function Home() {
                           return (
                             <div key={v.id} style={{ padding: '0.6rem 0.75rem', background: '#0f0f0f', borderRadius: '8px', border: '1px solid #333', marginBottom: '0.5rem', opacity: 0.8 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.3rem' }}>
-                                <span style={{ fontSize: '0.65rem', background: viajeColor, color: '#000', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: '700', textTransform: 'uppercase' }}>{viajeLabel}</span>
-                                <span style={{ fontSize: '0.7rem', color: '#6a9b6a' }}>{v.fecha_fin ? parseFecha(v.fecha_fin).toLocaleDateString('es-MX') : '-'}</span>
+                                 <span style={{ fontSize: '0.65rem', background: viajeColor, color: '#000', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: '700', textTransform: 'uppercase' }}>{viajeLabel}</span>
+                                 {v.tipo_entrega === 'reparto' && <span className="trip-reparto-badge">Reparto</span>}
+                                <span style={{ fontSize: '0.7rem', color: '#6a9b6a' }}>{v.fecha_fin ? parseFechaProgramada(v.fecha_fin).toLocaleDateString('es-MX') : '-'}</span>
                               </div>
-                              <div style={{ fontSize: '0.82rem', color: '#a3a3a3' }}>
-                                <strong>{v.origen}</strong> → <strong>{v.destino}</strong>
-                              </div>
+                               {v.tipo_entrega === 'reparto' ? <><div style={{ fontSize: '0.82rem', color: '#a3a3a3' }}><strong>{v.origen}</strong> →</div><div className="trip-stops-display">{destinosViaje(v).map((destino, stopIndex) => <div key={`${v.id}-history-stop-${stopIndex}`}><span>{stopIndex + 1}</span>{destino}</div>)}</div></> : <div style={{ fontSize: '0.82rem', color: '#a3a3a3' }}><strong>{v.origen}</strong> → <strong>{v.destino}</strong></div>}
                             </div>
                           );
                         })}
@@ -3749,7 +5129,7 @@ export default function Home() {
                   <div style={{ display: 'flex', justifyContent: 'space-around', textAlign: 'center' }}>
                     <div>
                       <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Velocidad</div>
-                      <div style={{ fontSize: '1rem', fontWeight: '600' }}>{Math.round(selectedVehicle.location.speed || 0)} mph</div>
+                      <div style={{ fontSize: '1rem', fontWeight: '600' }}>{velocidadKmh(selectedVehicle.location.speed)} km/h</div>
                     </div>
                     <div>
                       <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Estado</div>
@@ -3780,12 +5160,17 @@ export default function Home() {
                 </div>
                 <div style={{ marginBottom: '0.75rem' }}>
                   <label style={{ ...s.label, display: 'block', marginBottom: '0.3rem' }}>Destino</label>
-                  <input placeholder="Escribe el destino para calcular ETA..." value={destinoInput} onChange={e => setDestinoInput(e.target.value)}
-                    style={{ width: '100%', padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem', background: '#ffffff', color: '#000000' }} />
+                  <select value={destinoInput} onChange={e => setDestinoInput(e.target.value)}
+                    style={{ width: '100%', padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem', background: '#ffffff', color: '#000000' }}>{geofenceOptions(destinoInput)}</select>
                 </div>
                 {calculandoEta && (
                   <div style={{ padding: '0.6rem 0.75rem', background: '#1a1a1a', borderRadius: '8px', marginBottom: '0.75rem', fontSize: '0.85rem', color: '#f59e0b', border: '1px solid #f59e0b33' }}>
                     Calculando ruta...
+                  </div>
+                )}
+                {etaError && !calculandoEta && (
+                  <div role="alert" style={{ padding: '0.6rem 0.75rem', background: '#2a1111', borderRadius: '8px', marginBottom: '0.75rem', fontSize: '0.82rem', color: '#fca5a5', border: '1px solid #ef444455' }}>
+                    {etaError}
                   </div>
                 )}
                 {etaData && !calculandoEta && (
@@ -3804,7 +5189,7 @@ export default function Home() {
                         <div style={{ fontSize: '1rem', fontWeight: '600' }}>{etaData.distancia}</div>
                       </div>
                     </div>
-                    <div style={{ fontSize: '0.7rem', color: '#4a8a4a', marginTop: '0.5rem', textAlign: 'center' }}>{etaData.destino}</div>
+                    <div style={{ fontSize: '0.7rem', color: '#4a8a4a', marginTop: '0.5rem', textAlign: 'center' }}>{etaData.destinoNombre}</div>
                   </div>
                 )}
                 <textarea placeholder="Escribe el mensaje de seguimiento..." value={comentarioRapido.contenido} onChange={e => setComentarioRapido({...comentarioRapido, contenido: e.target.value})}
@@ -3822,15 +5207,15 @@ export default function Home() {
       )}
 
       {showViajeModal && viajeDetalle && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => { setShowViajeModal(false); setViajeEditando(false); }}>
-          <div style={{ background: '#0d1a0d', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '1.5rem', maxWidth: '600px', width: '90%', maxHeight: '80vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => { setShowViajeModal(false); setViajeEditando(false); setViajeForm({}); }}>
+          <div className="modal-panel" role="dialog" aria-modal="true" aria-label={viajeEditando ? 'Editar viaje' : 'Detalles del viaje'} style={{ background: '#0d1a0d', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '1.5rem', maxWidth: '600px', width: '90%', maxHeight: '80vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <h2 style={{ margin: 0, fontSize: '1.3rem', color: '#00ff41' }}>{viajeEditando ? 'Editar Viaje' : 'Detalles del Viaje'}</h2>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 {!viajeEditando && (
                   <button onClick={() => setViajeEditando(true)} style={{ ...s.button('#f59e0b'), padding: '0.3rem 0.8rem', fontSize: '0.8rem' }}>Editar</button>
                 )}
-                <button onClick={() => { setShowViajeModal(false); setViajeEditando(false); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.5rem' }}>✕</button>
+                 <button onClick={() => { setShowViajeModal(false); setViajeEditando(false); setViajeForm({}); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.5rem' }}>✕</button>
               </div>
             </div>
 
@@ -3841,7 +5226,15 @@ export default function Home() {
                     <label style={s.label}>Unidad</label>
                     <select style={s.select} value={viajeForm.vehicle_id || ''} onChange={(e) => {
                       const v = vehiculos.find(vh => String(vh.id) === e.target.value);
-                      setViajeForm({ ...viajeForm, vehicle_id: e.target.value, vehicle_name: v?.name || '' });
+                      const op = operadores[e.target.value];
+                      setViajeForm({
+                        ...viajeForm,
+                        vehicle_id: e.target.value,
+                        vehicle_name: v?.name || '',
+                         conductor: op?.nombre || '',
+                        telefono: op?.telefono || '',
+                        remolque: v ? obtenerRemolqueAsignadoUnidad(e.target.value, v.name) : '',
+                      });
                     }}>
                       <option value="">Seleccionar...</option>
                       {vehiculos.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
@@ -3875,16 +5268,35 @@ export default function Home() {
                   <input style={s.input} value={viajeForm.telefono || ''} onChange={(e) => setViajeForm({ ...viajeForm, telefono: e.target.value })} />
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-                  <div>
-                    <label style={s.label}>Origen</label>
-                    <input style={s.input} value={viajeForm.origen || ''} onChange={(e) => setViajeForm({ ...viajeForm, origen: e.target.value })} />
+                  <div style={{ marginBottom: '1rem' }}>
+                    <div>
+                      <label style={s.label}>Origen</label>
+                       <select style={s.select} value={viajeForm.origen || ''} onChange={(e) => setViajeForm({ ...viajeForm, origen: e.target.value })}>{geofenceOptions(viajeForm.origen)}</select>
+                    </div>
                   </div>
-                  <div>
-                    <label style={s.label}>Destino</label>
-                    <input style={s.input} value={viajeForm.destino || ''} onChange={(e) => setViajeForm({ ...viajeForm, destino: e.target.value })} />
+
+                  <div className="trip-delivery-type" role="group" aria-label="Tipo de entrega">
+                    <button type="button" className={viajeForm.tipo_entrega !== 'reparto' ? 'active' : ''} onClick={() => setViajeForm(prev => ({ ...prev, tipo_entrega: 'directo', destino: parseDestinos(prev.destinos).at(-1) || prev.destino }))}>Destino único</button>
+                    <button type="button" className={viajeForm.tipo_entrega === 'reparto' ? 'active' : ''} onClick={() => setViajeForm(prev => ({ ...prev, tipo_entrega: 'reparto', destinos: parseDestinos(prev.destinos).length >= 2 ? prev.destinos : [prev.destino || '', ''] }))}>Reparto</button>
                   </div>
-                </div>
+                  {viajeForm.tipo_entrega === 'reparto' ? (
+                    <div className="trip-stops-editor">
+                      <label style={s.label}>Destinos en orden</label>
+                      {(viajeForm.destinos || ['', '']).map((destino, index) => (
+                        <div className="trip-stop-input" key={index}>
+                          <span>{index + 1}</span>
+                           <select style={s.select} aria-label={`Destino ${index + 1}`} value={destino} onChange={(e) => setViajeForm(prev => ({ ...prev, destinos: prev.destinos.map((item, itemIndex) => itemIndex === index ? e.target.value : item) }))}>{geofenceOptions(destino)}</select>
+                          <button type="button" disabled={viajeForm.destinos.length <= 2} onClick={() => setViajeForm(prev => ({ ...prev, destinos: prev.destinos.filter((_, itemIndex) => itemIndex !== index) }))} aria-label={`Eliminar destino ${index + 1}`}>Quitar</button>
+                        </div>
+                      ))}
+                      <button type="button" className="trip-add-stop" onClick={() => setViajeForm(prev => ({ ...prev, destinos: [...prev.destinos, ''] }))}>+ Agregar destino</button>
+                    </div>
+                  ) : (
+                    <div style={{ marginBottom: '1rem' }}>
+                      <label style={s.label}>Destino</label>
+                       <select style={s.select} value={viajeForm.destino || ''} onChange={(e) => setViajeForm({ ...viajeForm, destino: e.target.value })}>{geofenceOptions(viajeForm.destino)}</select>
+                    </div>
+                  )}
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
                   <div>
@@ -3901,8 +5313,8 @@ export default function Home() {
                   <label style={s.label}>Remolque</label>
                   <select style={s.select} value={viajeForm.remolque || ''} onChange={(e) => setViajeForm({ ...viajeForm, remolque: e.target.value })}>
                     <option value="">Sin remolque</option>
-                    {remolques.filter(r => !r.vehicle_id_asignado || r.vehicle_id_asignado === viajeForm.vehicle_id).map(r => (
-                      <option key={r.id} value={r.numero}>#{r.numero}</option>
+                    {obtenerOpcionesRemolque(viajeForm.vehicle_id).map(r => (
+                      <option key={r.key} value={r.value}>{r.label}</option>
                     ))}
                   </select>
                 </div>
@@ -3913,8 +5325,8 @@ export default function Home() {
                 </div>
 
                 <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                  <button onClick={() => setViajeEditando(false)} style={s.button('#6b7280')}>Cancelar</button>
-                  <button onClick={actualizarViaje} style={s.button('#10b981')}>Guardar</button>
+                   <button onClick={() => { setViajeForm(normalizarViaje(viajeDetalle)); setViajeEditando(false); }} style={s.button('#6b7280')}>Cancelar</button>
+                  <button onClick={actualizarViaje} disabled={viajeSaving} style={s.button('#10b981')}>{viajeSaving ? 'Guardando...' : 'Guardar'}</button>
                 </div>
               </div>
             ) : (
@@ -3926,8 +5338,9 @@ export default function Home() {
                   </div>
                   <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
                     <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Estado</div>
-                    <div style={{ fontSize: '1rem', fontWeight: '600' }}>
-                      <span style={s.badge(estadoColors[viajeDetalle.estado] || '#6a9b6a')}>{viajeDetalle.estado}</span>
+                     <div style={{ fontSize: '1rem', fontWeight: '600', display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                       <span style={s.badge(estadoColors[viajeDetalle.estado] || '#6a9b6a')}>{viajeDetalle.estado}</span>
+                       {viajeDetalle.tipo_entrega === 'reparto' && <span className="trip-reparto-badge">Reparto</span>}
                     </div>
                   </div>
                 </div>
@@ -3940,15 +5353,21 @@ export default function Home() {
 
                 <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a', marginBottom: '1rem' }}>
                   <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.5rem' }}>Ruta</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: '0.75rem', alignItems: 'center' }}>
+                   <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1.5fr)', gap: '0.75rem', alignItems: 'start' }}>
                     <div>
                       <div style={{ fontSize: '0.75rem', color: '#6a9b6a', marginBottom: '0.2rem' }}>Origen</div>
                       <div style={{ fontSize: '0.9rem', fontWeight: '600' }}>{viajeDetalle.origen || '-'}</div>
                     </div>
                     <div style={{ fontSize: '1.5rem', color: '#00ff41' }}>→</div>
                     <div>
-                      <div style={{ fontSize: '0.75rem', color: '#6a9b6a', marginBottom: '0.2rem' }}>Destino</div>
-                      <div style={{ fontSize: '0.9rem', fontWeight: '600', color: '#60a5fa' }}>{viajeDetalle.destino || '-'}</div>
+                       <div style={{ fontSize: '0.75rem', color: '#6a9b6a', marginBottom: '0.2rem' }}>{viajeDetalle.tipo_entrega === 'reparto' ? 'Paradas' : 'Destino'}</div>
+                       {viajeDetalle.tipo_entrega === 'reparto' ? (
+                         <div className="trip-stops-display">
+                           {destinosViaje(viajeDetalle).map((destino, index) => (
+                             <div key={`${viajeDetalle.id}-detail-stop-${index}`}><span>{index + 1}</span><div>{destino}{geocercasCoincidentes(destino).map(name => <small key={name}>📍 {name}</small>)}</div></div>
+                           ))}
+                         </div>
+                       ) : <div style={{ fontSize: '0.9rem', fontWeight: '600', color: '#60a5fa' }}>{viajeDetalle.destino || '-'}</div>}
                     </div>
                   </div>
                 </div>
@@ -3957,13 +5376,13 @@ export default function Home() {
                   <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
                     <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Fecha Inicio</div>
                     <div style={{ fontSize: '0.9rem', fontWeight: '600' }}>
-                      {viajeDetalle.fecha_inicio ? parseFecha(viajeDetalle.fecha_inicio)?.toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
+                      {viajeDetalle.fecha_inicio ? formatFechaProgramada(viajeDetalle.fecha_inicio) : '-'}
                     </div>
                   </div>
                   <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
                     <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Fecha Fin</div>
                     <div style={{ fontSize: '0.9rem', fontWeight: '600' }}>
-                      {viajeDetalle.fecha_fin ? parseFecha(viajeDetalle.fecha_fin)?.toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
+                      {viajeDetalle.fecha_fin ? formatFechaProgramada(viajeDetalle.fecha_fin) : '-'}
                     </div>
                   </div>
                 </div>
@@ -3988,11 +5407,14 @@ export default function Home() {
         )}
 
         {showSeguimientoUpdateModal && (
-          <div
+          <div className="modal-backdrop"
             style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.82)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2200, padding: '1rem' }}
             onClick={() => setShowSeguimientoUpdateModal(false)}
           >
-            <div
+            <div className="modal-panel"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Actualizar seguimiento"
               style={{ width: 'min(1200px, 96vw)', height: 'min(86vh, 920px)', background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '16px', overflow: 'hidden', boxShadow: '0 25px 60px rgba(0,0,0,0.55)' }}
               onClick={(e) => e.stopPropagation()}
             >
@@ -4125,8 +5547,8 @@ export default function Home() {
         )}
 
         {showMensajeModal && (
-          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowMensajeModal(false)}>
-          <div style={{ background: '#0d1a0d', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '1.5rem', maxWidth: '700px', width: '90%', maxHeight: '80vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowMensajeModal(false)}>
+          <div className="modal-panel" role="dialog" aria-modal="true" aria-label="Generar mensaje de seguimiento" style={{ background: '#0d1a0d', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '1.5rem', maxWidth: '700px', width: '90%', maxHeight: '80vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <h2 style={{ margin: 0, fontSize: '1.3rem', color: '#00ff41' }}>Generar Mensaje de Seguimiento</h2>
               <button onClick={() => setShowMensajeModal(false)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.5rem' }}>✕</button>
@@ -4164,37 +5586,53 @@ export default function Home() {
       )}
 
       {showPendienteModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => { setShowPendienteModal(false); setPendienteEditando(null); setFormPendiente({ titulo: '', descripcion: '', prioridad: 'media', asignado_a: '', turno: '', notas: '' }); setNuevoComentarioPendiente(''); }}>
-          <div style={{ background: '#0d1a0d', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '1.5rem', maxWidth: '500px', width: '90%', maxHeight: '80vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={cerrarPendiente}>
+          <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="pendiente-modal-title" style={{ background: '#0d1a0d', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '1.5rem', maxWidth: '500px', width: '90%', maxHeight: '80vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-              <h2 style={{ margin: 0, fontSize: '1.2rem', color: '#00ff41' }}>{pendienteEditando ? 'Detalles del Pendiente' : 'Nuevo Pendiente'}</h2>
-              <button onClick={() => { setShowPendienteModal(false); setPendienteEditando(null); setFormPendiente({ titulo: '', descripcion: '', prioridad: 'media', asignado_a: '', turno: '', notas: '' }); setNuevoComentarioPendiente(''); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.5rem' }}>✕</button>
+              <h2 id="pendiente-modal-title" style={{ margin: 0, fontSize: '1.2rem', color: '#00ff41' }}>{pendienteEditando ? 'Detalles del Pendiente' : 'Nuevo Pendiente'}</h2>
+              <button aria-label="Cerrar" onClick={cerrarPendiente} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.5rem' }}>✕</button>
             </div>
-            {pendienteEditando ? (
-              <div>
-                <div style={{ marginBottom: '1rem', padding: '1rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
-                  <div style={{ marginBottom: '0.75rem' }}>
-                    <label style={s.label}>Título</label>
-                    <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '4px', color: '#e0e0e0' }}>{pendienteEditando.titulo}</div>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                    <div>
-                      <label style={s.label}>Prioridad</label>
-                      <select style={s.select} value={formPendiente.prioridad} onChange={(e) => setFormPendiente({ ...formPendiente, prioridad: e.target.value })}>
-                        <option value="alta">Alta</option>
-                        <option value="media">Media</option>
-                        <option value="baja">Baja</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label style={s.label}>Estado</label>
-                      <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '4px', color: '#60a5fa', textTransform: 'capitalize' }}>{pendienteEditando.estado || 'pendiente'}</div>
-                    </div>
-                  </div>
-                  {pendienteEditando.descripcion && <div style={{ marginBottom: '0.75rem', padding: '0.5rem', background: '#0d1a0d', borderRadius: '4px', color: '#a0a0a0', whiteSpace: 'pre-wrap' }}>{pendienteEditando.descripcion}</div>}
-                  <div style={{ fontSize: '0.8rem', color: '#6a9b6a' }}>Solo puedes cambiar la prioridad.</div>
+            <form onSubmit={guardarPendiente}>
+              <div style={{ marginBottom: '0.75rem' }}>
+                <label style={s.label}>Título *</label>
+                <input style={s.input} placeholder="Ej: Revisar unidad GERS-243" value={formPendiente.titulo} onChange={(e) => setFormPendiente({ ...formPendiente, titulo: e.target.value })} required readOnly={!!pendienteEditando} autoFocus />
+              </div>
+              <div style={{ marginBottom: '0.75rem' }}>
+                <label style={s.label}>Descripción</label>
+                <textarea style={{ ...s.input, minHeight: '60px', resize: 'vertical' }} placeholder="Detalles del pendiente..." value={formPendiente.descripcion} onChange={(e) => setFormPendiente({ ...formPendiente, descripcion: e.target.value })} readOnly={!!pendienteEditando} />
+              </div>
+              <div className="form-grid-2" style={{ display: 'grid', gridTemplateColumns: pendienteEditando ? '1fr 1fr 1fr' : '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                <div>
+                  <label style={s.label}>Prioridad</label>
+                  <select style={s.select} value={formPendiente.prioridad} onChange={(e) => setFormPendiente({ ...formPendiente, prioridad: e.target.value })}>
+                    <option value="alta">Alta</option><option value="media">Media</option><option value="baja">Baja</option>
+                  </select>
                 </div>
-
+                <div>
+                  <label style={s.label}>Turno</label>
+                  <select style={s.select} value={formPendiente.turno} onChange={(e) => setFormPendiente({ ...formPendiente, turno: e.target.value })} disabled={!!pendienteEditando}>
+                    <option value="">Sin turno</option><option value="mañana">Mañana</option><option value="tarde">Tarde</option><option value="noche">Noche</option>
+                  </select>
+                </div>
+                {pendienteEditando && <div>
+                  <label style={s.label}>Estado</label>
+                  <select style={s.select} value={formPendiente.estado} disabled>
+                    <option value="pendiente">Pendiente</option><option value="en_proceso">En proceso</option><option value="completado">Completado</option>
+                  </select>
+                </div>}
+              </div>
+              <div style={{ marginBottom: '0.75rem' }}>
+                <label style={s.label}>Asignado a</label>
+                <input style={s.input} placeholder="Nombre del monitorista" value={formPendiente.asignado_a} onChange={(e) => setFormPendiente({ ...formPendiente, asignado_a: e.target.value })} readOnly={!!pendienteEditando} />
+              </div>
+              {pendienteEditando && <div style={{ marginBottom: '1rem', color: '#6a9b6a', fontSize: '0.8rem' }}>Solo se puede modificar la prioridad.</div>}
+              <div className="modal-actions" style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                {pendienteEditando && <button type="button" onClick={async () => { const ok = await eliminarPendiente(pendienteEditando.id); if (ok) cerrarPendiente(); }} style={s.button('#ef4444')}>Eliminar</button>}
+                <button type="button" onClick={cerrarPendiente} style={s.button('#6b7280')}>Cancelar</button>
+                <button type="submit" disabled={pendienteSaving} style={s.button('#10b981')}>{pendienteSaving ? 'Guardando...' : pendienteEditando ? 'Guardar prioridad' : 'Guardar'}</button>
+              </div>
+            </form>
+            {pendienteEditando && (
                 <div style={{ marginBottom: '1rem' }}>
                   <label style={s.label}>Comentarios</label>
                   <div style={{ maxHeight: '200px', overflowY: 'auto', marginBottom: '0.75rem' }}>
@@ -4212,67 +5650,19 @@ export default function Home() {
                       ))
                     )}
                   </div>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <input style={{ ...s.input, flex: 1 }} placeholder="Agregar comentario..." value={nuevoComentarioPendiente} onChange={(e) => setNuevoComentarioPendiente(e.target.value)} onKeyPress={(e) => { if (e.key === 'Enter' && nuevoComentarioPendiente.trim()) { agregarComentarioPendiente(pendienteEditando.id, nuevoComentarioPendiente); } }} />
+                  <div className="inline-form" style={{ display: 'flex', gap: '0.5rem' }}>
+                    <input style={{ ...s.input, flex: 1 }} placeholder="Agregar comentario..." value={nuevoComentarioPendiente} onChange={(e) => setNuevoComentarioPendiente(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && nuevoComentarioPendiente.trim()) { e.preventDefault(); agregarComentarioPendiente(pendienteEditando.id, nuevoComentarioPendiente); } }} />
                     <button type="button" onClick={() => { if (nuevoComentarioPendiente.trim()) agregarComentarioPendiente(pendienteEditando.id, nuevoComentarioPendiente); }} style={s.button('#10b981')}>Agregar</button>
                   </div>
                 </div>
-                
-                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                  <button type="button" onClick={() => { eliminarPendiente(pendienteEditando.id); setShowPendienteModal(false); setPendienteEditando(null); }} style={s.button('#ef4444')}>Eliminar</button>
-                  <button type="button" onClick={() => { setShowPendienteModal(false); setPendienteEditando(null); setNuevoComentarioPendiente(''); }} style={s.button('#6b7280')}>Cerrar</button>
-                </div>
-              </div>
-            ) : (
-              <form onSubmit={guardarPendiente}>
-                <div style={{ marginBottom: '0.75rem' }}>
-                  <label style={s.label}>Título *</label>
-                  <input style={s.input} placeholder="Ej: Revisar unidad GERS-243" value={formPendiente.titulo} onChange={(e) => setFormPendiente({ ...formPendiente, titulo: e.target.value })} required />
-                </div>
-                <div style={{ marginBottom: '0.75rem' }}>
-                  <label style={s.label}>Descripción</label>
-                  <textarea style={{ ...s.input, minHeight: '60px', resize: 'vertical' }} placeholder="Detalles del pendiente..." value={formPendiente.descripcion} onChange={(e) => setFormPendiente({ ...formPendiente, descripcion: e.target.value })} />
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                  <div>
-                    <label style={s.label}>Prioridad</label>
-                    <select style={s.select} value={formPendiente.prioridad} onChange={(e) => setFormPendiente({ ...formPendiente, prioridad: e.target.value })}>
-                      <option value="alta">Alta</option>
-                      <option value="media">Media</option>
-                      <option value="baja">Baja</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label style={s.label}>Turno</label>
-                    <select style={s.select} value={formPendiente.turno} onChange={(e) => setFormPendiente({ ...formPendiente, turno: e.target.value })}>
-                      <option value="">Sin turno</option>
-                      <option value="mañana">Mañana</option>
-                      <option value="tarde">Tarde</option>
-                      <option value="noche">Noche</option>
-                    </select>
-                  </div>
-                </div>
-                <div style={{ marginBottom: '0.75rem' }}>
-                  <label style={s.label}>Asignado a</label>
-                  <input style={s.input} placeholder="Nombre del monitorista" value={formPendiente.asignado_a} onChange={(e) => setFormPendiente({ ...formPendiente, asignado_a: e.target.value })} />
-                </div>
-                <div style={{ marginBottom: '1rem' }}>
-                  <label style={s.label}>Notas</label>
-                  <textarea style={{ ...s.input, minHeight: '50px', resize: 'vertical' }} placeholder="Notas adicionales..." value={formPendiente.notas} onChange={(e) => setFormPendiente({ ...formPendiente, notas: e.target.value })} />
-                </div>
-                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                  <button type="button" onClick={() => { setShowPendienteModal(false); setPendienteEditando(null); setFormPendiente({ titulo: '', descripcion: '', prioridad: 'media', asignado_a: '', turno: '', notas: '' }); }} style={s.button('#6b7280')}>Cancelar</button>
-                  <button type="submit" style={s.button('#10b981')}>Guardar</button>
-                </div>
-              </form>
             )}
           </div>
         </div>
       )}
 
       {showHistorialModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }} onClick={() => setShowHistorialModal(false)}>
-          <div style={{ background: '#0d1a0d', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '1.5rem', maxWidth: '1100px', width: '95%', maxHeight: '85vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }} onClick={() => setShowHistorialModal(false)}>
+          <div className="modal-panel" role="dialog" aria-modal="true" aria-label="Historial de pendientes" style={{ background: '#0d1a0d', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '1.5rem', maxWidth: '1100px', width: '95%', maxHeight: '85vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
               <h2 style={{ margin: 0, fontSize: '1.2rem', color: '#00ff41' }}>Historial de pendientes</h2>
               <button onClick={() => setShowHistorialModal(false)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.5rem' }}>✕</button>
@@ -4316,8 +5706,8 @@ export default function Home() {
       )}
 
       {showRemolqueModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2200 }} onClick={cerrarRemolqueModal}>
-          <div style={{ background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '16px', width: '520px', maxWidth: '95vw', padding: '1.5rem' }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2200 }} onClick={cerrarRemolqueModal}>
+          <div className="modal-panel" role="dialog" aria-modal="true" aria-label={remolqueEditando ? 'Editar remolque' : 'Nuevo remolque'} style={{ background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '16px', width: '520px', maxWidth: '95vw', padding: '1.5rem' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
               <h2 style={{ margin: 0, color: '#00ff41' }}>{remolqueEditando ? 'Editar remolque' : 'Nuevo remolque'}</h2>
               <button onClick={cerrarRemolqueModal} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
@@ -4346,8 +5736,8 @@ export default function Home() {
       )}
 
       {showTurnoModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2200 }} onClick={() => { setShowTurnoModal(false); setTurnoSummary(null); }}>
-          <div style={{ background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '16px', width: '920px', maxWidth: '95vw', maxHeight: '90vh', overflow: 'auto', padding: '1.5rem' }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2200 }} onClick={() => { setShowTurnoModal(false); setTurnoSummary(null); }}>
+          <div className="modal-panel" role="dialog" aria-modal="true" aria-label="Entregar turno" style={{ background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '16px', width: '920px', maxWidth: '95vw', maxHeight: '90vh', overflow: 'auto', padding: '1.5rem' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
               <div>
                 <h2 style={{ margin: 0, color: '#00ff41' }}>Entregar turno</h2>

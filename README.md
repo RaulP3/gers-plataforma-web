@@ -45,14 +45,14 @@ gers-plataforma-web/
 ### Backend
 ```bash
 cd backend
-npm install
+npm ci
 npm run dev
 ```
 
 ### Frontend
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
@@ -60,17 +60,29 @@ El backend corre en `http://localhost:3001` y el frontend en `http://localhost:3
 
 ## Docker
 
-Para levantar todo:
+1. Crea el archivo de configuracion local desde la plantilla:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+2. Reemplaza todos los valores de ejemplo en `.env`. Son obligatorios `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `SAMSARA_API_TOKEN` y `SAMSARA_WEBHOOK_SECRET`. Usa credenciales unicas y genera el secreto del webhook con un generador criptograficamente seguro.
+
+3. Inicia los servicios y espera a que esten saludables:
 
 ```bash
-docker compose up -d --build
+docker compose --env-file .env up --detach --build --wait
 ```
+
+En Windows tambien puedes ejecutar `start.bat`; valida `.env` y solo informa exito cuando ambos servicios estan saludables.
 
 Para detenerlo:
 
 ```bash
-docker compose down
+docker compose --env-file .env down
 ```
+
+No confirmes archivos `.env` ni secretos. Si un token, contrasena o secreto con apariencia real fue confirmado, compartido o expuesto previamente, reemplazalo y rotalo en el proveedor correspondiente; cambiar solamente la documentacion o el repositorio no revoca el valor anterior.
 
 ## API Endpoints
 
@@ -83,7 +95,8 @@ docker compose down
 | GET | /api/monitoreo | Datos de monitoreo |
 | POST | /api/monitoreo | Registrar posición |
 
-## Credenciales Iniciales
+## Acceso Inicial
 
-- Usuario: `admin`
-- Contraseña: `admin123`
+No existen credenciales publicas predeterminadas. Usa el usuario y la contrasena definidos por el operador en `.env` para Docker o en `backend/.env` para desarrollo local.
+
+Para desarrollo local, crea `backend/.env` desde `backend/.env.example`, reemplaza sus valores de ejemplo y ejecuta `start-local.bat`. El script ejecuta `npm ci` en ambos proyectos y rechaza credenciales de administrador vacias.

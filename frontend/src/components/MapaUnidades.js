@@ -22,21 +22,43 @@ const defaultZones = [
 
 const severityColors = { critical: '#f87171', high: '#fb923c', medium: '#facc15' };
 const severityLabels = { critical: 'Crítica', high: 'Alta', medium: 'Media' };
+const MPH_TO_KMH = 1.609344;
 
-function drawZone(L, map, z, isCustom) {
-  const color = severityColors[z.severity] || '#fb923c';
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function safeColor(value, fallback) {
+  return typeof value === 'string' && /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value) ? value : fallback;
+}
+
+function hasCoordinates(latitude, longitude) {
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  return Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+}
+
+function drawZone(L, layer, z, isCustom) {
+  if (!hasCoordinates(z.lat, z.lng)) return;
+  const color = safeColor(severityColors[z.severity], '#fb923c');
+  const radius = Number.isFinite(Number(z.radius)) ? Number(z.radius) : 0;
   const tag = isCustom ? ' | Propia' : '';
   const popupHtml = `
     <div style="font-family:system-ui;min-width:200px">
-      <strong style="color:${color}">⚠️ ${z.name}</strong><br/>
-      <span style="color:#94a3b8;font-size:11px">${severityLabels[z.severity] || z.severity} | Radio: ${(z.radius / 1000).toFixed(1)} km${tag}</span><br/>
-      <div style="margin-top:6px;font-size:12px">${z.description || ''}</div>
+      <strong style="color:${color}">⚠️ ${escapeHtml(z.name)}</strong><br/>
+      <span style="color:#94a3b8;font-size:11px">${escapeHtml(severityLabels[z.severity] || z.severity)} | Radio: ${(radius / 1000).toFixed(1)} km${tag}</span><br/>
+      <div style="margin-top:6px;font-size:12px">${escapeHtml(z.description)}</div>
     </div>
   `;
   const circle = L.circle([z.lat, z.lng], {
-    radius: z.radius, color, fillColor: color, fillOpacity: 0.10, weight: 2,
+    radius, color, fillColor: color, fillOpacity: 0.10, weight: 2,
     dashArray: z.severity === 'critical' ? '8, 4' : '4, 4'
-  }).addTo(map);
+  }).addTo(layer);
   circle.bindPopup(popupHtml);
 
   const sz = z.severity === 'critical' ? 14 : z.severity === 'high' ? 11 : 9;
@@ -45,11 +67,11 @@ function drawZone(L, map, z, isCustom) {
     html: `<div style="width:${sz}px;height:${sz}px;background:${color};border-radius:50%;box-shadow:0 0 ${sz}px ${color}"></div>`,
     iconSize: [sz, sz], iconAnchor: [sz / 2, sz / 2]
   });
-  const marker = L.marker([z.lat, z.lng], { icon }).addTo(map);
+  const marker = L.marker([z.lat, z.lng], { icon }).addTo(layer);
   marker.bindPopup(popupHtml);
 }
 
-function drawVehicles(L, map, vehiculos, vehicleLayerRef) {
+function drawVehicles(L, map, vehiculos, selectedVehicleId, onVehicleClick, vehicleLayerRef) {
   if (vehicleLayerRef.current) {
     map.removeLayer(vehicleLayerRef.current);
   }
@@ -60,22 +82,36 @@ function drawVehicles(L, map, vehiculos, vehicleLayerRef) {
     html: '<div style="font-size:20px;text-shadow:0 0 6px rgba(0,0,0,0.8)">🚛</div>',
     iconSize: [20, 20], iconAnchor: [10, 10]
   });
+  const selectedTruckIcon = L.divIcon({
+    className: 'custom-marker',
+    html: '<div style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;border:3px solid #00ff41;border-radius:50%;background:#071407;box-shadow:0 0 14px #00ff41;font-size:20px">🚛</div>',
+    iconSize: [38, 38], iconAnchor: [19, 19]
+  });
 
   vehiculos.forEach(v => {
-    if (v.location) {
-      const isMoving = v.location.speed > 1;
-      const marker = L.marker([v.location.latitude, v.location.longitude], { icon: truckIcon }).addTo(group);
+    if (v.location && hasCoordinates(v.location.latitude, v.location.longitude)) {
+      const rawSpeedMph = Number(v.location.speed);
+      const speedKmh = Number.isFinite(rawSpeedMph) ? rawSpeedMph * MPH_TO_KMH : 0;
+      const isMoving = speedKmh > 1;
+      const fuelLevel = v.fuelLevelPercent == null ? null : Number(v.fuelLevelPercent);
+      const hasFuelLevel = Number.isFinite(fuelLevel);
+      const isSelected = selectedVehicleId != null && String(v.id) === String(selectedVehicleId);
+      const marker = L.marker([v.location.latitude, v.location.longitude], {
+        icon: isSelected ? selectedTruckIcon : truckIcon,
+        zIndexOffset: isSelected ? 1000 : 0
+      }).addTo(group);
       marker.bindPopup(`
         <div style="font-family:system-ui;background:#111;color:#e0e0e0;padding:12px;border-radius:8px;min-width:180px">
-          <strong style="font-size:14px">${v.name}</strong><br/>
-          <span style="color:#6a9b6a;font-size:12px">${v.location.location || 'Sin dirección'}</span><br/>
+          <strong style="font-size:14px">${escapeHtml(v.name)}</strong><br/>
+          <span style="color:#6a9b6a;font-size:12px">${escapeHtml(v.location.location || 'Sin dirección')}</span><br/>
           <div style="margin-top:8px;font-size:12px">
-            <div>Velocidad: <strong>${Math.round(v.location.speed)} km/h</strong></div>
-            ${v.fuelLevelPercent !== null ? `<div>Combustible: <strong>${Math.round(v.fuelLevelPercent * 100)}%</strong></div>` : ''}
+            <div>Velocidad: <strong>${Math.round(speedKmh)} km/h</strong></div>
+            <div>Combustible: <strong>${hasFuelLevel ? `${Math.round(fuelLevel * 100)}%` : 'N/D'}</strong></div>
             <div>Estado: <span style="color:${isMoving ? '#4ade80' : '#f87171'}">${isMoving ? 'En movimiento' : 'Detenido'}</span></div>
           </div>
         </div>
       `);
+      if (onVehicleClick) marker.on('click', () => onVehicleClick(v));
     }
   });
 
@@ -84,9 +120,12 @@ function drawVehicles(L, map, vehiculos, vehicleLayerRef) {
 
 export default function MapaUnidades({ vehiculos, geofences = [], customRiskZones = [], placingZone = false, onZonePlaced = null, routeHistory = [], selectedVehicleId = null, onVehicleClick = null }) {
   const containerRef = useRef(null);
+  const [mapReady, setMapReady] = useState(false);
   const mapRef = useRef(null);
   const LRef = useRef(null);
+  const vehiclesRef = useRef(vehiculos);
   const vehicleLayerRef = useRef(null);
+  const riskGroupRef = useRef(null);
   const customGroupRef = useRef(null);
   const geofenceGroupRef = useRef(null);
   const routeLayerRef = useRef(null);
@@ -95,6 +134,7 @@ export default function MapaUnidades({ vehiculos, geofences = [], customRiskZone
 
   placingRef.current = placingZone;
   onPlacedRef.current = onZonePlaced;
+  vehiclesRef.current = vehiculos;
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -113,29 +153,38 @@ export default function MapaUnidades({ vehiculos, geofences = [], customRiskZone
         attribution: '&copy; OSM &copy; CARTO', maxZoom: 19
       }).addTo(map);
 
-      defaultZones.forEach(z => drawZone(L, map, z, false));
-      drawVehicles(L, map, vehiculos, vehicleLayerRef);
+      const riskGroup = L.layerGroup().addTo(map);
+      defaultZones.forEach(z => drawZone(L, riskGroup, z, false));
+      riskGroupRef.current = riskGroup;
+      drawVehicles(L, map, vehiclesRef.current, selectedVehicleId, onVehicleClick, vehicleLayerRef);
 
-      const withLoc = vehiculos.filter(v => v.location);
+      const withLoc = vehiclesRef.current.filter(v => v.location && hasCoordinates(v.location.latitude, v.location.longitude));
       if (withLoc.length > 0) {
         const bounds = L.latLngBounds(withLoc.map(v => [v.location.latitude, v.location.longitude]));
         if (bounds.isValid()) map.fitBounds(bounds, { padding: [30, 30] });
       }
+      setMapReady(true);
     })();
 
     return () => {
       cancelled = true;
       if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
+      LRef.current = null;
+      vehicleLayerRef.current = null;
+      riskGroupRef.current = null;
+      customGroupRef.current = null;
+      geofenceGroupRef.current = null;
+      routeLayerRef.current = null;
     };
   }, []);
 
   useEffect(() => {
-    if (!mapRef.current || !LRef.current) return;
-    drawVehicles(LRef.current, mapRef.current, vehiculos, vehicleLayerRef);
-  }, [vehiculos]);
+    if (!mapReady || !mapRef.current || !LRef.current) return;
+    drawVehicles(LRef.current, mapRef.current, vehiculos, selectedVehicleId, onVehicleClick, vehicleLayerRef);
+  }, [mapReady, vehiculos, selectedVehicleId, onVehicleClick]);
 
   useEffect(() => {
-    if (!mapRef.current || !LRef.current) return;
+    if (!mapReady || !mapRef.current || !LRef.current) return;
     const map = mapRef.current;
     const L = LRef.current;
     if (customGroupRef.current) {
@@ -144,13 +193,13 @@ export default function MapaUnidades({ vehiculos, geofences = [], customRiskZone
     }
     if (customRiskZones.length > 0) {
       const group = L.layerGroup().addTo(map);
-      customRiskZones.forEach(z => drawZone(L, map, z, true));
+      customRiskZones.forEach(z => drawZone(L, group, z, true));
       customGroupRef.current = group;
     }
-  }, [customRiskZones]);
+  }, [customRiskZones, mapReady]);
 
   useEffect(() => {
-    if (!mapRef.current || !LRef.current) return;
+    if (!mapReady || !mapRef.current || !LRef.current) return;
     const map = mapRef.current;
     const L = LRef.current;
     if (geofenceGroupRef.current) {
@@ -161,26 +210,27 @@ export default function MapaUnidades({ vehiculos, geofences = [], customRiskZone
     const group = L.layerGroup().addTo(map);
     geofences.filter(g => g.activa).forEach(g => {
       try {
-      const color = g.color || '#3b82f6';
-      const srcLabel = g.source === 'samsara' ? ' | Samsara' : '';
-      const popupHtml = `
-        <div style="font-family:system-ui;min-width:180px">
-          <strong style="color:${color}">⭕ ${g.nombre}</strong><br/>
-          <span style="color:#94a3b8;font-size:11px">Radio: ${g.radio_metros}m${srcLabel}</span><br/>
-          ${g.descripcion ? `<div style="margin-top:4px;font-size:12px">${g.descripcion}</div>` : ''}
-        </div>
-      `;
+       const color = safeColor(g.color, '#3b82f6');
+       const srcLabel = g.source === 'samsara' ? ' | Samsara' : '';
+       const radius = Number.isFinite(Number(g.radio_metros)) ? Number(g.radio_metros) : 0;
+       const popupHtml = `
+         <div style="font-family:system-ui;min-width:180px">
+           <strong style="color:${color}">⭕ ${escapeHtml(g.nombre)}</strong><br/>
+           <span style="color:#94a3b8;font-size:11px">Radio: ${radius}m${srcLabel}</span><br/>
+           ${g.descripcion ? `<div style="margin-top:4px;font-size:12px">${escapeHtml(g.descripcion)}</div>` : ''}
+         </div>
+       `;
       if (g.polygon && g.polygon.vertices && g.polygon.vertices.length > 2) {
         const latlngs = g.polygon.vertices.map(v => [v.latitude, v.longitude]);
         const poly = L.polygon(latlngs, { color, fillColor: color, fillOpacity: 0.12, weight: 2, dashArray: '6, 4' }).addTo(group);
         poly.bindPopup(popupHtml);
-      } else if (g.latitud && g.longitud) {
-        const circle = L.circle([g.latitud, g.longitud], {
-          radius: g.radio_metros, color, fillColor: color, fillOpacity: 0.12, weight: 2, dashArray: '6, 4'
-        }).addTo(group);
-        circle.bindPopup(popupHtml);
-      }
-      if (g.latitud && g.longitud) {
+       } else if (hasCoordinates(g.latitud, g.longitud)) {
+         const circle = L.circle([g.latitud, g.longitud], {
+           radius, color, fillColor: color, fillOpacity: 0.12, weight: 2, dashArray: '6, 4'
+         }).addTo(group);
+         circle.bindPopup(popupHtml);
+       }
+       if (hasCoordinates(g.latitud, g.longitud)) {
         const icon = L.divIcon({
           className: 'custom-marker',
           html: `<div style="width:10px;height:10px;background:${color};border:2px solid #fff;border-radius:50%;box-shadow:0 0 6px ${color}"></div>`,
@@ -189,14 +239,14 @@ export default function MapaUnidades({ vehiculos, geofences = [], customRiskZone
         const marker = L.marker([g.latitud, g.longitud], { icon }).addTo(group);
         marker.bindPopup(popupHtml);
       }
-      } catch (e) {}
-    });
+       } catch {}
+     });
     geofenceGroupRef.current = group;
-  }, [geofences]);
+  }, [geofences, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!mapReady || !map) return;
     const handleClick = (e) => {
       if (placingRef.current && onPlacedRef.current) {
         onPlacedRef.current(e.latlng.lat, e.latlng.lng);
@@ -209,40 +259,30 @@ export default function MapaUnidades({ vehiculos, geofences = [], customRiskZone
     } else {
       map.getContainer().style.cursor = '';
     }
-  }, [placingZone]);
+  }, [placingZone, mapReady]);
 
   useEffect(() => {
-    if (!mapRef.current || !LRef.current) return;
+    if (!mapReady || !mapRef.current || !LRef.current) return;
     const map = mapRef.current;
     const L = LRef.current;
     if (routeLayerRef.current) {
       map.removeLayer(routeLayerRef.current);
       routeLayerRef.current = null;
     }
-    if (!routeHistory || routeHistory.length < 2) return;
+    if (!routeHistory || routeHistory.length === 0) return;
+    const validStops = routeHistory.filter(p => hasCoordinates(p.latitude, p.longitude));
+    const latlngs = validStops.map(p => [p.latitude, p.longitude]);
+    if (latlngs.length === 0) return;
     const group = L.layerGroup().addTo(map);
-    const latlngs = routeHistory.map(p => [p.latitude, p.longitude]);
-
-    const polyline = L.polyline(latlngs, { color: '#00ff41', weight: 3, opacity: 0.8, dashArray: '8, 6' }).addTo(group);
-
-    if (latlngs.length > 0) {
-      const startIcon = L.divIcon({
-        className: 'custom-marker',
-        html: '<div style="width:12px;height:12px;background:#10b981;border:2px solid #fff;border-radius:50%;box-shadow:0 0 8px #10b981"></div>',
-        iconSize: [12, 12], iconAnchor: [6, 6]
-      });
-      const endIcon = L.divIcon({
-        className: 'custom-marker',
-        html: '<div style="width:14px;height:14px;background:#ef4444;border:2px solid #fff;border-radius:50%;box-shadow:0 0 8px #ef4444"></div>',
-        iconSize: [14, 14], iconAnchor: [7, 7]
-      });
-      L.marker(latlngs[0], { icon: startIcon }).addTo(group).bindPopup('<b style="color:#10b981">📍 Inicio</b>');
-      L.marker(latlngs[latlngs.length - 1], { icon: endIcon }).addTo(group).bindPopup('<b style="color:#ef4444">🏁 Última posición</b>');
-    }
-
-    try { map.fitBounds(polyline.getBounds(), { padding: [50, 50] }); } catch (e) {}
+    validStops.forEach((stop, index) => {
+      const marker = L.circleMarker(latlngs[index], {
+        radius: 7, color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 0.85, weight: 2
+      }).addTo(group);
+      marker.bindPopup(`<div style="font-family:system-ui"><b style="color:#f59e0b">Parada de ${escapeHtml(stop.stop_duration_minutes)} min</b><br/>${escapeHtml(stop.location || 'Sin dirección')}<br/><span style="font-size:11px;color:#64748b">${escapeHtml(new Date(stop.recorded_at).toLocaleString('es-MX'))}</span></div>`);
+    });
+    try { map.fitBounds(L.latLngBounds(latlngs), { padding: [50, 50] }); } catch {}
     routeLayerRef.current = group;
-  }, [routeHistory]);
+  }, [routeHistory, mapReady]);
 
   return (
     <div

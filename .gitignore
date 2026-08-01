@@ -1,9 +1,6 @@
 node_modules/
 *.db
-.env
-.env.local
-.env.*.local
-!backend/.env.example
-!frontend/.env.example
+.env*
+!**/.env.example
 dist/
 .next/
