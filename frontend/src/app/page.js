@@ -10,6 +10,8 @@ const RouteMap = dynamic(() => import('../components/RouteMap'), { ssr: false })
 const MOVEMENT_THRESHOLD_MPH = 1;
 const estaEnMovimiento = (speedMph) => Number(speedMph || 0) > MOVEMENT_THRESHOLD_MPH;
 const VIAJE_DEFAULT = { vehicle_id: '', vehicle_name: '', origen: '', destino: '', tipo_entrega: 'directo', destinos: ['', ''], conductor: '', telefono: '', fecha_inicio: '', fecha_fin: '', notas: '', remolque: '' };
+const CLIENTE_DEFAULT = { nombre: '', contacto: '', telefono: '', email: '' };
+const GEOFENCE_DEFAULT = { nombre: '', direccion: '', latitud: '', longitud: '', radio_metros: '500', descripcion: '', color: '#3b82f6' };
 const parseDestinos = (value) => {
   if (Array.isArray(value)) return value.map(item => String(item || '').trim()).filter(Boolean);
   if (typeof value !== 'string' || !value.trim()) return [];
@@ -66,6 +68,8 @@ export default function Home() {
   const [formPendiente, setFormPendiente] = useState({ titulo: '', descripcion: '', prioridad: 'media', asignado_a: '', turno: '', notas: '', estado: 'pendiente' });
   const [draggedPendiente, setDraggedPendiente] = useState(null);
   const [dragOverColumn, setDragOverColumn] = useState(null);
+  const [draggedViaje, setDraggedViaje] = useState(null);
+  const [dragOverViajeColumn, setDragOverViajeColumn] = useState(null);
   const [showHistorialModal, setShowHistorialModal] = useState(false);
   const [historialPendientes, setHistorialPendientes] = useState([]);
   const [nuevoComentarioPendiente, setNuevoComentarioPendiente] = useState('');
@@ -85,6 +89,21 @@ export default function Home() {
   const [vehicleFilter, setVehicleFilter] = useState('');
   const [nuevoComentario, setNuevoComentario] = useState({ vehicle_id: '', vehicle_name: '', tipo: 'seguimiento', titulo: '', contenido: '', estatus: '', remolque: '', grupo: '', origen: '', destino: '' });
   const [remolques, setRemolques] = useState([]);
+  const [clientes, setClientes] = useState([]);
+  const [clienteSearch, setClienteSearch] = useState('');
+  const [showClienteModal, setShowClienteModal] = useState(false);
+  const [clienteEditando, setClienteEditando] = useState(null);
+  const [formCliente, setFormCliente] = useState(CLIENTE_DEFAULT);
+  const [clienteSaving, setClienteSaving] = useState(false);
+  const [selectedClienteId, setSelectedClienteId] = useState(null);
+  const [showClienteGeofenceModal, setShowClienteGeofenceModal] = useState(false);
+  const [formClienteGeofence, setFormClienteGeofence] = useState(GEOFENCE_DEFAULT);
+  const [clienteGeofenceSaving, setClienteGeofenceSaving] = useState(false);
+  const [geofenceLinks, setGeofenceLinks] = useState([]);
+  const [showExistingGeofenceModal, setShowExistingGeofenceModal] = useState(false);
+  const [existingGeofenceSelection, setExistingGeofenceSelection] = useState('');
+  const [existingGeofenceSearch, setExistingGeofenceSearch] = useState('');
+  const [existingGeofenceSaving, setExistingGeofenceSaving] = useState(false);
   const [showRemolqueModal, setShowRemolqueModal] = useState(false);
   const [formRemolque, setFormRemolque] = useState({ numero: '', categoria: 'Caja Seca' });
   const [remolqueEditando, setRemolqueEditando] = useState(null);
@@ -114,6 +133,7 @@ export default function Home() {
   const [selectedSeguimiento, setSelectedSeguimiento] = useState(null);
   const [showSeguimientoUpdateModal, setShowSeguimientoUpdateModal] = useState(false);
   const [seguimientoModalUnidadId, setSeguimientoModalUnidadId] = useState('');
+  const [seguimientoModalGrupo, setSeguimientoModalGrupo] = useState('');
   const [seguimientoModalNota, setSeguimientoModalNota] = useState('');
   const [seguimientoModalSaving, setSeguimientoModalSaving] = useState(false);
   const [seguimientoModalError, setSeguimientoModalError] = useState('');
@@ -186,7 +206,7 @@ export default function Home() {
       const unidadFilter = seguimientoUnidadFilter.trim().toLowerCase();
       const matchesUnidad = !unidadFilter || String(row.unidad || '').toLowerCase().includes(unidadFilter);
       return matchesBusqueda && matchesEstatus && matchesGrupo && matchesUnidad;
-    });
+    }).sort((a, b) => String(a.unidad || '').localeCompare(String(b.unidad || ''), 'es', { numeric: true, sensitivity: 'base' }));
   }, [seguimiento, seguimientoFilter, seguimientoEstatusFilter, seguimientoGrupoFilter, seguimientoUnidadFilter]);
   const seguimientoResumen = useMemo(() => {
     const total = seguimiento.length;
@@ -199,6 +219,11 @@ export default function Home() {
     const extras = [...new Set(remolques.map(r => r.categoria || 'Caja Seca').filter(cat => !base.includes(cat)))];
     return [...base, ...extras];
   }, [remolques]);
+  const clientesFiltrados = useMemo(() => {
+    const search = clienteSearch.trim().toLowerCase();
+    return clientes.filter(cliente => !search || [cliente.nombre, cliente.contacto, cliente.telefono, cliente.email]
+      .some(value => String(value || '').toLowerCase().includes(search)));
+  }, [clientes, clienteSearch]);
   const notasBitacora = comentarios.filter(c => ['bitacora', 'seguimiento', 'mantenimiento'].includes((c.tipo || '').toLowerCase()));
   const notasIncidencias = comentarios.filter(c => ['incidencia', 'incidente'].includes((c.tipo || '').toLowerCase()));
   const [notasTab, setNotasTab] = useState('bitacora');
@@ -241,6 +266,13 @@ export default function Home() {
     const sam = samsaraAddresses.map(a => ({ ...a, source: 'samsara', activa: 1 }));
     return [...sam, ...local];
   }, [geofences, samsaraAddresses]);
+  const selectedCliente = clientes.find(cliente => String(cliente.id) === String(selectedClienteId)) || null;
+  const geofenceOwnerId = geofence => geofence.source === 'samsara'
+    ? geofenceLinks.find(link => link.source === 'samsara' && String(link.geofence_ref) === String(geofence.id))?.cliente_id
+    : geofence.cliente_id;
+  const selectedClienteGeofences = selectedCliente
+    ? allGeofences.filter(geofence => String(geofenceOwnerId(geofence) || '') === String(selectedCliente.id))
+    : [];
   const geofenceNames = useMemo(() => {
     return [...new Set(allGeofences.filter(g => g.activa !== 0).map(g => g.nombre).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   }, [allGeofences]);
@@ -290,7 +322,74 @@ export default function Home() {
     }).filter(item => item.nombre && item.score > 0).sort((a, b) => b.score - a.score || a.nombre.localeCompare(b.nombre));
     return [...new Set(resultados.map(item => item.nombre))].slice(0, 2);
   };
-  const [formGeofence, setFormGeofence] = useState({ nombre: '', direccion: '', latitud: '', longitud: '', radio_metros: '500', descripcion: '', color: '#3b82f6' });
+  const parseCitaDate = (value) => {
+    if (!value) return null;
+    const normalized = String(value).trim().replace(' ', 'T');
+    const date = new Date(normalized);
+    return Number.isNaN(date.getTime()) ? null : date;
+  };
+  const findVehicleForUnit = (unitName, vehicleId = '') => {
+    const normalizedUnit = String(unitName || '').trim().toLowerCase();
+    const unitNumber = normalizedUnit.match(/\d+/g)?.at(-1)?.replace(/^0+/, '') || '';
+    return vehiculos.find(vehicle => {
+      if (vehicleId && String(vehicle.id) === String(vehicleId)) return true;
+      const normalizedVehicle = String(vehicle.name || '').trim().toLowerCase();
+      if (normalizedVehicle === normalizedUnit) return true;
+      const vehicleNumber = normalizedVehicle.match(/\d+/g)?.at(-1)?.replace(/^0+/, '') || '';
+      return unitNumber && vehicleNumber === unitNumber;
+    }) || null;
+  };
+  const citasOperativas = useMemo(() => {
+    const normalize = value => String(value || '').trim().toLowerCase();
+    const normalizeStatus = value => {
+      const key = String(value || 'programado').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+      return { en_proceso_de_carga: 'proceso_carga', en_proceso_de_descarga: 'proceso_descarga', en_proceso_de_liberacion: 'proceso_liberacion' }[key] || key;
+    };
+    const viajeItems = viajes.filter(viaje => viaje.fecha_inicio || viaje.fecha_fin).map(viaje => {
+      const destinos = destinosViaje(viaje);
+      return {
+        id: `via-${viaje.id}`,
+        sourceId: viaje.id,
+        vehicle_id: viaje.vehicle_id,
+        unidad: viaje.vehicle_name || viaje.vehicle_id,
+        tipo: 'Viaje',
+        origen: viaje.origen || '',
+        destino: destinos.at(-1) || viaje.destino || '',
+        cita_carga: viaje.fecha_inicio || '',
+        cita_descarga: viaje.fecha_fin || '',
+        remolque: viaje.remolque || '',
+        estatus: normalizeStatus(viaje.estado),
+      };
+    });
+    const seguimientoSinViaje = seguimiento.filter(row => row.cita_carga || row.cita_descarga).filter(row => {
+      const rowDate = parseCitaDate(row.cita_descarga || row.cita_carga)?.getTime();
+      return !viajeItems.some(item => {
+        if (normalize(item.unidad) !== normalize(row.unidad)) return false;
+        const itemDate = parseCitaDate(item.cita_descarga || item.cita_carga)?.getTime();
+        const sameDate = rowDate && itemDate && Math.abs(rowDate - itemDate) < 60000;
+        const sameDestination = normalize(item.destino) && normalize(item.destino) === normalize(row.destino);
+        return sameDate || sameDestination;
+      });
+    }).map(row => ({
+      id: `seg-${row.id}`,
+      sourceId: row.id,
+      vehicle_id: findVehicleForUnit(row.unidad)?.id || '',
+      unidad: row.unidad,
+      tipo: 'Seguimiento',
+      origen: row.origen || '',
+      destino: row.destino || '',
+      cita_carga: row.cita_carga || '',
+      cita_descarga: row.cita_descarga || '',
+      remolque: row.remolque || '',
+      estatus: normalizeStatus(row.estatus),
+    }));
+    return [...viajeItems, ...seguimientoSinViaje].sort((a, b) => {
+      const aDate = parseCitaDate(a.cita_descarga || a.cita_carga)?.getTime() || Number.MAX_SAFE_INTEGER;
+      const bDate = parseCitaDate(b.cita_descarga || b.cita_carga)?.getTime() || Number.MAX_SAFE_INTEGER;
+      return aDate - bDate;
+    });
+  }, [viajes, seguimiento, vehiculos]);
+  const [formGeofence, setFormGeofence] = useState(GEOFENCE_DEFAULT);
   const [filtroAlertas, setFiltroAlertas] = useState('');
   const [busquedaUnidades, setBusquedaUnidades] = useState('');
   const [filtroUnidades, setFiltroUnidades] = useState('todas');
@@ -300,6 +399,9 @@ export default function Home() {
   const [routeVehicleId, setRouteVehicleId] = useState('');
   const [routeDate, setRouteDate] = useState('');
   const [routeLoading, setRouteLoading] = useState(false);
+  const [citasEta, setCitasEta] = useState({});
+  const [citasEtaLoading, setCitasEtaLoading] = useState(false);
+  const [citasEtaRefresh, setCitasEtaRefresh] = useState(0);
   const [mapas, setMapas] = useState([]);
   const [selectedMapa, setSelectedMapa] = useState(null);
   const [mapaEditando, setMapaEditando] = useState(null);
@@ -313,6 +415,7 @@ export default function Home() {
   const [showZoneModal, setShowZoneModal] = useState(false);
   const [newZone, setNewZone] = useState({ name: '', description: '', severity: 'high', lat: '', lng: '', radius: 5000 });
   const [unidadesLocales, setUnidadesLocales] = useState([]);
+  const [showProgramarViajeModal, setShowProgramarViajeModal] = useState(false);
   const [showViajeModal, setShowViajeModal] = useState(false);
   const [viajeDetalle, setViajeDetalle] = useState(null);
   const [viajeEditando, setViajeEditando] = useState(false);
@@ -354,6 +457,7 @@ export default function Home() {
   const [formUnidad, setFormUnidad] = useState({ nombre: '', estatus: 'Activa', notas: '', tipo: 'manual', samsara_id: '' });
   const [monitoreoSelectedId, setMonitoreoSelectedId] = useState(null);
   const [monitoreoRouteHistory, setMonitoreoRouteHistory] = useState([]);
+  const [monitoreoStops, setMonitoreoStops] = useState([]);
   const [monitoreoEta, setMonitoreoEta] = useState(null);
   const [monitoreoRutaTotal, setMonitoreoRutaTotal] = useState(null);
   const [monitoreoEtaLoading, setMonitoreoEtaLoading] = useState(false);
@@ -372,6 +476,8 @@ export default function Home() {
   const routeHistoryRequestRef = useRef({ generation: 0, controller: null });
   const routeDatesRequestRef = useRef({ generation: 0, controller: null });
   const reportRequestRef = useRef({ generation: 0, controller: null });
+  const viajeWasDraggedRef = useRef(false);
+  const citasEtaRequestRef = useRef({ generation: 0, controller: null });
 
   const statusKey = (value) => String(value || '')
     .normalize('NFD')
@@ -458,25 +564,30 @@ export default function Home() {
     routeHistoryRequestRef.current.controller?.abort();
     routeDatesRequestRef.current.controller?.abort();
     reportRequestRef.current.controller?.abort();
+    citasEtaRequestRef.current.controller?.abort();
   }, []);
 
   useEffect(() => {
     const handleEscape = (e) => {
       if (e.key !== 'Escape') return;
       if (showTurnoModal) { setShowTurnoModal(false); setTurnoSummary(null); }
+      else if (showExistingGeofenceModal) cerrarExistingGeofenceModal();
+      else if (showClienteGeofenceModal) cerrarClienteGeofenceModal();
+      else if (showClienteModal) cerrarClienteModal();
       else if (showRemolqueModal) cerrarRemolqueModal();
       else if (showHistorialModal) setShowHistorialModal(false);
       else if (showPendienteModal) { pendienteRequestRef.current.controller?.abort(); pendienteRequestRef.current.generation += 1; setShowPendienteModal(false); setPendienteEditando(null); setNuevoComentarioPendiente(''); }
       else if (showMensajeModal) setShowMensajeModal(false);
       else if (showSeguimientoUpdateModal) setShowSeguimientoUpdateModal(false);
       else if (showViajeModal) { setShowViajeModal(false); setViajeEditando(false); }
+      else if (showProgramarViajeModal) setShowProgramarViajeModal(false);
       else if (selectedVehicle) setSelectedVehicle(null);
       else if (showUnidadModal) setShowUnidadModal(false);
       else if (showZoneModal) setShowZoneModal(false);
     };
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
-  }, [selectedVehicle, showHistorialModal, showMensajeModal, showPendienteModal, showRemolqueModal, showSeguimientoUpdateModal, showTurnoModal, showUnidadModal, showViajeModal, showZoneModal]);
+  }, [selectedVehicle, showClienteGeofenceModal, showClienteModal, showExistingGeofenceModal, showHistorialModal, showMensajeModal, showPendienteModal, showProgramarViajeModal, showRemolqueModal, showSeguimientoUpdateModal, showTurnoModal, showUnidadModal, showViajeModal, showZoneModal]);
 
   useEffect(() => {
     if (!apiUrl) return;
@@ -742,12 +853,12 @@ export default function Home() {
     const pendientesVersion = pendientesVersionRef.current;
     const run = async () => {
       setLoading(true);
-      const [statsRes, pendientesRes, viajesRes, alertasRes, vehiculosRes, comentariosRes, operadoresRes, driversRes, geofencesRes, eventsRes, riskZonesRes, samsaraAddrRes, remolquesRes, seguimientoRes, unidadesRes, mapasRes] = await Promise.allSettled([
+      const [statsRes, pendientesRes, viajesRes, alertasRes, vehiculosRes, comentariosRes, operadoresRes, driversRes, geofencesRes, eventsRes, riskZonesRes, samsaraAddrRes, remolquesRes, seguimientoRes, unidadesRes, mapasRes, clientesRes, geofenceLinksRes] = await Promise.allSettled([
         requestJson(`${apiUrl}/reportes/resumen`), requestJson(`${apiUrl}/pendientes`), requestJson(`${apiUrl}/viajes`),
         requestJson(`${apiUrl}/alertas`), requestJson(`${apiUrl}/samsara/vehicles`), requestJson(`${apiUrl}/comentarios`),
         requestJson(`${apiUrl}/vehicle-operators`), requestJson(`${apiUrl}/samsara/drivers`), requestJson(`${apiUrl}/geofences`),
         requestJson(`${apiUrl}/geofence-events?limit=100`), requestJson(`${apiUrl}/risk-zones`), requestJson(`${apiUrl}/samsara/addresses`),
-        requestJson(`${apiUrl}/remolques`), requestJson(`${apiUrl}/seguimiento`), requestJson(`${apiUrl}/unidades`), requestJson(`${apiUrl}/mapas`),
+        requestJson(`${apiUrl}/remolques`), requestJson(`${apiUrl}/seguimiento`), requestJson(`${apiUrl}/unidades`), requestJson(`${apiUrl}/mapas`), requestJson(`${apiUrl}/clientes`), requestJson(`${apiUrl}/clientes/geofence-links`),
       ]);
 
       if (statsRes.status === 'fulfilled' && statsRes.value && !Array.isArray(statsRes.value)) setStats(statsRes.value);
@@ -763,6 +874,8 @@ export default function Home() {
       if (remolquesRes.status === 'fulfilled' && Array.isArray(remolquesRes.value)) setRemolques(remolquesRes.value);
       if (seguimientoRes.status === 'fulfilled' && Array.isArray(seguimientoRes.value)) setSeguimiento(normalizarSeguimiento(seguimientoRes.value));
       if (unidadesRes.status === 'fulfilled' && Array.isArray(unidadesRes.value)) setUnidadesLocales(unidadesRes.value);
+      if (clientesRes.status === 'fulfilled' && Array.isArray(clientesRes.value)) setClientes(clientesRes.value);
+      if (geofenceLinksRes.status === 'fulfilled' && Array.isArray(geofenceLinksRes.value)) setGeofenceLinks(geofenceLinksRes.value);
       if (mapasRes.status === 'fulfilled' && Array.isArray(mapasRes.value)) {
         setMapas(mapasRes.value);
         setSelectedMapa(prev => mapasRes.value.find(mapa => String(mapa.id) === String(prev?.id)) || mapasRes.value[0] || null);
@@ -811,6 +924,16 @@ export default function Home() {
   const refreshRemolques = async () => {
     const rows = await fetch(`${apiUrl}/remolques`).then(r => r.json()).catch(() => []);
     setRemolques(Array.isArray(rows) ? rows : []);
+  };
+
+  const refreshClientes = async () => {
+    const rows = await apiJson(`${apiUrl}/clientes`);
+    setClientes(Array.isArray(rows) ? rows : []);
+  };
+
+  const refreshGeofenceLinks = async () => {
+    const rows = await apiJson(`${apiUrl}/clientes/geofence-links`);
+    setGeofenceLinks(Array.isArray(rows) ? rows : []);
   };
 
   const refreshSeguimiento = async () => {
@@ -1194,6 +1317,7 @@ export default function Home() {
       setViajeEta(null);
       setViajeEtaError('');
       await refreshViajes();
+      setShowProgramarViajeModal(false);
     } catch (err) {
       whatsappPopup?.close();
       alert(err.message || 'No se pudo programar el viaje');
@@ -1211,21 +1335,52 @@ export default function Home() {
         body: JSON.stringify({ estado: normalizarEstadoViaje(estado) }),
       });
       await refreshViajes();
+      return true;
     } catch (err) {
       alert(err.message || 'No se pudo cambiar el estado del viaje');
+      return false;
     } finally {
       setViajeSaving(false);
     }
   };
 
+  const iniciarArrastreViaje = (e, viaje) => {
+    viajeWasDraggedRef.current = true;
+    setDraggedViaje(viaje);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(viaje.id));
+  };
+
+  const terminarArrastreViaje = () => {
+    setDraggedViaje(null);
+    setDragOverViajeColumn(null);
+    setTimeout(() => { viajeWasDraggedRef.current = false; }, 100);
+  };
+
+  const soltarViaje = async (e, nuevoEstado) => {
+    e.preventDefault();
+    const viaje = draggedViaje;
+    setDraggedViaje(null);
+    setDragOverViajeColumn(null);
+    setTimeout(() => { viajeWasDraggedRef.current = false; }, 100);
+    if (!viaje || normalizarEstadoViaje(viaje.estado) === nuevoEstado) return;
+    const estadoAnterior = viaje.estado || 'programado';
+    setViajes(prev => prev.map(item => item.id === viaje.id ? { ...item, estado: nuevoEstado } : item));
+    const guardado = await actualizarEstadoViaje(viaje.id, nuevoEstado);
+    if (!guardado) {
+      setViajes(prev => prev.map(item => item.id === viaje.id ? { ...item, estado: estadoAnterior } : item));
+    }
+  };
+
   const eliminarViaje = async (id) => {
-    if (confirm('Eliminar este viaje?')) {
-      try {
-        await apiJson(`${apiUrl}/viajes/${id}`, { method: 'DELETE' });
-        await refreshViajes();
-      } catch (err) {
-        alert(err.message || 'No se pudo eliminar el viaje');
-      }
+    if (!confirm('Eliminar este viaje?')) return false;
+    try {
+      await apiJson(`${apiUrl}/viajes/${id}`, { method: 'DELETE' });
+      await refreshViajes();
+      return true;
+    } catch (err) {
+      alert(err.message || 'No se pudo eliminar el viaje');
+      return false;
     }
   };
 
@@ -1289,6 +1444,56 @@ export default function Home() {
       } catch (err) {
         alert(err.message || 'No se pudo eliminar el remolque');
       }
+    }
+  };
+
+  const abrirClienteModal = (cliente = null) => {
+    setClienteEditando(cliente);
+    setFormCliente(cliente ? {
+      nombre: cliente.nombre || '',
+      contacto: cliente.contacto || '',
+      telefono: cliente.telefono || '',
+      email: cliente.email || '',
+    } : CLIENTE_DEFAULT);
+    setShowClienteModal(true);
+  };
+
+  const cerrarClienteModal = () => {
+    if (clienteSaving) return;
+    setShowClienteModal(false);
+    setClienteEditando(null);
+    setFormCliente(CLIENTE_DEFAULT);
+  };
+
+  const guardarCliente = async (event) => {
+    event.preventDefault();
+    if (!formCliente.nombre.trim()) return;
+    try {
+      setClienteSaving(true);
+      await apiJson(`${apiUrl}/clientes${clienteEditando ? `/${clienteEditando.id}` : ''}`, {
+        method: clienteEditando ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formCliente),
+      });
+      setShowClienteModal(false);
+      setClienteEditando(null);
+      setFormCliente(CLIENTE_DEFAULT);
+      await refreshClientes();
+    } catch (err) {
+      alert(err.message || 'No se pudo guardar el cliente');
+    } finally {
+      setClienteSaving(false);
+    }
+  };
+
+  const eliminarCliente = async (cliente) => {
+    if (!confirm(`¿Eliminar al cliente "${cliente.nombre}"?`)) return;
+    try {
+      await apiJson(`${apiUrl}/clientes/${cliente.id}`, { method: 'DELETE' });
+      if (String(selectedClienteId) === String(cliente.id)) setSelectedClienteId(null);
+      await Promise.all([refreshClientes(), refreshGeofenceLinks(), refreshGeofences()]);
+    } catch (err) {
+      alert(err.message || 'No se pudo eliminar el cliente');
     }
   };
 
@@ -1543,6 +1748,7 @@ export default function Home() {
 
   const abrirActualizarSeguimiento = () => {
     setSeguimientoModalError('');
+    setSeguimientoModalGrupo('');
     setSeguimientoModalNota('');
     setSeguimientoModalUnidadId('');
     setShowSeguimientoUpdateModal(true);
@@ -1553,7 +1759,35 @@ export default function Home() {
     setSeguimientoModalError('');
     const unidad = todasLasUnidades.find(v => String(v.id) === String(unidadId));
     const fila = obtenerSeguimientoUnidad(unidad?.name || unidad?.nombre || '');
+    setSeguimientoModalGrupo(fila?.grupo || '');
     setSeguimientoModalNota(fila?.comentarios_monitoreo || fila?.comentarios_cliente || '');
+  };
+
+  const construirActualizacionSeguimiento = (unidad, fila, grupo, comentario) => {
+    const nombreUnidad = unidad.name || unidad.nombre || '';
+    const viajesVigentes = obtenerViajesUnidad(nombreUnidad, unidad.id)
+      .filter(viaje => !['completado', 'cancelado'].includes(String(viaje.estado || '').toLowerCase()));
+    const viajeActual = viajesVigentes[0] || null;
+    const destinos = viajeActual ? destinosViaje(viajeActual) : [];
+    const origen = viajeActual?.origen || fila?.origen || '';
+    const destino = viajeActual?.destino || destinos.at(-1) || fila?.destino || '';
+    const rutaViaje = [origen, ...(destinos.length > 0 ? destinos : [destino])].filter(Boolean).join(' - ');
+    return {
+      unidad: nombreUnidad,
+      operador: operadores[String(unidad.id)]?.nombre || viajeActual?.conductor || fila?.operador || '',
+      remolque: viajeActual?.remolque || viajeActual?.seg_remolque || obtenerRemolqueAsignadoUnidad(unidad.id, nombreUnidad) || fila?.remolque || '',
+      ruta: viajeActual?.ruta || rutaViaje || fila?.ruta || '',
+      origen,
+      destino,
+      cita_carga: viajeActual?.fecha_inicio || fila?.cita_carga || '',
+      cita_descarga: viajeActual?.fecha_fin || fila?.cita_descarga || '',
+      hora_llegada: fila?.hora_llegada || '',
+      hora_liberacion: fila?.hora_liberacion || '',
+      estatus: normalizarEstatusSeguimiento(viajeActual?.estado || fila?.estatus || unidad.estatus || 'Disponible'),
+      comentarios_cliente: fila?.comentarios_cliente || '',
+      comentarios_monitoreo: comentario,
+      grupo,
+    };
   };
 
   const guardarActualizacionSeguimiento = async () => {
@@ -1565,6 +1799,11 @@ export default function Home() {
 
     const nombreUnidad = unidad.name || unidad.nombre || '';
     const fila = obtenerSeguimientoUnidad(nombreUnidad);
+    const grupo = seguimientoModalGrupo.trim();
+    if (!grupo) {
+      setSeguimientoModalError('Escribe el grupo al que se reportará');
+      return;
+    }
     const notaNueva = seguimientoModalNota.trim();
     if (!notaNueva) {
       setSeguimientoModalError('Escribe una observación');
@@ -1574,32 +1813,18 @@ export default function Home() {
     setSeguimientoModalSaving(true);
     setSeguimientoModalError('');
     try {
+      const payload = construirActualizacionSeguimiento(unidad, fila, grupo, notaNueva);
       if (fila) {
         await apiJson(`${apiUrl}/seguimiento/${fila.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...fila, comentarios_monitoreo: notaNueva }),
+          body: JSON.stringify(payload),
         });
       } else {
         await apiJson(`${apiUrl}/seguimiento`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            unidad: nombreUnidad,
-            operador: operadores[String(unidad.id)]?.nombre || '',
-            remolque: '',
-            ruta: '',
-            origen: '',
-            destino: '',
-            cita_carga: '',
-            cita_descarga: '',
-            hora_llegada: '',
-            hora_liberacion: '',
-            estatus: unidad.estatus || 'Disponible',
-            comentarios_cliente: '',
-            comentarios_monitoreo: notaNueva,
-            grupo: '',
-          }),
+          body: JSON.stringify(payload),
         });
       }
       setSeguimientoModalNota('');
@@ -1618,16 +1843,6 @@ export default function Home() {
     });
     setSeguimientoEditando(null);
     setShowSeguimientoForm(false);
-  };
-
-  const abrirNuevoSeguimiento = () => {
-    setFormSeguimiento({
-      unidad: '', operador: '', remolque: '', ruta: '', origen: '', destino: '',
-      cita_carga: '', cita_descarga: '', hora_llegada: '', hora_liberacion: '',
-      estatus: 'Disponible', comentarios_cliente: '', comentarios_monitoreo: '', grupo: ''
-    });
-    setSeguimientoEditando(null);
-    setShowSeguimientoForm(true);
   };
 
   const guardarSeguimiento = async (e) => {
@@ -1667,6 +1882,22 @@ export default function Home() {
       await refreshSeguimiento();
     } catch (err) {
       alert(err.message || 'No se pudo guardar el seguimiento');
+    }
+  };
+
+  const actualizarGrupoSeguimiento = async (row, grupo) => {
+    const grupoAnterior = row.grupo || '';
+    setSeguimiento(prev => prev.map(item => item.id === row.id ? { ...item, grupo } : item));
+    try {
+      await apiJson(`${apiUrl}/seguimiento/${row.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ grupo }),
+      });
+      await refreshSeguimiento();
+    } catch (err) {
+      setSeguimiento(prev => prev.map(item => item.id === row.id ? { ...item, grupo: grupoAnterior } : item));
+      alert(err.message || 'No se pudo actualizar el grupo');
     }
   };
 
@@ -1821,18 +2052,31 @@ export default function Home() {
     setMonitoreoRutaTotal(null);
     setMonitoreoEtaLoading(false);
     setMonitoreoGeofenceMatch(null);
-    if (v.isLocal) { setMonitoreoRouteHistory([]); return; }
+    setMonitoreoRouteHistory([]);
+    setMonitoreoStops([]);
+    if (v.isLocal) return;
     const fullVehicle = vehiculos.find(vh => String(vh.id) === String(v.id)) || v;
     const viaje = viajesActivos.find(vj => String(vj.vehicle_id) === String(v.id) || vj.vehicle_name === v.name || vj.vehicle_name === fullVehicle?.name);
     const destino = viaje?.tipo_entrega === 'reparto' ? destinosViaje(viaje)[0] : (viaje?.destino || viaje?.seg_destino || '');
     const historyPromise = (async () => {
       try {
-        const res = await fetch(`${apiUrl}/route-history/last?vehicle_id=${encodeURIComponent(v.id)}&hours=24&stops_minutes=20`, { signal: controller.signal });
-        const route = await res.json().catch(() => null);
-        if (!res.ok) throw new Error('No se pudieron cargar las paradas');
-        if (monitoreoRequestRef.current.generation === generation) setMonitoreoRouteHistory(Array.isArray(route) ? route : []);
+        const params = new URLSearchParams({ vehicle_id: String(v.id), hours: '24', stops_minutes: '20', include_route: '1' });
+        if (viaje?.fecha_inicio) {
+          const tripStart = new Date(String(viaje.fecha_inicio).replace(' ', 'T')).getTime();
+          if (Number.isFinite(tripStart)) params.set('since_ms', String(tripStart));
+        }
+        const res = await fetch(`${apiUrl}/route-history/last?${params}`, { signal: controller.signal });
+        const history = await res.json().catch(() => null);
+        if (!res.ok) throw new Error('No se pudo cargar el recorrido');
+        if (monitoreoRequestRef.current.generation === generation) {
+          setMonitoreoRouteHistory(Array.isArray(history?.route) ? history.route : []);
+          setMonitoreoStops(Array.isArray(history?.stops) ? history.stops : []);
+        }
       } catch (e) {
-        if (e.name !== 'AbortError' && monitoreoRequestRef.current.generation === generation) setMonitoreoRouteHistory([]);
+        if (e.name !== 'AbortError' && monitoreoRequestRef.current.generation === generation) {
+          setMonitoreoRouteHistory([]);
+          setMonitoreoStops([]);
+        }
       }
     })();
     const etaPromise = (async () => {
@@ -1974,14 +2218,12 @@ export default function Home() {
     await asignarRemolque(remolque.id, String(selectedVehicle.id), selectedVehicle.name);
   };
 
-  const crearGeofence = async (e) => {
-    e.preventDefault();
-    try {
-      const tieneLatitud = String(formGeofence.latitud).trim() !== '';
-      const tieneLongitud = String(formGeofence.longitud).trim() !== '';
-      let latitud = tieneLatitud ? Number(formGeofence.latitud) : NaN;
-      let longitud = tieneLongitud ? Number(formGeofence.longitud) : NaN;
-      let direccion = formGeofence.direccion || '';
+  const prepararGeofencePayload = async (form, extra = {}) => {
+      const tieneLatitud = String(form.latitud).trim() !== '';
+      const tieneLongitud = String(form.longitud).trim() !== '';
+      let latitud = tieneLatitud ? Number(form.latitud) : NaN;
+      let longitud = tieneLongitud ? Number(form.longitud) : NaN;
+      let direccion = form.direccion || '';
       if ((!Number.isFinite(latitud) || !Number.isFinite(longitud)) && direccion.trim()) {
         const geo = await apiJson(`${apiUrl}/geocode-address`, {
           method: 'POST',
@@ -1995,23 +2237,113 @@ export default function Home() {
       if (!Number.isFinite(latitud) || !Number.isFinite(longitud)) throw new Error('Ingresa coordenadas válidas o una dirección para geocodificar');
       if (latitud < -90 || latitud > 90) throw new Error('La latitud debe estar entre -90 y 90');
       if (longitud < -180 || longitud > 180) throw new Error('La longitud debe estar entre -180 y 180');
+      return {
+        nombre: form.nombre,
+        direccion,
+        latitud,
+        longitud,
+        radio_metros: Number(form.radio_metros) || 500,
+        descripcion: form.descripcion,
+        color: form.color,
+        ...extra,
+      };
+  };
+
+  const crearGeofence = async (e) => {
+    e.preventDefault();
+    try {
+      const payload = await prepararGeofencePayload(formGeofence);
       await apiJson(`${apiUrl}/geofences`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nombre: formGeofence.nombre,
-          direccion,
-          latitud,
-          longitud,
-          radio_metros: Number(formGeofence.radio_metros) || 500,
-          descripcion: formGeofence.descripcion,
-          color: formGeofence.color,
-        }),
+        body: JSON.stringify(payload),
       });
-      setFormGeofence({ nombre: '', direccion: '', latitud: '', longitud: '', radio_metros: '500', descripcion: '', color: '#3b82f6' });
+      setFormGeofence(GEOFENCE_DEFAULT);
       await refreshGeofences();
     } catch (err) {
       alert(err.message || 'No se pudo crear la geocerca');
+    }
+  };
+
+  const abrirClienteGeofenceModal = () => {
+    if (!selectedCliente) return;
+    setFormClienteGeofence(GEOFENCE_DEFAULT);
+    setShowClienteGeofenceModal(true);
+  };
+
+  const cerrarClienteGeofenceModal = () => {
+    if (clienteGeofenceSaving) return;
+    setShowClienteGeofenceModal(false);
+    setFormClienteGeofence(GEOFENCE_DEFAULT);
+  };
+
+  const crearClienteGeofence = async (event) => {
+    event.preventDefault();
+    if (!selectedCliente) return;
+    try {
+      setClienteGeofenceSaving(true);
+      const payload = await prepararGeofencePayload(formClienteGeofence, { cliente_id: selectedCliente.id });
+      await apiJson(`${apiUrl}/geofences`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      setShowClienteGeofenceModal(false);
+      setFormClienteGeofence(GEOFENCE_DEFAULT);
+      await refreshGeofences();
+    } catch (err) {
+      alert(err.message || 'No se pudo crear la geocerca del cliente');
+    } finally {
+      setClienteGeofenceSaving(false);
+    }
+  };
+
+  const abrirExistingGeofenceModal = () => {
+    if (!selectedCliente) return;
+    setExistingGeofenceSelection('');
+    setExistingGeofenceSearch('');
+    setShowExistingGeofenceModal(true);
+  };
+
+  const cerrarExistingGeofenceModal = () => {
+    if (existingGeofenceSaving) return;
+    setShowExistingGeofenceModal(false);
+    setExistingGeofenceSelection('');
+    setExistingGeofenceSearch('');
+  };
+
+  const vincularExistingGeofence = async (event) => {
+    event.preventDefault();
+    if (!selectedCliente || !existingGeofenceSelection) return;
+    const separator = existingGeofenceSelection.indexOf('|');
+    const source = existingGeofenceSelection.slice(0, separator);
+    const geofenceId = existingGeofenceSelection.slice(separator + 1);
+    try {
+      setExistingGeofenceSaving(true);
+      await apiJson(`${apiUrl}/clientes/${selectedCliente.id}/geofences/link`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source, geofence_id: geofenceId }),
+      });
+      setShowExistingGeofenceModal(false);
+      setExistingGeofenceSelection('');
+      setExistingGeofenceSearch('');
+      await Promise.all([refreshGeofences(), refreshGeofenceLinks()]);
+    } catch (err) {
+      alert(err.message || 'No se pudo asociar la geocerca');
+    } finally {
+      setExistingGeofenceSaving(false);
+    }
+  };
+
+  const desvincularClienteGeofence = async geofence => {
+    if (!selectedCliente || !confirm(`¿Desvincular "${geofence.nombre}" de ${selectedCliente.nombre}?`)) return;
+    const source = geofence.source === 'samsara' ? 'samsara' : 'local';
+    try {
+      await apiJson(`${apiUrl}/clientes/${selectedCliente.id}/geofences/${source}/${encodeURIComponent(geofence.id)}`, { method: 'DELETE' });
+      await Promise.all([refreshGeofences(), refreshGeofenceLinks()]);
+    } catch (err) {
+      alert(err.message || 'No se pudo desvincular la geocerca');
     }
   };
 
@@ -2169,6 +2501,76 @@ export default function Home() {
     }
   };
 
+  useEffect(() => {
+    if (activeTab !== 'citas') return;
+    citasEtaRequestRef.current.controller?.abort();
+    const controller = new AbortController();
+    const generation = citasEtaRequestRef.current.generation + 1;
+    citasEtaRequestRef.current = { generation, controller };
+    const finalized = new Set(['completado', 'cancelado']);
+    const initial = {};
+    const candidates = [];
+
+    for (const item of citasOperativas) {
+      if (finalized.has(item.estatus)) {
+        initial[item.id] = { status: item.estatus, label: item.estatus === 'completado' ? 'Completada' : 'Cancelada' };
+        continue;
+      }
+      const vehicle = findVehicleForUnit(item.unidad, item.vehicle_id);
+      if (!vehicle?.location || (vehicle.lastSeen != null && vehicle.lastSeen >= 15)) {
+        initial[item.id] = { status: 'unavailable', label: 'Sin GPS reciente' };
+        continue;
+      }
+      const geofenceName = findGeofence(item.destino)?.nombre || geocercasCoincidentes(item.destino)[0];
+      if (!geofenceName) {
+        initial[item.id] = { status: 'unavailable', label: 'Destino sin geocerca' };
+        continue;
+      }
+      candidates.push({ item, vehicle, geofenceName });
+    }
+
+    setCitasEta(initial);
+    setCitasEtaLoading(candidates.length > 0);
+    let nextIndex = 0;
+    const worker = async () => {
+      while (nextIndex < candidates.length && !controller.signal.aborted) {
+        const current = candidates[nextIndex++];
+        try {
+          const eta = await calcularRuta(current.geofenceName, current.vehicle.location.latitude, current.vehicle.location.longitude, controller.signal);
+          if (!eta || controller.signal.aborted) continue;
+          const arrival = new Date(Date.now() + eta.duracionSegundos * 1000);
+          const appointment = parseCitaDate(current.item.cita_descarga || current.item.cita_carga);
+          const tripStart = parseCitaDate(current.item.cita_carga);
+          const differenceMinutes = appointment ? Math.round((arrival.getTime() - appointment.getTime()) / 60000) : null;
+          let status = 'on_time';
+          let label = 'A tiempo';
+          if (current.item.estatus === 'programado' && tripStart && Date.now() < tripStart.getTime()) {
+            status = 'scheduled';
+            label = 'Programada';
+          } else if (differenceMinutes !== null && differenceMinutes > 10) {
+            status = 'delayed';
+            label = `Retraso ${differenceMinutes} min`;
+          } else if (differenceMinutes !== null && differenceMinutes < -10) {
+            status = 'early';
+            label = `Adelanto ${Math.abs(differenceMinutes)} min`;
+          }
+          if (citasEtaRequestRef.current.generation === generation) {
+            setCitasEta(prev => ({ ...prev, [current.item.id]: { status, label, eta, arrival, differenceMinutes } }));
+          }
+        } catch (error) {
+          if (error.name !== 'AbortError' && citasEtaRequestRef.current.generation === generation) {
+            setCitasEta(prev => ({ ...prev, [current.item.id]: { status: 'unavailable', label: 'ETA no disponible' } }));
+          }
+        }
+      }
+    };
+
+    Promise.all(Array.from({ length: Math.min(3, candidates.length) }, () => worker())).finally(() => {
+      if (citasEtaRequestRef.current.generation === generation) setCitasEtaLoading(false);
+    });
+    return () => controller.abort();
+  }, [activeTab, citasEtaRefresh]);
+
   const calcularETA = async (destino, vehicle) => {
     if (!destino.trim() || !vehicle?.location) return;
     etaRequestRef.current.controller?.abort();
@@ -2280,7 +2682,14 @@ export default function Home() {
     const params = new URLSearchParams();
     if (filtros.fecha_inicio) params.append('fecha_inicio', filtros.fecha_inicio);
     if (filtros.fecha_fin) params.append('fecha_fin', filtros.fecha_fin);
-    if (filtros.vehicle_id) params.append('vehicle_id', filtros.vehicle_id);
+    if (filtros.vehicle_id) {
+      if (filtros.tipo === 'seguimiento') {
+        const vehicle = vehiculos.find(item => String(item.id) === String(filtros.vehicle_id));
+        if (vehicle?.name) params.append('unidad', vehicle.name);
+      } else {
+        params.append('vehicle_id', filtros.vehicle_id);
+      }
+    }
     const tipoNotas = filtros.tipo === 'incidencias' ? 'incidencia' : filtros.tipo;
     const endpoint = filtros.tipo === 'pendientes-completados'
       ? 'reportes/pendientes-completados'
@@ -2296,7 +2705,12 @@ export default function Home() {
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.error || data?.message || 'No se pudo generar el reporte');
       if (!Array.isArray(data)) throw new Error('El reporte recibido no es válido');
-      if (reportRequestRef.current.generation === generation) setReportes(data);
+      if (reportRequestRef.current.generation === generation) {
+        const rows = filtros.tipo === 'seguimiento'
+          ? [...data].sort((a, b) => String(a.unidad || '').localeCompare(String(b.unidad || ''), 'es', { numeric: true, sensitivity: 'base' }))
+          : data;
+        setReportes(rows);
+      }
     } catch (err) {
       if (err.name !== 'AbortError' && reportRequestRef.current.generation === generation) {
         setReportes([]);
@@ -2330,7 +2744,7 @@ export default function Home() {
   const generarPDF = () => {
     if (!reportes.length) return;
     const doc = new jsPDF({ orientation: 'landscape' });
-    const tipoLabel = { pendientes: 'Pendientes', 'pendientes-completados': 'Pendientes completados', viajes: 'Viajes', seguimiento: 'Seguimiento / Comentarios', bitacora: 'Bitácora', incidencias: 'Incidencias' };
+    const tipoLabel = { pendientes: 'Pendientes', 'pendientes-completados': 'Pendientes completados', viajes: 'Viajes', seguimiento: 'Seguimiento operativo', bitacora: 'Bitácora', incidencias: 'Incidencias' };
     doc.setFontSize(18);
     doc.text(`Reporte: ${tipoLabel[filtroReporte.tipo] || filtroReporte.tipo}`, 14, 20);
     doc.setFontSize(10);
@@ -2497,6 +2911,7 @@ export default function Home() {
     { key: 'unidades', label: 'Unidades', icon: '🚛', badge: todasLasUnidades.length },
     { key: 'alertas', label: 'Alertas', icon: '🔔', badge: alertasNoLeidas.length },
     { key: 'operadores', label: 'Operadores', icon: '👤' },
+    { key: 'clientes', label: 'Clientes', icon: '🏢', badge: clientes.length },
     { key: 'remolques', label: 'Remolques', icon: '🚛' },
     { key: 'mapas', label: 'Mapas', icon: '🗺️' },
     { key: 'rutas', label: 'Historial Rutas', icon: '🛤️' },
@@ -2537,6 +2952,9 @@ export default function Home() {
 
   return (
     <div className="app-shell" style={s.container}>
+      <datalist id="seguimiento-group-suggestions">
+        {gruposUnicos.map(grupo => <option key={grupo} value={grupo} />)}
+      </datalist>
       <aside className="app-sidebar" style={{ ...s.sidebar, width: sidebarCollapsed ? '56px' : '240px', transition: 'width 0.2s ease' }}>
         <div style={{ ...s.logo, padding: sidebarCollapsed ? '1.5rem 0.5rem' : '1.5rem', justifyContent: sidebarCollapsed ? 'center' : 'flex-start' }}>
           <button type="button" aria-label={sidebarCollapsed ? 'Expandir navegación' : 'Contraer navegación'} style={{ fontSize: '1.5rem', cursor: 'pointer', background: 'none', border: 0 }} onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>🚛</button>
@@ -2977,7 +3395,7 @@ export default function Home() {
           const selSeg = selViaje ? { destino: selViaje.tipo_entrega === 'reparto' ? destinosViaje(selViaje)[0] : (selViaje.destino || selViaje.seg_destino || ''), tipo_entrega: selViaje.tipo_entrega, destinos: destinosViaje(selViaje), remolque: selViaje.seg_remolque || '', origen: selViaje.origen || selViaje.seg_origen || '', estatus: selViaje.estado || selViaje.seg_estatus || '' } : {};
           const currentGeofence = geofenceAtLocation(selVehicle?.location);
           const currentLocationLabel = currentGeofence?.nombre || selVehicle?.location?.location || 'Sin ubicación';
-          const routeLen = monitoreoRouteHistory.length;
+          const routeLen = monitoreoStops.length;
           let avancePct = 0;
           let avanceLabel = 'Sin datos';
           let avanceEsperadoPct = null;
@@ -3063,14 +3481,14 @@ export default function Home() {
                 </p>
               </div>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
-                {monitoreoSelectedId && <button onClick={() => { monitoreoRequestRef.current.controller?.abort(); monitoreoRequestRef.current.generation += 1; setMonitoreoSelectedId(null); setMonitoreoRouteHistory([]); setMonitoreoEta(null); setMonitoreoRutaTotal(null); setMonitoreoEtaLoading(false); setMonitoreoGeofenceMatch(null); }} style={{ ...s.button('#ef4444'), background: '#ef444420', border: '1px solid #ef4444', color: '#ef4444' }}>Limpiar Ruta</button>}
+                {monitoreoSelectedId && <button onClick={() => { monitoreoRequestRef.current.controller?.abort(); monitoreoRequestRef.current.generation += 1; setMonitoreoSelectedId(null); setMonitoreoRouteHistory([]); setMonitoreoStops([]); setMonitoreoEta(null); setMonitoreoRutaTotal(null); setMonitoreoEtaLoading(false); setMonitoreoGeofenceMatch(null); }} style={{ ...s.button('#ef4444'), background: '#ef444420', border: '1px solid #ef4444', color: '#ef4444' }}>Limpiar Ruta</button>}
                 <button onClick={loadAll} style={s.button()}>Actualizar</button>
               </div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '1rem' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                <div style={{ ...s.card, padding: 0, overflow: 'hidden', height: monitoreoSelectedId ? '45vh' : 'calc(100vh - 180px)', transition: 'height 0.3s ease' }}>
-                  <MapaUnidades vehiculos={vehiculos} geofences={allGeofences} routeHistory={monitoreoRouteHistory} selectedVehicleId={monitoreoSelectedId} />
+                <div style={{ ...s.card, padding: 0, overflow: 'hidden', height: monitoreoSelectedId ? 'min(68vh, 760px)' : 'calc(100vh - 180px)', transition: 'height 0.3s ease' }}>
+                  <MapaUnidades vehiculos={vehiculos} geofences={allGeofences} routeHistory={monitoreoRouteHistory} routeStops={monitoreoStops} selectedVehicleId={monitoreoSelectedId} />
                 </div>
                 {monitoreoSelectedId && selVehicle && (
                   <div style={{ ...s.card, padding: '1rem 1.25rem' }}>
@@ -3203,7 +3621,7 @@ export default function Home() {
 
         {activeTab === 'notas' && (
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: '1.5rem' }}>Notas por Unidad</h2>
                 <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>Bitácora interna e incidencias separadas</p>
@@ -3391,7 +3809,7 @@ export default function Home() {
 
         {activeTab === 'operaciones' && (
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: '1.5rem', color: '#e0e0e0' }}>Tablero de Pendientes</h2>
                 <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>
@@ -3497,13 +3915,24 @@ export default function Home() {
 
         {activeTab === 'viajes' && (
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: '1.5rem', color: '#e0e0e0' }}>Programación de Viajes</h2>
                   <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>{viajes.length} viajes registrados · {viajes.filter(v => !['completado', 'cancelado'].includes(String(v.estado || '').toLowerCase())).length} activos</p>
               </div>
+              <button type="button" onClick={() => setShowProgramarViajeModal(true)} style={s.button('#10b981')}>+ Programar viaje</button>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
+            {showProgramarViajeModal && (
+              <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, zIndex: 2100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', background: 'rgba(0,0,0,0.82)' }} onClick={() => setShowProgramarViajeModal(false)}>
+                <div className="modal-panel" role="dialog" aria-modal="true" aria-label="Programar viaje" style={{ width: 'min(1200px, 96vw)', maxHeight: '92vh', overflow: 'auto', padding: '1.25rem', border: '1px solid #1a3d1a', borderRadius: '16px', background: '#0a0a0a', boxShadow: '0 25px 60px rgba(0,0,0,0.6)' }} onClick={(e) => e.stopPropagation()}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+                    <div>
+                      <h2 style={{ margin: 0, color: '#00ff41', fontSize: '1.25rem' }}>Programar viaje</h2>
+                      <p style={{ margin: '0.2rem 0 0', color: '#6a9b6a', fontSize: '0.82rem' }}>Captura el viaje y revisa la unidad antes de guardarlo</p>
+                    </div>
+                    <button type="button" onClick={() => setShowProgramarViajeModal(false)} style={s.button('#6b7280')}>Cerrar</button>
+                  </div>
+                  <div className="trip-program-modal-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '1.5rem' }}>
               <div style={s.card}>
                 <h3 style={{ marginTop: 0, marginBottom: '1rem', fontSize: '1rem', color: '#e0e0e0' }}>Nuevo Viaje</h3>
                 <form onSubmit={crearViaje}>
@@ -3604,6 +4033,42 @@ export default function Home() {
                 {formViaje.vehicle_id ? (() => {
                   const v = vehiculos.find(vh => String(vh.id) === formViaje.vehicle_id);
                   if (!v) return <div style={{ color: '#4a8a4a' }}>No encontrado</div>;
+                  const estadosEnCurso = new Set(['en_ruta_vacio', 'en_ruta_cargado', 'espera_ingreso', 'proceso_carga', 'proceso_descarga', 'proceso_liberacion', 'en_resguardo']);
+                  const viajesUnidad = viajes
+                    .filter(viaje => String(viaje.vehicle_id) === String(v.id) || String(viaje.vehicle_name || '').trim().toLowerCase() === String(v.name || '').trim().toLowerCase())
+                    .map(normalizarViaje);
+                  const ordenarPorInicio = (a, b) => new Date(a.fecha_inicio || a.created_at || 0) - new Date(b.fecha_inicio || b.created_at || 0);
+                  const viajesEnCursoUnidad = viajesUnidad.filter(viaje => estadosEnCurso.has(normalizarEstadoViaje(viaje.estado))).sort(ordenarPorInicio);
+                  const viajesProgramadosUnidad = viajesUnidad.filter(viaje => normalizarEstadoViaje(viaje.estado) === 'programado').sort(ordenarPorInicio);
+                  const abrirViajeUnidad = (viaje) => {
+                    setViajeDetalle(viaje);
+                    setViajeForm(viaje);
+                    setShowViajeModal(true);
+                    setViajeEditando(false);
+                  };
+                  const renderViajeUnidad = (viaje) => {
+                    const estado = normalizarEstadoViaje(viaje.estado);
+                    const color = estadoColors[estado] || '#8b5cf6';
+                    const destinos = viaje.tipo_entrega === 'reparto' ? destinosViaje(viaje) : [viaje.destino].filter(Boolean);
+                    return (
+                      <div key={viaje.id} role="button" tabIndex={0} onClick={() => abrirViajeUnidad(viaje)} onKeyDown={(e) => activarConTeclado(e, () => abrirViajeUnidad(viaje))}
+                        style={{ padding: '0.7rem', background: '#111', border: `1px solid ${color}44`, borderRadius: '8px', cursor: 'pointer' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem' }}>
+                          <span style={{ color, fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase' }}>{estado.replaceAll('_', ' ')}</span>
+                          <span style={{ color: '#94a3b8', fontSize: '0.68rem' }}>{viaje.fecha_inicio ? formatFechaProgramada(viaje.fecha_inicio) : 'Sin fecha'}</span>
+                        </div>
+                        <div style={{ color: '#d4d4d4', fontSize: '0.78rem', lineHeight: 1.4 }}>
+                          <strong style={{ color: '#10b981' }}>{viaje.origen || 'Sin origen'}</strong>
+                          <span style={{ color: '#4a8a4a' }}> → </span>
+                          <strong style={{ color: '#60a5fa' }}>{viaje.tipo_entrega === 'reparto' ? `${destinos.length} paradas` : (destinos[0] || 'Sin destino')}</strong>
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.35rem', color: '#6a9b6a', fontSize: '0.68rem' }}>
+                          <span>{viaje.conductor || 'Sin conductor'}</span>
+                          {viaje.remolque && <span>· {viaje.remolque}</span>}
+                        </div>
+                      </div>
+                    );
+                  };
                   return (
                     <div style={{ fontSize: '0.85rem' }}>
                       <div style={{ padding: '0.75rem', background: '#111', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
@@ -3612,6 +4077,27 @@ export default function Home() {
                         <div style={{ color: '#c0c0c0' }}>Ubicación: {v.location?.location || 'Sin datos'}</div>
                         <div style={{ color: '#c0c0c0' }}>Diesel: {v.fuelLevelPercent !== null ? `${Math.round(v.fuelLevelPercent * 100)}%` : 'N/D'}</div>
                         <div style={{ color: v.isOnline ? '#00ff41' : '#f59e0b' }}>Estado: {v.isOnline ? 'Online' : 'Sin señal'}</div>
+                      </div>
+                      <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: '#0d0d0d', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem' }}>
+                          <div style={{ color: '#e0e0e0', fontSize: '0.8rem', fontWeight: 700 }}>Viajes de la unidad</div>
+                          <span style={s.badge('#6366f1')}>{viajesEnCursoUnidad.length + viajesProgramadosUnidad.length}</span>
+                        </div>
+                        {viajesEnCursoUnidad.length > 0 && (
+                          <div style={{ marginBottom: viajesProgramadosUnidad.length > 0 ? '0.85rem' : 0 }}>
+                            <div style={{ color: '#10b981', fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', marginBottom: '0.45rem' }}>En curso ({viajesEnCursoUnidad.length})</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>{viajesEnCursoUnidad.map(renderViajeUnidad)}</div>
+                          </div>
+                        )}
+                        {viajesProgramadosUnidad.length > 0 && (
+                          <div>
+                            <div style={{ color: '#8b5cf6', fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', marginBottom: '0.45rem' }}>Programados ({viajesProgramadosUnidad.length})</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>{viajesProgramadosUnidad.map(renderViajeUnidad)}</div>
+                          </div>
+                        )}
+                        {viajesEnCursoUnidad.length === 0 && viajesProgramadosUnidad.length === 0 && (
+                          <div style={{ color: '#4a8a4a', fontSize: '0.78rem', textAlign: 'center', padding: '0.75rem 0' }}>Sin viajes activos o programados</div>
+                        )}
                       </div>
                       {calculandoViajeEta && (
                         <div style={{ marginTop: '0.75rem', padding: '0.6rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #f59e0b33', fontSize: '0.85rem', color: '#f59e0b', textAlign: 'center' }}>
@@ -3650,12 +4136,15 @@ export default function Home() {
                   <div style={{ textAlign: 'center', padding: '2rem', color: '#4a8a4a' }}>
                     <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🚚</div>
                     <p>Selecciona un vehículo para ver sus datos</p>
-                    <p style={{ fontSize: '0.8rem', marginTop: '0.5rem' }}>El origen se auto-llenará con la ubicación actual</p>
+                    <p style={{ fontSize: '0.8rem', marginTop: '0.5rem' }}>También verás sus viajes activos y programados</p>
                   </div>
                 )}
               </div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+                </div>
+              </div>
+            )}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '0.65rem' }}>
               {[
                 { key: 'programado', label: 'Programado', color: '#8b5cf6' },
                 { key: 'en_ruta_vacio', label: 'En Ruta Vacío', color: '#3b82f6' },
@@ -3670,53 +4159,50 @@ export default function Home() {
                 { key: 'cancelado', label: 'Cancelado', color: '#ef4444' },
               ].map(col => {
                 const items = viajes.filter(v => String(v.estado || 'programado').toLowerCase() === col.key);
+                const isDragOver = dragOverViajeColumn === col.key;
                 return (
-                  <div key={col.key} style={{ background: '#0a0a0a', border: `1px solid ${col.color}33`, borderRadius: '12px', padding: '0.85rem', minHeight: '280px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                      <h3 style={{ margin: 0, fontSize: '0.95rem', color: col.color }}>{col.label}</h3>
+                  <div
+                    key={col.key}
+                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverViajeColumn(col.key); }}
+                    onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverViajeColumn(null); }}
+                    onDrop={(e) => soltarViaje(e, col.key)}
+                    style={{ background: isDragOver ? `${col.color}18` : '#0a0a0a', border: `2px solid ${isDragOver ? col.color : `${col.color}33`}`, borderRadius: '10px', padding: '0.55rem', minHeight: '145px', transition: 'background 0.15s ease, border-color 0.15s ease' }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                      <h3 style={{ margin: 0, fontSize: '0.82rem', color: col.color }}>{col.label}</h3>
                       <span style={s.badge(col.color)}>{items.length}</span>
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                       {items.length === 0 ? (
                         <div style={{ color: '#4a8a4a', fontSize: '0.8rem', textAlign: 'center', padding: '1rem 0' }}>Sin viajes</div>
                       ) : items.sort((a, b) => new Date(a.fecha_inicio || a.created_at || 0) - new Date(b.fecha_inicio || b.created_at || 0)).map(v => (
-                        <div key={v.id} role="button" tabIndex={0} onKeyDown={(e) => activarConTeclado(e, () => { setViajeDetalle(v); setViajeForm(v); setShowViajeModal(true); setViajeEditando(false); })} onClick={() => { setViajeDetalle(v); setViajeForm(v); setShowViajeModal(true); setViajeEditando(false); }}
-                          style={{ background: '#111', border: `1px solid ${col.color}33`, borderRadius: '10px', padding: '0.75rem', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'flex-start' }}>
-                            <div>
-                              <div style={{ color: '#00ff41', fontWeight: 700, fontSize: '0.95rem' }}>{v.vehicle_name || v.vehicle_id}</div>
-                              <div style={{ color: '#c0c0c0', fontSize: '0.8rem' }}>{v.conductor || 'Sin conductor'}</div>
+                        <div key={v.id} className="trip-card-compact" role="button" tabIndex={0} draggable aria-label={`Ver detalles del viaje de ${v.vehicle_name || v.vehicle_id}`}
+                          onPointerDown={() => { viajeWasDraggedRef.current = false; }}
+                          onDragStart={(e) => iniciarArrastreViaje(e, v)} onDragEnd={terminarArrastreViaje}
+                          onKeyDown={(e) => activarConTeclado(e, () => { setViajeDetalle(v); setViajeForm(v); setShowViajeModal(true); setViajeEditando(false); })}
+                          onClick={() => { if (viajeWasDraggedRef.current) return; setViajeDetalle(v); setViajeForm(v); setShowViajeModal(true); setViajeEditando(false); }}
+                          style={{ background: '#111', border: `1px solid ${col.color}33`, borderRadius: '8px', padding: '0.5rem', cursor: draggedViaje?.id === v.id ? 'grabbing' : 'grab', opacity: draggedViaje?.id === v.id ? 0.5 : 1, display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '0.4rem' }}>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ color: '#4a8a4a', fontSize: '0.58rem', textTransform: 'uppercase' }}>Unidad</div>
+                              <div style={{ color: '#00ff41', fontWeight: 700, fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.vehicle_name || v.vehicle_id}</div>
                             </div>
-                            <select value={v.estado || 'programado'} onChange={(e) => { e.stopPropagation(); actualizarEstadoViaje(v.id, e.target.value); }}
-                              style={{ ...s.select, width: '150px', fontSize: '0.75rem' }}>
-                              {[
-                                'programado','disponible','en_ruta_vacio','en_ruta_cargado','espera_ingreso','proceso_carga','proceso_descarga','proceso_liberacion','en_resguardo','completado','cancelado'
-                              ].map(st => <option key={st} value={st}>{st.replace(/_/g, ' ')}</option>)}
-                            </select>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ color: '#4a8a4a', fontSize: '0.58rem', textTransform: 'uppercase' }}>Remolque</div>
+                              <div style={{ color: '#f59e0b', fontWeight: 700, fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.remolque || 'Sin remolque'}</div>
+                            </div>
                           </div>
-                           {v.tipo_entrega === 'reparto' ? (
-                             <><div style={{ fontSize: '0.8rem', color: '#e0e0e0' }}><strong>{v.origen || '-'}</strong> →</div><div className="trip-stops-display">
-                               {destinosViaje(v).map((destino, index) => <div key={`${v.id}-stop-${index}`}><span>{index + 1}</span>{destino}</div>)}
-                             </div></>
-                           ) : <div style={{ fontSize: '0.8rem', color: '#e0e0e0' }}>{v.origen || '-'} → {v.destino || '-'}</div>}
-                           <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                            {geocercasCoincidentes(v.origen).map(name => (
-                              <span key={`o-${v.id}-${name}`} style={{ fontSize: '0.68rem', padding: '2px 8px', borderRadius: '10px', background: '#2a1d00', color: '#f59e0b', border: '1px solid #f59e0b33' }}>📍 {name}</span>
-                            ))}
-                             {destinosViaje(v).flatMap((destino, stopIndex) => geocercasCoincidentes(destino).map(name => (
-                               <span key={`d-${v.id}-${stopIndex}-${name}`} style={{ fontSize: '0.68rem', padding: '2px 8px', borderRadius: '10px', background: '#001f33', color: '#3b82f6', border: '1px solid #3b82f633' }}>📍 {v.tipo_entrega === 'reparto' ? `${stopIndex + 1}. ` : ''}{name}</span>
-                             )))}
-                          </div>
-                          <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                             <span style={s.badge(estadoColors[v.estado] || col.color)}>{v.estado || 'programado'}</span>
-                             {v.tipo_entrega === 'reparto' && <span className="trip-reparto-badge">Reparto</span>}
-                            {v.remolque && <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: '#332200', color: '#f59e0b', border: '1px solid #f59e0b33' }}>🚛 {v.remolque}</span>}
-                          </div>
-                          <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                            <button onClick={(e) => { e.stopPropagation(); setViajeDetalle(v); setViajeForm(v); setShowViajeModal(true); setViajeEditando(false); }} style={{ ...s.button('#3b82f6'), padding: '0.2rem 0.5rem', fontSize: '0.7rem' }}>Ver</button>
-                            <button onClick={(e) => { e.stopPropagation(); setViajeDetalle(v); setViajeForm(v); setShowViajeModal(true); setViajeEditando(true); }} style={{ ...s.button('#f59e0b'), padding: '0.2rem 0.5rem', fontSize: '0.7rem' }}>Editar</button>
-                            <button onClick={(e) => { e.stopPropagation(); eliminarViaje(v.id); }} style={{ ...s.button('#ef4444'), padding: '0.2rem 0.5rem', fontSize: '0.7rem' }}>X</button>
-                          </div>
+                           <div className="trip-route-geofences">
+                             <span className="trip-geofence-chip origin" title={v.origen || 'Sin origen'}>📍 {geocercasCoincidentes(v.origen)[0] || v.origen || 'Sin origen'}</span>
+                             <span className="trip-route-arrow">→</span>
+                             <div className="trip-route-destinations">
+                               {v.tipo_entrega === 'reparto' ? destinosViaje(v).map((destino, index) => (
+                                 <span key={`${v.id}-stop-${index}`} className="trip-geofence-chip destination" title={destino}>{index + 1}. {geocercasCoincidentes(destino)[0] || destino}</span>
+                               )) : (
+                                 <span className="trip-geofence-chip destination" title={v.destino || 'Sin destino'}>🏁 {geocercasCoincidentes(v.destino)[0] || v.destino || 'Sin destino'}</span>
+                               )}
+                             </div>
+                           </div>
                         </div>
                       ))}
                     </div>
@@ -3724,6 +4210,128 @@ export default function Home() {
                 );
               })}
             </div>
+          </div>
+        )}
+
+        {activeTab === 'clientes' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '1rem', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ color: '#4ade80', fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '0.35rem' }}>Directorio comercial</div>
+                <h2 style={{ margin: 0, fontSize: '1.6rem', color: '#f0fdf4' }}>Clientes</h2>
+                <p style={{ margin: '0.35rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>Contactos centrales para la coordinación de cargas y entregas</p>
+              </div>
+              <button type="button" onClick={() => abrirClienteModal()} style={{ ...s.button('#00ff41'), background: '#00ff41', color: '#061006', fontWeight: 800 }}>+ Nuevo cliente</button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '0.75rem' }}>
+              {[
+                { label: 'Clientes registrados', value: clientes.length, color: '#00ff41' },
+                { label: 'Con teléfono', value: clientes.filter(cliente => cliente.telefono).length, color: '#3b82f6' },
+                { label: 'Con correo', value: clientes.filter(cliente => cliente.email).length, color: '#a855f7' },
+              ].map(item => (
+                <div key={item.label} style={{ ...s.card, padding: '1rem 1.1rem', borderLeft: `3px solid ${item.color}` }}>
+                  <div style={{ color: '#6a9b6a', fontSize: '0.75rem' }}>{item.label}</div>
+                  <div style={{ color: item.color, fontSize: '1.65rem', lineHeight: 1.2, fontWeight: 800, marginTop: '0.2rem' }}>{item.value}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ ...s.card, padding: 0, overflow: 'hidden' }}>
+              <div style={{ padding: '1rem', borderBottom: '1px solid #1a3d1a', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <input
+                  type="search"
+                  placeholder="Buscar por cliente, contacto, teléfono o correo..."
+                  value={clienteSearch}
+                  onChange={event => setClienteSearch(event.target.value)}
+                  style={{ ...s.input, width: 'min(100%, 430px)' }}
+                />
+                <span style={{ color: '#6a9b6a', fontSize: '0.78rem' }}>{clientesFiltrados.length} resultado{clientesFiltrados.length === 1 ? '' : 's'}</span>
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ ...s.table, minWidth: '780px' }}>
+                  <thead>
+                    <tr>
+                      <th style={s.th}>Cliente</th>
+                      <th style={s.th}>Contacto</th>
+                      <th style={s.th}>Teléfono</th>
+                      <th style={s.th}>Correo</th>
+                      <th style={s.th}>Registro</th>
+                      <th style={{ ...s.th, textAlign: 'right' }}>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {clientesFiltrados.map(cliente => (
+                      <tr
+                        key={cliente.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setSelectedClienteId(cliente.id)}
+                        onKeyDown={event => activarConTeclado(event, () => setSelectedClienteId(cliente.id))}
+                        style={{ cursor: 'pointer', background: String(selectedClienteId) === String(cliente.id) ? '#102510' : 'transparent', outline: String(selectedClienteId) === String(cliente.id) ? '1px solid #285b35' : 'none' }}
+                      >
+                        <td style={{ ...s.td, color: '#f0fdf4', fontWeight: 700 }}>{cliente.nombre}</td>
+                        <td style={s.td}>{cliente.contacto || <span style={{ color: '#4b6b4b' }}>Sin contacto</span>}</td>
+                        <td style={s.td}>
+                          {cliente.telefono ? <a href={`tel:${cliente.telefono}`} style={{ color: '#60a5fa', textDecoration: 'none' }}>{cliente.telefono}</a> : <span style={{ color: '#4b6b4b' }}>Sin teléfono</span>}
+                        </td>
+                        <td style={s.td}>
+                          {cliente.email ? <a href={`mailto:${cliente.email}`} style={{ color: '#c084fc', textDecoration: 'none' }}>{cliente.email}</a> : <span style={{ color: '#4b6b4b' }}>Sin correo</span>}
+                        </td>
+                        <td style={s.td}>{cliente.created_at ? parseFecha(cliente.created_at)?.toLocaleDateString('es-MX') : '-'}</td>
+                        <td style={{ ...s.td, textAlign: 'right' }}>
+                          <div style={{ display: 'inline-flex', gap: '0.45rem' }}>
+                            <button type="button" onClick={event => { event.stopPropagation(); abrirClienteModal(cliente); }} style={s.button('#3b82f6')}>Editar</button>
+                            <button type="button" onClick={event => { event.stopPropagation(); eliminarCliente(cliente); }} style={s.button('#ef4444')}>Eliminar</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {clientesFiltrados.length === 0 && (
+                <div style={{ padding: '2.5rem 1rem', textAlign: 'center', color: '#6a9b6a' }}>
+                  {clientes.length === 0 ? 'Aún no hay clientes registrados.' : 'No hay clientes que coincidan con la búsqueda.'}
+                </div>
+              )}
+            </div>
+
+            {selectedCliente && (
+              <div style={{ ...s.card, borderColor: '#285b35', padding: '1.15rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}>
+                  <div>
+                    <div style={{ color: '#4ade80', fontSize: '0.68rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Cliente seleccionado</div>
+                    <h3 style={{ margin: '0.25rem 0 0', color: '#f0fdf4' }}>{selectedCliente.nombre}</h3>
+                    <div style={{ color: '#6a9b6a', fontSize: '0.82rem', marginTop: '0.2rem' }}>{selectedClienteGeofences.length} geocerca{selectedClienteGeofences.length === 1 ? '' : 's'} asociada{selectedClienteGeofences.length === 1 ? '' : 's'}</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <button type="button" onClick={abrirExistingGeofenceModal} style={{ ...s.button('#00ff41'), background: '#0d2b0d' }}>Seleccionar existente</button>
+                    <button type="button" onClick={abrirClienteGeofenceModal} style={s.button('#3b82f6')}>+ Crear nueva</button>
+                    <button type="button" onClick={() => setSelectedClienteId(null)} style={s.button('#6b7280')}>Cerrar detalle</button>
+                  </div>
+                </div>
+
+                {selectedClienteGeofences.length === 0 ? (
+                  <div style={{ marginTop: '1rem', padding: '1.25rem', border: '1px dashed #285b35', borderRadius: '10px', color: '#6a9b6a', textAlign: 'center' }}>Este cliente todavía no tiene geocercas. Agrega la primera para incluirla en el mapa y en la detección de eventos.</div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '0.75rem', marginTop: '1rem' }}>
+                    {selectedClienteGeofences.map(geofence => (
+                      <div key={geofence.id} style={{ padding: '0.85rem', border: '1px solid #1a3d1a', borderRadius: '10px', background: '#0a150a' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ color: '#e5ffe9', fontWeight: 700, overflowWrap: 'anywhere' }}><span style={{ color: geofence.color || '#3b82f6' }}>●</span> {geofence.nombre}</div>
+                            <div style={{ color: '#6a9b6a', fontSize: '0.75rem', marginTop: '0.3rem' }}>Radio: {Number(geofence.radio_metros || 0).toLocaleString('es-MX')} m · {geofence.source === 'samsara' ? 'Samsara' : 'Local'}</div>
+                            <div style={{ color: '#4f7a55', fontSize: '0.72rem', marginTop: '0.2rem', overflowWrap: 'anywhere' }}>{geofence.direccion || (Number.isFinite(Number(geofence.latitud)) && Number.isFinite(Number(geofence.longitud)) ? `${Number(geofence.latitud).toFixed(5)}, ${Number(geofence.longitud).toFixed(5)}` : 'Sin dirección')}</div>
+                          </div>
+                          <button type="button" aria-label={`Desvincular ${geofence.nombre}`} title="Desvincular" onClick={() => desvincularClienteGeofence(geofence)} style={{ alignSelf: 'flex-start', background: 'none', border: 0, color: '#f59e0b', cursor: 'pointer', fontSize: '1rem' }}>↗</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -3929,7 +4537,7 @@ export default function Home() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
               <div>
                 <h2 style={{ color: '#e0e0e0', margin: 0, fontSize: '1.35rem' }}>Seguimiento Operativo</h2>
-                <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>Captura, filtra y revisa el historial por unidad</p>
+                <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>Actualiza, filtra y revisa el historial por unidad</p>
               </div>
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <span style={s.badge('#3b82f6')}>{seguimientoResumen.total} registros</span>
@@ -3939,13 +4547,10 @@ export default function Home() {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {!showSeguimientoForm && (
-                <button onClick={abrirNuevoSeguimiento} style={{ ...s.button('#10b981'), alignSelf: 'flex-start' }}>+ Nuevo seguimiento</button>
-              )}
               {showSeguimientoForm && (
               <div style={s.card}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', gap: '0.75rem' }}>
-                  <h3 style={{ margin: 0, fontSize: '1rem' }}>{seguimientoEditando ? 'Editar seguimiento' : 'Nuevo seguimiento'}</h3>
+                  <h3 style={{ margin: 0, fontSize: '1rem' }}>Editar seguimiento</h3>
                   <button onClick={limpiarSeguimientoForm} style={s.button('#6b7280')}>Cancelar</button>
                 </div>
                 <form onSubmit={guardarSeguimiento}>
@@ -4063,7 +4668,6 @@ export default function Home() {
                     <button onClick={() => { setSeguimientoFilter(''); setSeguimientoUnidadFilter(''); setSeguimientoEstatusFilter(''); setSeguimientoGrupoFilter(''); }} style={s.button('#6b7280')}>Limpiar</button>
                   </div>
                   <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    <button onClick={abrirNuevoSeguimiento} style={s.button('#3b82f6')}>+ Nuevo</button>
                     <button onClick={abrirActualizarSeguimiento} style={s.button('#10b981')}>Actualizar Seguimiento</button>
                     <button onClick={abrirGeneradorMensajes} style={s.button('#8b5cf6')}>📲 Generar Mensaje</button>
                   </div>
@@ -4110,7 +4714,17 @@ export default function Home() {
                           <tr key={row.id} style={{ background: selectedSeguimiento?.id === row.id ? '#102010' : rowBg, borderBottom: '1px solid #1a1a1a' }}>
                             <td style={{ ...tdStyle, textAlign: 'center', color: '#4a8a4a', fontSize: '0.7rem' }}>{idx + 1}</td>
                             <td style={{ ...tdStyle, fontWeight: 700, color: '#00ff41' }}>{row.unidad || '-'}</td>
-                            <td style={tdStyle}>{row.grupo || '-'}</td>
+                            <td style={tdStyle}>
+                              <select
+                                aria-label={`Grupo de ${row.unidad || 'unidad'}`}
+                                value={row.grupo || ''}
+                                onChange={(e) => actualizarGrupoSeguimiento(row, e.target.value)}
+                                style={{ ...s.select, width: '150px', padding: '3px 6px', fontSize: '0.72rem' }}
+                              >
+                                <option value="">Sin grupo</option>
+                                {gruposUnicos.map(grupo => <option key={grupo} value={grupo}>{grupo}</option>)}
+                              </select>
+                            </td>
                             <td style={tdStyle}>{row.remolque || '-'}</td>
                             <td style={tdStyle}>{row.operador || '-'}</td>
                             <td style={{ ...tdStyle, whiteSpace: 'normal', maxWidth: '160px' }}>{row.origen || '-'}</td>
@@ -4580,20 +5194,19 @@ export default function Home() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: '1.5rem', color: '#e0e0e0' }}>Citas por Día de Entrega</h2>
-                <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>Cargas agrupadas por la fecha de descarga para mejor control operativo</p>
+                <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>ETA desde GPS actual a la geocerca destino, comparada contra la cita de descarga</p>
               </div>
-              <button onClick={loadAll} style={s.button()}>Actualizar</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                <span style={s.badge('#10b981')}>A tiempo</span>
+                <span style={s.badge('#ef4444')}>Retraso</span>
+                <span style={s.badge('#3b82f6')}>Adelanto</span>
+                <button disabled={citasEtaLoading} onClick={async () => { await loadAll(); setCitasEtaRefresh(value => value + 1); }} style={s.button()}>{citasEtaLoading ? 'Calculando ETA...' : 'Actualizar ETA'}</button>
+              </div>
             </div>
 
             {(() => {
-              const parseFlexibleDate = (value) => {
-                if (!value) return null;
-                const normalized = String(value).trim().replace(' ', 'T');
-                const date = new Date(normalized);
-                return Number.isNaN(date.getTime()) ? null : date;
-              };
               const deliveryKey = (item) => {
-                const date = parseFlexibleDate(item.cita_descarga || item.fecha_fin || item.cita_carga || item.fecha_inicio || '');
+                const date = parseCitaDate(item.cita_descarga || item.cita_carga || '');
                 if (!date) return 'sin-fecha';
                 const y = date.getFullYear();
                 const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -4606,44 +5219,7 @@ export default function Home() {
                 const date = new Date(y, m - 1, d);
                 return date.toLocaleDateString('es-MX', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
               };
-              const etaLabel = (value) => {
-                const date = parseFlexibleDate(value);
-                if (!date) return '-';
-                const cushion = new Date(date.getTime() + 60 * 60 * 1000);
-                return cushion.toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' });
-              };
-              const items = [
-                ...seguimiento.filter(r => r.cita_carga || r.cita_descarga).map(r => ({
-                  id: `seg-${r.id}`,
-                  unidad: r.unidad,
-                  tipo: 'Seguimiento',
-                  origen: r.origen,
-                  destino: r.destino,
-                  cita_carga: r.cita_carga,
-                  cita_descarga: r.cita_descarga,
-                  remolque: r.remolque,
-                  estatus: r.estatus,
-                  geocercas_origen: geocercasCoincidentes(r.origen),
-                  geocercas_destino: geocercasCoincidentes(r.destino),
-                })),
-                ...viajes.filter(v => v.fecha_inicio || v.fecha_fin).map(v => ({
-                  id: `via-${v.id}`,
-                  unidad: v.vehicle_name || v.vehicle_id,
-                  tipo: 'Viaje',
-                  origen: v.origen,
-                  destino: v.destino,
-                  cita_carga: v.fecha_inicio,
-                  cita_descarga: v.fecha_fin,
-                  remolque: v.remolque,
-                  estatus: v.estado,
-                  geocercas_origen: geocercasCoincidentes(v.origen),
-                  geocercas_destino: geocercasCoincidentes(v.destino),
-                })),
-              ].sort((a, b) => {
-                const da = parseFlexibleDate(a.cita_descarga || a.fecha_fin || a.cita_carga || a.fecha_inicio || '');
-                const db = parseFlexibleDate(b.cita_descarga || b.fecha_fin || b.cita_carga || b.fecha_inicio || '');
-                return (da?.getTime() || 0) - (db?.getTime() || 0);
-              });
+              const items = citasOperativas;
 
               const grouped = items.reduce((acc, item) => {
                 const key = deliveryKey(item);
@@ -4681,30 +5257,35 @@ export default function Home() {
                               <th style={s.th}>Unidad</th>
                               <th style={s.th}>Tipo</th>
                               <th style={s.th}>Destino</th>
-                              <th style={s.th}>Geocerca Destino</th>
-                              <th style={s.th}>ETA</th>
-                              <th style={s.th}>Entrega</th>
+                              <th style={s.th}>Cita descarga</th>
+                              <th style={s.th}>ETA GPS</th>
+                              <th style={s.th}>Cumplimiento</th>
                               <th style={s.th}>Remolque</th>
                               <th style={s.th}>Estatus</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {rows.map(item => (
-                              <tr key={item.id}>
+                            {rows.map(item => {
+                              const etaInfo = citasEta[item.id];
+                              const etaColor = { delayed: '#ef4444', on_time: '#10b981', early: '#3b82f6', scheduled: '#8b5cf6', completado: '#10b981', cancelado: '#6b7280', unavailable: '#6b7280' }[etaInfo?.status] || '#f59e0b';
+                              const appointment = parseCitaDate(item.cita_descarga || item.cita_carga);
+                              return (
+                              <tr key={item.id} style={{ background: etaInfo?.status === 'delayed' ? '#2a1111' : etaInfo?.status === 'on_time' ? '#0d2418' : undefined }}>
                                 <td style={s.td}><strong style={{ color: '#00ff41' }}>{item.unidad || '-'}</strong></td>
                                 <td style={s.td}>{item.tipo}</td>
-                                <td style={s.td}>{item.destino || '-'}</td>
+                                <td style={{ ...s.td, color: '#60a5fa' }}>📍 {findGeofence(item.destino)?.nombre || geocercasCoincidentes(item.destino)[0] || item.destino || '-'}</td>
+                                <td style={s.td}>{appointment ? appointment.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '-'}</td>
                                 <td style={s.td}>
-                                  {item.geocercas_destino?.length ? item.geocercas_destino.map(name => (
-                                    <div key={name} style={{ fontSize: '0.75rem', color: '#3b82f6' }}>📍 {name}</div>
-                                  )) : '-'}
+                                  {etaInfo?.eta ? (
+                                    <div><strong style={{ color: etaColor }}>{etaInfo.arrival.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })}</strong><div style={{ color: '#6a9b6a', fontSize: '0.7rem' }}>{etaInfo.eta.duracion} · {etaInfo.eta.distancia}</div></div>
+                                  ) : citasEtaLoading && !etaInfo ? <span style={{ color: '#f59e0b' }}>Calculando...</span> : '-'}
                                 </td>
-                                <td style={s.td}>{etaLabel(item.cita_descarga || item.cita_carga)}</td>
-                                <td style={s.td}>{item.cita_descarga || '-'}</td>
+                                <td style={s.td}><span style={s.badge(etaColor)}>{etaInfo?.label || (citasEtaLoading ? 'Calculando...' : 'Sin cálculo')}</span></td>
                                 <td style={s.td}>{item.remolque || '-'}</td>
                                 <td style={s.td}><span style={s.badge(item.tipo === 'Viaje' ? '#3b82f6' : '#f59e0b')}>{item.estatus || 'pendiente'}</span></td>
                               </tr>
-                            ))}
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
@@ -4796,7 +5377,7 @@ export default function Home() {
                     <option value="pendientes">Pendientes</option>
                     <option value="pendientes-completados">Pendientes completados</option>
                     <option value="viajes">Viajes</option>
-                    <option value="seguimiento">Seguimiento / Comentarios</option>
+                    <option value="seguimiento">Seguimiento operativo</option>
                     <option value="bitacora">Bitácora</option>
                     <option value="incidencias">Incidencias</option>
                   </select>
@@ -5213,7 +5794,10 @@ export default function Home() {
               <h2 style={{ margin: 0, fontSize: '1.3rem', color: '#00ff41' }}>{viajeEditando ? 'Editar Viaje' : 'Detalles del Viaje'}</h2>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 {!viajeEditando && (
-                  <button onClick={() => setViajeEditando(true)} style={{ ...s.button('#f59e0b'), padding: '0.3rem 0.8rem', fontSize: '0.8rem' }}>Editar</button>
+                  <>
+                    <button onClick={async () => { if (await eliminarViaje(viajeDetalle.id)) { setShowViajeModal(false); setViajeDetalle(null); setViajeForm({}); } }} style={{ ...s.button('#ef4444'), padding: '0.3rem 0.8rem', fontSize: '0.8rem' }}>Eliminar</button>
+                    <button onClick={() => setViajeEditando(true)} style={{ ...s.button('#f59e0b'), padding: '0.3rem 0.8rem', fontSize: '0.8rem' }}>Editar</button>
+                  </>
                 )}
                  <button onClick={() => { setShowViajeModal(false); setViajeEditando(false); setViajeForm({}); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.5rem' }}>✕</button>
               </div>
@@ -5334,7 +5918,10 @@ export default function Home() {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
                   <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
                     <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Unidad</div>
-                    <div style={{ fontSize: '1rem', fontWeight: '600', color: '#00ff41' }}>{viajeDetalle.vehicle_name || viajeDetalle.vehicle_id}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '1rem', fontWeight: '600', color: '#00ff41' }}>{viajeDetalle.vehicle_name || viajeDetalle.vehicle_id}</span>
+                      <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#f59e0b', background: '#332200', border: '1px solid #f59e0b55', borderRadius: '10px', padding: '2px 8px' }}>🚛 {viajeDetalle.remolque || viajeDetalle.seg_remolque || 'Sin remolque'}</span>
+                    </div>
                   </div>
                   <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
                     <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Estado</div>
@@ -5522,6 +6109,17 @@ export default function Home() {
                         </div>
 
                         <div style={{ padding: '1rem', background: '#111111', border: '1px solid #1a3d1a', borderRadius: '12px' }}>
+                          <div style={{ marginBottom: '0.85rem' }}>
+                            <label htmlFor="seguimiento-modal-grupo" style={{ ...s.label, display: 'block', marginBottom: '0.35rem' }}>Grupo a reportar *</label>
+                            <input
+                              id="seguimiento-modal-grupo"
+                              list="seguimiento-group-suggestions"
+                              value={seguimientoModalGrupo}
+                              onChange={(e) => setSeguimientoModalGrupo(e.target.value)}
+                              placeholder="Ej: Bachoco, Operaciones Norte..."
+                              style={{ ...s.input, width: '100%', boxSizing: 'border-box' }}
+                            />
+                          </div>
                           <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.5rem' }}>Observación</div>
                           <textarea
                             value={seguimientoModalNota}
@@ -5643,7 +6241,7 @@ export default function Home() {
                         <div key={c.id} style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '6px', marginBottom: '0.5rem', border: '1px solid #1a3d1a' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
                             <span style={{ fontSize: '0.75rem', color: '#00ff41', fontWeight: '600' }}>{c.created_by_username || c.autor || 'Anónimo'}</span>
-                            <span style={{ fontSize: '0.7rem', color: '#4a4a4a' }}>{new Date(c.fecha_creacion).toLocaleString('es-MX')}</span>
+                            <span style={{ fontSize: '0.7rem', color: '#4a4a4a' }}>{parseFecha(c.fecha_creacion)?.toLocaleString('es-MX') || '-'}</span>
                           </div>
                           <div style={{ fontSize: '0.85rem', color: '#e0e0e0', whiteSpace: 'pre-wrap' }}>{c.contenido}</div>
                         </div>
@@ -5702,6 +6300,138 @@ export default function Home() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {showExistingGeofenceModal && selectedCliente && (
+        <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2320 }} onClick={cerrarExistingGeofenceModal}>
+          <form className="modal-panel" role="dialog" aria-modal="true" aria-label={`Seleccionar geocerca para ${selectedCliente.nombre}`} onSubmit={vincularExistingGeofence} style={{ background: '#0d0d0d', border: '1px solid #285b35', borderRadius: '16px', width: '720px', maxWidth: '95vw', maxHeight: '90vh', display: 'flex', flexDirection: 'column', padding: '1.35rem', boxShadow: '0 24px 70px rgba(0,0,0,0.6)' }} onClick={event => event.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', marginBottom: '1rem' }}>
+              <div>
+                <div style={{ color: '#4ade80', fontSize: '0.68rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Catálogo de geocercas</div>
+                <h2 style={{ margin: '0.25rem 0 0', color: '#f0fdf4' }}>Asociar a {selectedCliente.nombre}</h2>
+                <p style={{ margin: '0.3rem 0 0', color: '#6a9b6a', fontSize: '0.82rem' }}>Incluye geocercas manuales, predefinidas y Samsara.</p>
+              </div>
+              <button type="button" disabled={existingGeofenceSaving} onClick={cerrarExistingGeofenceModal} aria-label="Cerrar" style={{ background: 'none', border: 0, color: '#ef4444', fontSize: '1.4rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <input type="search" autoFocus style={{ ...s.input, marginBottom: '0.75rem' }} value={existingGeofenceSearch} onChange={event => setExistingGeofenceSearch(event.target.value)} placeholder="Buscar por nombre, dirección o categoría..." />
+            <div role="radiogroup" aria-label="Geocercas disponibles" style={{ minHeight: '180px', maxHeight: '48vh', overflowY: 'auto', border: '1px solid #1a3d1a', borderRadius: '10px', background: '#080d08', padding: '0.4rem' }}>
+              {allGeofences
+                .filter(geofence => geofence.activa !== 0)
+                .filter(geofence => String(geofenceOwnerId(geofence) || '') !== String(selectedCliente.id))
+                .filter(geofence => {
+                  const search = existingGeofenceSearch.trim().toLowerCase();
+                  return !search || [geofence.nombre, geofence.direccion, geofence.descripcion, geofence.categoria, geofence.source].some(value => String(value || '').toLowerCase().includes(search));
+                })
+                .sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es', { sensitivity: 'base' }))
+                .map(geofence => {
+                  const source = geofence.source === 'samsara' ? 'samsara' : 'local';
+                  const value = `${source}|${geofence.id}`;
+                  const ownerId = geofenceOwnerId(geofence);
+                  const owner = clientes.find(cliente => String(cliente.id) === String(ownerId));
+                  const disabled = !!ownerId;
+                  return (
+                    <label key={value} style={{ display: 'grid', gridTemplateColumns: '22px minmax(0, 1fr) auto', gap: '0.55rem', alignItems: 'center', padding: '0.65rem 0.7rem', marginBottom: '0.3rem', border: `1px solid ${existingGeofenceSelection === value ? '#00ff41' : '#182718'}`, borderRadius: '8px', background: existingGeofenceSelection === value ? '#102510' : '#0d120d', cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.5 : 1 }}>
+                      <input type="radio" name="existing-geofence" disabled={disabled} checked={existingGeofenceSelection === value} onChange={() => setExistingGeofenceSelection(value)} />
+                      <span style={{ minWidth: 0 }}>
+                        <span style={{ display: 'block', color: '#e5ffe9', fontSize: '0.85rem', fontWeight: 700, overflowWrap: 'anywhere' }}>{geofence.nombre}</span>
+                        <span style={{ display: 'block', color: '#5f8c65', fontSize: '0.7rem', marginTop: '0.15rem', overflowWrap: 'anywhere' }}>{geofence.direccion || geofence.descripcion || `${geofence.radio_metros || 0} m`}</span>
+                      </span>
+                      <span style={s.badge(source === 'samsara' ? '#8b5cf6' : '#3b82f6')}>{owner ? `Asignada a ${owner.nombre}` : source === 'samsara' ? 'Samsara' : geofence.categoria || 'Local'}</span>
+                    </label>
+                  );
+                })}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem', flexWrap: 'wrap' }}>
+              <button type="button" disabled={existingGeofenceSaving} onClick={cerrarExistingGeofenceModal} style={s.button('#6b7280')}>Cancelar</button>
+              <button type="submit" disabled={existingGeofenceSaving || !existingGeofenceSelection} style={{ ...s.button('#00ff41'), minWidth: '150px', opacity: existingGeofenceSaving || !existingGeofenceSelection ? 0.5 : 1 }}>{existingGeofenceSaving ? 'Asociando...' : 'Asociar geocerca'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {showClienteGeofenceModal && selectedCliente && (
+        <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2300 }} onClick={cerrarClienteGeofenceModal}>
+          <form className="modal-panel" role="dialog" aria-modal="true" aria-label={`Nueva geocerca para ${selectedCliente.nombre}`} onSubmit={crearClienteGeofence} style={{ background: '#0d0d0d', border: '1px solid #285b35', borderRadius: '16px', width: '700px', maxWidth: '95vw', maxHeight: '92vh', overflowY: 'auto', padding: '1.5rem', boxShadow: '0 24px 70px rgba(0,0,0,0.6)' }} onClick={event => event.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', marginBottom: '1.2rem' }}>
+              <div>
+                <div style={{ color: '#4ade80', fontSize: '0.68rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Geocerca de cliente</div>
+                <h2 style={{ margin: '0.25rem 0 0', color: '#f0fdf4' }}>{selectedCliente.nombre}</h2>
+                <p style={{ margin: '0.3rem 0 0', color: '#6a9b6a', fontSize: '0.82rem' }}>Puedes usar una dirección o capturar las coordenadas directamente.</p>
+              </div>
+              <button type="button" disabled={clienteGeofenceSaving} onClick={cerrarClienteGeofenceModal} aria-label="Cerrar" style={{ background: 'none', border: 0, color: '#ef4444', fontSize: '1.4rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.9rem' }}>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={s.label}>Nombre de la geocerca *</label>
+                <input autoFocus required style={s.input} value={formClienteGeofence.nombre} onChange={event => setFormClienteGeofence(current => ({ ...current, nombre: event.target.value }))} placeholder="Ej: CEDIS Cliente Chihuahua" />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={s.label}>Dirección</label>
+                <input style={s.input} value={formClienteGeofence.direccion} onChange={event => setFormClienteGeofence(current => ({ ...current, direccion: event.target.value }))} placeholder="Dirección completa para localizar automáticamente" />
+              </div>
+              <div>
+                <label style={s.label}>Latitud</label>
+                <input type="number" step="any" min="-90" max="90" style={s.input} value={formClienteGeofence.latitud} onChange={event => setFormClienteGeofence(current => ({ ...current, latitud: event.target.value }))} placeholder="28.6353" />
+              </div>
+              <div>
+                <label style={s.label}>Longitud</label>
+                <input type="number" step="any" min="-180" max="180" style={s.input} value={formClienteGeofence.longitud} onChange={event => setFormClienteGeofence(current => ({ ...current, longitud: event.target.value }))} placeholder="-106.0889" />
+              </div>
+              <div>
+                <label style={s.label}>Radio (metros)</label>
+                <input required type="number" min="1" max="100000" style={s.input} value={formClienteGeofence.radio_metros} onChange={event => setFormClienteGeofence(current => ({ ...current, radio_metros: event.target.value }))} />
+              </div>
+              <div>
+                <label style={s.label}>Color</label>
+                <input type="color" style={{ ...s.input, height: '39px', padding: '4px' }} value={formClienteGeofence.color} onChange={event => setFormClienteGeofence(current => ({ ...current, color: event.target.value }))} />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={s.label}>Descripción</label>
+                <textarea rows={3} style={{ ...s.input, resize: 'vertical' }} value={formClienteGeofence.descripcion} onChange={event => setFormClienteGeofence(current => ({ ...current, descripcion: event.target.value }))} placeholder="Indicaciones o referencia operativa" />
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.2rem', flexWrap: 'wrap' }}>
+              <button type="button" disabled={clienteGeofenceSaving} onClick={cerrarClienteGeofenceModal} style={s.button('#6b7280')}>Cancelar</button>
+              <button type="submit" disabled={clienteGeofenceSaving} style={{ ...s.button('#00ff41'), minWidth: '160px', opacity: clienteGeofenceSaving ? 0.6 : 1 }}>{clienteGeofenceSaving ? 'Creando...' : 'Crear geocerca'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {showClienteModal && (
+        <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.86)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2250 }} onClick={cerrarClienteModal}>
+          <form className="modal-panel" role="dialog" aria-modal="true" aria-label={clienteEditando ? 'Editar cliente' : 'Nuevo cliente'} onSubmit={guardarCliente} style={{ background: '#0d0d0d', border: '1px solid #285b35', borderRadius: '16px', width: '600px', maxWidth: '95vw', padding: '1.5rem', boxShadow: '0 20px 60px rgba(0,0,0,0.55)' }} onClick={event => event.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', marginBottom: '1.25rem' }}>
+              <div>
+                <div style={{ color: '#4ade80', fontSize: '0.7rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{clienteEditando ? 'Actualizar registro' : 'Alta comercial'}</div>
+                <h2 style={{ margin: '0.25rem 0 0', color: '#f0fdf4' }}>{clienteEditando ? 'Editar cliente' : 'Nuevo cliente'}</h2>
+              </div>
+              <button type="button" disabled={clienteSaving} onClick={cerrarClienteModal} aria-label="Cerrar" style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.4rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.9rem' }}>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={s.label}>Nombre del cliente *</label>
+                <input autoFocus required maxLength={150} style={s.input} value={formCliente.nombre} onChange={event => setFormCliente(current => ({ ...current, nombre: event.target.value }))} placeholder="Empresa o razón comercial" />
+              </div>
+              <div>
+                <label style={s.label}>Persona de contacto</label>
+                <input maxLength={150} style={s.input} value={formCliente.contacto} onChange={event => setFormCliente(current => ({ ...current, contacto: event.target.value }))} placeholder="Nombre del contacto" />
+              </div>
+              <div>
+                <label style={s.label}>Teléfono</label>
+                <input type="tel" maxLength={40} style={s.input} value={formCliente.telefono} onChange={event => setFormCliente(current => ({ ...current, telefono: event.target.value }))} placeholder="Ej: 614 123 4567" />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={s.label}>Correo electrónico</label>
+                <input type="email" maxLength={254} style={s.input} value={formCliente.email} onChange={event => setFormCliente(current => ({ ...current, email: event.target.value }))} placeholder="contacto@cliente.com" />
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.25rem', flexWrap: 'wrap' }}>
+              <button type="button" disabled={clienteSaving} onClick={cerrarClienteModal} style={s.button('#6b7280')}>Cancelar</button>
+              <button type="submit" disabled={clienteSaving} style={{ ...s.button('#00ff41'), minWidth: '140px', opacity: clienteSaving ? 0.6 : 1 }}>{clienteSaving ? 'Guardando...' : clienteEditando ? 'Guardar cambios' : 'Crear cliente'}</button>
+            </div>
+          </form>
         </div>
       )}
 

@@ -194,6 +194,84 @@ textarea:focus-visible {
   font-size: 0.68rem;
 }
 
+.trip-card-compact .trip-stops-display {
+  gap: 0.2rem;
+  font-size: 0.68rem;
+}
+
+.trip-card-compact .trip-stops-display > div {
+  gap: 0.25rem;
+}
+
+.trip-card-compact .trip-stops-display > div > span {
+  width: 18px;
+  height: 18px;
+  flex-basis: 18px;
+  font-size: 0.6rem;
+}
+
+.trip-card-compact .trip-reparto-badge {
+  margin-left: 0;
+  padding: 1px 6px;
+  font-size: 0.6rem;
+}
+
+.trip-card-compact {
+  transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.trip-card-compact:hover,
+.trip-card-compact:focus-visible {
+  transform: translateY(-1px);
+  background: #162016 !important;
+  box-shadow: 0 6px 16px rgba(0, 255, 65, 0.08);
+  outline: none;
+}
+
+.trip-route-geofences {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) auto minmax(0, 1.1fr);
+  align-items: start;
+  gap: 0.3rem;
+}
+
+.trip-route-destinations {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.trip-geofence-chip {
+  display: block;
+  min-width: 0;
+  padding: 2px 6px;
+  overflow: hidden;
+  border: 1px solid;
+  border-radius: 8px;
+  font-size: 0.64rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trip-geofence-chip.origin {
+  border-color: #f59e0b44;
+  background: #2a1d00;
+  color: #fbbf24;
+}
+
+.trip-geofence-chip.destination {
+  border-color: #3b82f644;
+  background: #001f33;
+  color: #60a5fa;
+}
+
+.trip-route-arrow {
+  padding-top: 2px;
+  color: #00ff41;
+  font-size: 0.68rem;
+}
+
 .trip-reparto-badge {
   display: inline-flex;
   align-items: center;
@@ -254,7 +332,7 @@ textarea:focus-visible {
 
 .mapas-layout {
   display: grid;
-  grid-template-columns: minmax(290px, 370px) minmax(0, 1fr);
+  grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
   gap: 1.25rem;
   align-items: start;
 }
@@ -282,6 +360,7 @@ textarea:focus-visible {
 .mapas-form label {
   display: grid;
   gap: 0.3rem;
+  min-width: 0;
 }
 
 .mapas-form label > span {
@@ -291,11 +370,16 @@ textarea:focus-visible {
 }
 
 .mapas-form input,
+.mapas-form select,
 .mapas-form textarea {
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   padding: 0.65rem 0.75rem;
   border: 1px solid #1a3d1a;
   border-radius: 8px;
+  background: #fff;
+  color: #111;
   font: inherit;
 }
 
@@ -305,7 +389,7 @@ textarea:focus-visible {
 
 .mapas-form-route {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.65rem;
 }
 
@@ -315,6 +399,10 @@ textarea:focus-visible {
   justify-content: flex-end;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+.mapas-form-actions button {
+  min-width: 0;
 }
 
 .mapas-list {
@@ -602,6 +690,10 @@ textarea:focus-visible {
   .trip-stop-input button {
     grid-column: 2;
     justify-self: start;
+  }
+
+  .trip-program-modal-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
   }
 
   .mapas-layout {

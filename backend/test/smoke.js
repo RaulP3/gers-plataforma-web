@@ -2,32 +2,94 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const http = require('node:http');
 const { spawn } = require('node:child_process');
 const sqlite3 = require('sqlite3');
 
 const port = 3200 + Math.floor(Math.random() * 500);
 const databasePath = path.join(os.tmpdir(), `gers-smoke-${process.pid}-${Date.now()}.db`);
 const baseUrl = `http://127.0.0.1:${port}/api`;
+const samsaraPort = port + 600;
 let token = '';
-
-const server = spawn(process.execPath, ['server.js'], {
-  cwd: path.join(__dirname, '..'),
-  env: {
-    ...process.env,
-    PORT: String(port),
-    DATABASE_PATH: databasePath,
-    ADMIN_USERNAME: 'smoke-admin',
-    ADMIN_PASSWORD: 'SmokePass-2026!',
-    ADMIN_NAME: 'Smoke Admin',
-    SAMSARA_API_TOKEN: 'smoke-token',
-    NODE_ENV: 'test',
-  },
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
-
+let server = null;
+let samsaraServer = null;
 let serverOutput = '';
-server.stdout.on('data', chunk => { serverOutput += chunk; });
-server.stderr.on('data', chunk => { serverOutput += chunk; });
+
+function startServer() {
+  server = spawn(process.execPath, ['server.js'], {
+    cwd: path.join(__dirname, '..'),
+    env: {
+      ...process.env,
+      PORT: String(port),
+      DATABASE_PATH: databasePath,
+      ADMIN_USERNAME: 'smoke-admin',
+      ADMIN_PASSWORD: 'SmokePass-2026!',
+      ADMIN_NAME: 'Smoke Admin',
+      SAMSARA_API_TOKEN: 'smoke-token',
+      SAMSARA_API_BASE_URL: `http://127.0.0.1:${samsaraPort}`,
+      NODE_ENV: 'test',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  server.stdout.on('data', chunk => { serverOutput += chunk; });
+  server.stderr.on('data', chunk => { serverOutput += chunk; });
+}
+
+function startSamsaraServer() {
+  samsaraServer = http.createServer((req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.url.startsWith('/addresses')) {
+      return res.end(JSON.stringify({
+        addresses: [
+          {
+            id: 'smoke-circle',
+            name: 'Samsara Circle',
+            geofence: { circle: { latitude: 20, longitude: -100, radiusMeters: 500 } },
+          },
+          {
+            id: 'smoke-polygon',
+            name: 'Samsara Polygon',
+            geofence: { polygon: { vertices: [
+              { latitude: 21.99, longitude: -101.01 },
+              { latitude: 22.01, longitude: -101.01 },
+              { latitude: 22.01, longitude: -100.99 },
+              { latitude: 21.99, longitude: -100.99 },
+            ] } },
+          },
+        ],
+        pagination: { hasNextPage: false },
+      }));
+    }
+    if (req.url.startsWith('/fleet/vehicles/locations')) {
+      return res.end(JSON.stringify({
+        data: [
+          { id: 'smoke-circle-unit', name: 'Smoke Circle Unit', location: { latitude: 20, longitude: -100 } },
+          { id: 'smoke-polygon-unit', name: 'Smoke Polygon Unit', location: { latitude: 22, longitude: -101 } },
+          { id: 'smoke-catalog-unit', name: 'Smoke Catalog Unit', location: { latitude: 25.7894, longitude: -100.1824 } },
+        ],
+        pagination: { hasNextPage: false },
+      }));
+    }
+    if (req.url.startsWith('/v1/fleet/list')) return res.end(JSON.stringify({ vehicles: [] }));
+    res.statusCode = 404;
+    res.end(JSON.stringify({ error: 'not found' }));
+  });
+  return new Promise(resolve => samsaraServer.listen(samsaraPort, '127.0.0.1', resolve));
+}
+
+function seedLegacyHistorySchema() {
+  return new Promise((resolve, reject) => {
+    const database = new sqlite3.Database(databasePath);
+    database.run(`CREATE TABLE pendientes_historial (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, pendiente_id INTEGER, titulo TEXT NOT NULL,
+      descripcion TEXT, prioridad TEXT, estado TEXT, asignado_a TEXT, turno TEXT, notas TEXT,
+      creado_por TEXT, created_by_user_id INTEGER, created_by_username TEXT,
+      fecha_creacion DATETIME, fecha_actualizacion DATETIME,
+      archived_by_user_id INTEGER, archived_by_username TEXT,
+      archived_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`, err => database.close(closeErr => err || closeErr ? reject(err || closeErr) : resolve()));
+  });
+}
 
 async function request(pathname, options = {}) {
   const headers = { ...(options.headers || {}) };
@@ -75,6 +137,9 @@ function seedRouteHistory(rows) {
 }
 
 async function run() {
+  await startSamsaraServer();
+  await seedLegacyHistorySchema();
+  startServer();
   await waitForServer();
 
   const health = await fetch(`http://127.0.0.1:${port}/health`);
@@ -95,6 +160,10 @@ async function run() {
   assert.equal(stops.length, 1);
   assert.equal(stops[0].is_stop, true);
   assert.equal(stops[0].stop_duration_minutes, 25);
+  const routeWithStops = await request('/route-history/last?vehicle_id=smoke-stop&hours=2&stops_minutes=20&include_route=1');
+  assert.equal(routeWithStops.route.length, 6);
+  assert.equal(routeWithStops.stops.length, 1);
+  assert.equal(routeWithStops.stops[0].stop_duration_minutes, 25);
 
   const disposableUser = await request('/users', {
     method: 'POST',
@@ -213,6 +282,52 @@ async function run() {
   const operators = await request('/vehicle-operators');
   assert.equal(operators.find(row => row.vehicle_id === 'smoke-unit')?.operator_name, 'Smoke Operator');
 
+  const client = await request('/clientes', {
+    method: 'POST',
+    body: JSON.stringify({ nombre: 'Smoke Cliente', contacto: 'Contacto Inicial', telefono: '614 000 0000', email: 'CLIENTE@EXAMPLE.COM' }),
+  });
+  assert.equal(client.email, 'cliente@example.com');
+  assert.equal((await request(`/clientes/${client.id}`)).nombre, 'Smoke Cliente');
+  const updatedClient = await request(`/clientes/${client.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ contacto: 'Contacto Actualizado', telefono: '614 111 1111' }),
+  });
+  assert.equal(updatedClient.contacto, 'Contacto Actualizado');
+  assert.equal(updatedClient.nombre, 'Smoke Cliente');
+  assert.equal((await request('/clientes')).some(row => row.id === client.id), true);
+  const clientGeofence = await request('/geofences', {
+    method: 'POST',
+    body: JSON.stringify({ nombre: 'Smoke Cliente Geofence', latitud: 24, longitud: -104, radio_metros: 750, cliente_id: client.id }),
+  });
+  const clientGeofences = await request(`/geofences?cliente_id=${client.id}`);
+  assert.equal(clientGeofences.length, 1);
+  assert.equal(clientGeofences[0].id, clientGeofence.id);
+  assert.equal(clientGeofences[0].cliente_id, client.id);
+  const linkedLocal = await request(`/clientes/${client.id}/geofences/link`, {
+    method: 'POST',
+    body: JSON.stringify({ source: 'local', geofence_id: clientGeofence.id }),
+  });
+  assert.equal(linkedLocal.geofence_ref, String(clientGeofence.id));
+  const linkedSamsara = await request(`/clientes/${client.id}/geofences/link`, {
+    method: 'POST',
+    body: JSON.stringify({ source: 'samsara', geofence_id: 'smoke-circle' }),
+  });
+  assert.equal(linkedSamsara.geofence_ref, 'smoke-circle');
+  assert.equal((await request('/clientes/geofence-links')).some(link => link.geofence_ref === 'smoke-circle' && link.cliente_id === client.id), true);
+  assert.equal((await request(`/clientes/${client.id}/geofences/samsara/smoke-circle`, { method: 'DELETE' })).unlinked, 1);
+  await request(`/clientes/${client.id}/geofences/link`, {
+    method: 'POST',
+    body: JSON.stringify({ source: 'samsara', geofence_id: 'smoke-circle' }),
+  });
+  await assert.rejects(
+    request(`/clientes/${client.id}`, { method: 'PUT', body: JSON.stringify({ email: 'correo-invalido' }) }),
+    /400.*email no es válido/
+  );
+  assert.equal((await request(`/clientes/${client.id}`, { method: 'DELETE' })).deleted, 1);
+  assert.equal((await request('/geofences')).find(row => row.id === clientGeofence.id)?.cliente_id, null);
+  assert.equal((await request('/clientes/geofence-links')).some(link => link.cliente_id === client.id), false);
+  await request(`/geofences/${clientGeofence.id}`, { method: 'DELETE' });
+
   const trailerA = await request('/remolques', { method: 'POST', body: JSON.stringify({ numero: `SMOKE-A-${Date.now()}`, categoria: 'Tanque' }) });
   const trailerB = await request('/remolques', { method: 'POST', body: JSON.stringify({ numero: `SMOKE-B-${Date.now()}`, categoria: 'tanque' }) });
   const trailerC = await request('/remolques', { method: 'POST', body: JSON.stringify({ numero: `SMOKE-C-${Date.now()}`, categoria: 'Caja Seca' }) });
@@ -258,11 +373,22 @@ async function run() {
   });
   assert.equal(toggled.changes, 2);
 
+  const geofenceCheck = await request('/check-geofences', { method: 'POST' });
+  assert.equal(geofenceCheck.newAlerts, 3);
+  const geofenceEvents = await request('/geofence-events?limit=20');
+  assert.equal(geofenceEvents.some(event => event.geofence_nombre === 'Samsara Circle' && event.source === 'samsara' && event.tipo === 'entrada'), true);
+  assert.equal(geofenceEvents.some(event => event.geofence_nombre === 'Samsara Polygon' && event.source === 'samsara' && event.tipo === 'entrada'), true);
+  assert.equal(geofenceEvents.some(event => event.geofence_nombre === 'GERS Planta Principal' && event.source === 'local' && event.tipo === 'entrada'), true);
+
   const imported = await request('/seguimiento/import', {
     method: 'POST',
-    body: JSON.stringify([{ unidad: 'Smoke Unit', operador: 'Smoke Operator', estatus: 'Disponible' }]),
+    body: JSON.stringify([{ UNIDAD: 'Smoke Unit', OPERADOR: 'Smoke Operator', ESTATUS: 'Disponible' }]),
   });
   assert.equal(imported.imported, 1);
+  const trackingReport = await request('/reportes/seguimiento?unidad=Smoke%20Unit');
+  assert.equal(trackingReport.length, 1);
+  assert.equal(trackingReport[0].unidad, 'Smoke Unit');
+  assert.equal(trackingReport[0].operador, 'Smoke Operator');
 }
 
 run()
@@ -272,7 +398,8 @@ run()
     process.exitCode = 1;
   })
   .finally(() => {
-    server.kill();
+    server?.kill();
+    samsaraServer?.close();
     for (const suffix of ['', '-shm', '-wal']) {
       try { fs.rmSync(`${databasePath}${suffix}`, { force: true }); } catch {}
     }

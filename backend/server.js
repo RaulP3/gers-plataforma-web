@@ -11,6 +11,7 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const SAMSARA_API_BASE_URL = (process.env.SAMSARA_API_BASE_URL || 'https://api.samsara.com').replace(/\/$/, '');
 const allowedOrigins = new Set(
   (process.env.CORS_ORIGINS || FRONTEND_URL).split(',').map(origin => origin.trim()).filter(Boolean)
 );
@@ -378,6 +379,8 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
   db.run("ALTER TABLE geofences ADD COLUMN direccion TEXT DEFAULT ''", [], () => {});
+  db.run('ALTER TABLE geofences ADD COLUMN cliente_id INTEGER', [], () => {});
+  db.run('CREATE INDEX IF NOT EXISTS idx_geofences_cliente ON geofences(cliente_id)', [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS geofence_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -470,6 +473,11 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
   db.run("ALTER TABLE pendientes ADD COLUMN created_by_username TEXT", [], () => {});
   db.run("ALTER TABLE comentarios_pendientes ADD COLUMN created_by_user_id INTEGER", [], () => {});
   db.run("ALTER TABLE comentarios_pendientes ADD COLUMN created_by_username TEXT", [], () => {});
+  db.run("ALTER TABLE pendientes_historial ADD COLUMN created_by_user_id INTEGER", [], () => {});
+  db.run("ALTER TABLE pendientes_historial ADD COLUMN created_by_username TEXT", [], () => {});
+  db.run("ALTER TABLE pendientes_historial ADD COLUMN archived_by_user_id INTEGER", [], () => {});
+  db.run("ALTER TABLE pendientes_historial ADD COLUMN archived_by_username TEXT", [], () => {});
+  db.run("ALTER TABLE pendientes_historial ADD COLUMN comentarios_resumen TEXT", [], () => {});
   db.run("ALTER TABLE seguimiento ADD COLUMN created_by_user_id INTEGER", [], () => {});
   db.run("ALTER TABLE seguimiento ADD COLUMN created_by_username TEXT", [], () => {});
 
@@ -503,6 +511,18 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
     activa INTEGER DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS cliente_geofence_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cliente_id INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    geofence_ref TEXT NOT NULL,
+    geofence_nombre TEXT DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source, geofence_ref),
+    FOREIGN KEY (cliente_id) REFERENCES clientes(id) ON DELETE CASCADE
+  )`);
+  db.run('CREATE INDEX IF NOT EXISTS idx_cliente_geofence_links_cliente ON cliente_geofence_links(cliente_id)', [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS mapas_mymaps (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -640,7 +660,7 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
 }));
 
 const samsaraApi = axios.create({
-  baseURL: 'https://api.samsara.com/v1',
+  baseURL: `${SAMSARA_API_BASE_URL}/v1`,
   timeout: 15000,
   headers: {
     'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`,
@@ -1088,12 +1108,9 @@ async function performSamsaraVehicleRefresh() {
 
     let locationsMap = {};
     try {
-      const locRes = await axios.get('https://api.samsara.com/fleet/vehicles/locations', {
-        headers: { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' },
-        timeout: 15000,
-      });
+      const locations = await fetchSamsaraVehicleLocations();
 
-      for (const v of (locRes.data?.data || [])) {
+      for (const v of locations) {
         if (v.location) {
           const now = Date.now();
           const locTime = new Date(v.location.time).getTime();
@@ -1247,8 +1264,86 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function mapSamsaraAddress(address) {
+  const circle = address.geofence?.circle || {};
+  return {
+    id: address.id,
+    nombre: address.name || address.formattedAddress || 'Sin nombre',
+    latitud: circle.latitude ?? address.latitude,
+    longitud: circle.longitude ?? address.longitude,
+    radio_metros: circle.radiusMeters || 500,
+    descripcion: address.formattedAddress || '',
+    color: '#8b5cf6',
+    categoria: 'samsara',
+    activa: 1,
+    polygon: address.geofence?.polygon || null,
+  };
+}
+
+async function fetchSamsaraAddresses() {
+  const addresses = [];
+  let after = null;
+  do {
+    const addressRes = await axios.get(`${SAMSARA_API_BASE_URL}/addresses`, {
+      headers: { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' },
+      params: after ? { after } : {},
+      timeout: 15000,
+    });
+    const data = addressRes.data || {};
+    const batch = data.addresses || (Array.isArray(data) ? data : (data.data || []));
+    addresses.push(...(Array.isArray(batch) ? batch : []));
+    after = data.pagination?.hasNextPage ? data.pagination.endCursor : null;
+  } while (after);
+  return addresses.map(mapSamsaraAddress);
+}
+
+async function fetchSamsaraVehicleLocations() {
+  const vehicles = [];
+  let after = null;
+  do {
+    const locRes = await axios.get(`${SAMSARA_API_BASE_URL}/fleet/vehicles/locations`, {
+      headers: { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' },
+      params: after ? { after } : {},
+      timeout: 15000,
+    });
+    const data = locRes.data || {};
+    vehicles.push(...(Array.isArray(data.data) ? data.data : []));
+    after = data.pagination?.hasNextPage ? data.pagination.endCursor : null;
+  } while (after);
+  return vehicles;
+}
+
+function pointInsidePolygon(latitude, longitude, polygon) {
+  const vertices = Array.isArray(polygon) ? polygon : polygon?.vertices;
+  if (!Array.isArray(vertices) || vertices.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+    const yi = Number(vertices[i]?.latitude);
+    const xi = Number(vertices[i]?.longitude);
+    const yj = Number(vertices[j]?.latitude);
+    const xj = Number(vertices[j]?.longitude);
+    if (![yi, xi, yj, xj].every(Number.isFinite)) continue;
+    const intersects = ((yi > latitude) !== (yj > latitude)) &&
+      (longitude < (xj - xi) * (latitude - yi) / (yj - yi) + xi);
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function pointInsideGeofence(latitude, longitude, geofence) {
+  if (geofence.polygon) return pointInsidePolygon(latitude, longitude, geofence.polygon);
+  const centerLat = Number(geofence.latitud);
+  const centerLon = Number(geofence.longitud);
+  const radius = Number(geofence.radio_metros);
+  if (![latitude, longitude, centerLat, centerLon, radius].every(Number.isFinite)) return false;
+  return haversineDistance(latitude, longitude, centerLat, centerLon) <= radius;
+}
+
 app.get('/api/geofences', (req, res) => {
-  db.all('SELECT * FROM geofences ORDER BY created_at DESC', [], (err, rows) => {
+  const clienteId = req.query.cliente_id;
+  const query = clienteId ? 'SELECT * FROM geofences WHERE cliente_id = ? ORDER BY created_at DESC' : 'SELECT * FROM geofences ORDER BY created_at DESC';
+  const params = clienteId ? [clienteId] : [];
+  db.all(query, params, (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
   });
@@ -1256,39 +1351,29 @@ app.get('/api/geofences', (req, res) => {
 
 app.get('/api/samsara/addresses', async (req, res) => {
   try {
-    const addressRes = await axios.get('https://api.samsara.com/addresses', {
-      headers: { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' },
-      timeout: 15000,
-    });
-    const data = addressRes.data;
-    const addresses = data.addresses || (Array.isArray(data) ? data : (data.data || []));
-    const mapped = (Array.isArray(addresses) ? addresses : []).map(a => ({
-      id: a.id,
-      nombre: a.name || a.formattedAddress || 'Sin nombre',
-      latitud: a.latitude,
-      longitud: a.longitude,
-      radio_metros: a.geofence?.circle?.radiusMeters || 500,
-      descripcion: a.formattedAddress || '',
-      color: '#8b5cf6',
-      categoria: 'samsara',
-      activa: 1,
-      polygon: a.geofence?.polygon || null,
-    }));
-    res.json(mapped);
+    res.json(await fetchSamsaraAddresses());
   } catch (error) {
     console.error('Error fetching Samsara addresses:', error.message);
     res.json([]);
   }
 });
 
-app.post('/api/geofences', (req, res) => {
-  const { nombre, direccion, latitud, longitud, radio_metros, descripcion, color } = req.body;
+app.post('/api/geofences', async (req, res) => {
+  const { nombre, direccion, latitud, longitud, radio_metros, descripcion, color, cliente_id: clienteId } = req.body;
   if (!nombre || latitud === undefined || longitud === undefined) {
     return res.status(400).json({ error: 'nombre, latitud y longitud son requeridos' });
   }
+  if (clienteId !== undefined && clienteId !== null && clienteId !== '') {
+    const client = await getQuery('SELECT id FROM clientes WHERE id = ?', [clienteId]).catch(error => {
+      res.status(500).json({ error: error.message });
+      return null;
+    });
+    if (res.headersSent) return;
+    if (!client) return res.status(400).json({ error: 'Cliente no encontrado' });
+  }
   db.run(
-    'INSERT INTO geofences (nombre, direccion, latitud, longitud, radio_metros, descripcion, color) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [nombre, direccion || '', latitud, longitud, radio_metros || 500, descripcion || '', color || '#3b82f6'],
+    'INSERT INTO geofences (nombre, direccion, latitud, longitud, radio_metros, descripcion, color, cliente_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [nombre, direccion || '', latitud, longitud, radio_metros || 500, descripcion || '', color || '#3b82f6', clienteId || null],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ id: this.lastID });
@@ -1309,13 +1394,13 @@ app.put('/api/geofences/toggle', (req, res) => {
 });
 
 app.put('/api/geofences/:id', (req, res) => {
-  const { nombre, direccion, latitud, longitud, radio_metros, descripcion, color, activa } = req.body;
+  const { nombre, direccion, latitud, longitud, radio_metros, descripcion, color, activa, cliente_id: clienteId } = req.body;
   db.run(
     `UPDATE geofences SET nombre = COALESCE(?, nombre), latitud = COALESCE(?, latitud),
      direccion = COALESCE(?, direccion), longitud = COALESCE(?, longitud), radio_metros = COALESCE(?, radio_metros),
-     descripcion = COALESCE(?, descripcion), color = COALESCE(?, color), activa = COALESCE(?, activa)
+     descripcion = COALESCE(?, descripcion), color = COALESCE(?, color), activa = COALESCE(?, activa), cliente_id = COALESCE(?, cliente_id)
      WHERE id = ?`,
-    [nombre, latitud, direccion, longitud, radio_metros, descripcion, color, activa, req.params.id],
+    [nombre, latitud, direccion, longitud, radio_metros, descripcion, color, activa, clienteId, req.params.id],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ changes: this.changes });
@@ -1438,11 +1523,26 @@ app.post('/api/webhooks/samsara', (req, res) => {
 });
 
 async function performGeofenceCheck() {
-    const geofences = await new Promise((resolve, reject) => {
+    const localGeofences = await new Promise((resolve, reject) => {
       db.all('SELECT * FROM geofences WHERE activa = 1', [], (err, rows) => {
         if (err) reject(err); else resolve(rows || []);
       });
     });
+    let samsaraGeofences = [];
+    try {
+      samsaraGeofences = await fetchSamsaraAddresses();
+    } catch (error) {
+      console.error('Error fetching Samsara geofences:', error.message);
+    }
+    const geofences = [
+      ...localGeofences.map(g => ({ ...g, stateId: String(g.id), eventId: g.id, source: 'local' })),
+      ...samsaraGeofences.map(g => ({
+        ...g,
+        stateId: `samsara:${g.id || `${g.nombre}:${g.latitud}:${g.longitud}`}`,
+        eventId: `samsara:${g.id || `${g.nombre}:${g.latitud}:${g.longitud}`}`,
+        source: 'samsara',
+      })),
+    ];
 
     const prevStates = await new Promise((resolve, reject) => {
       db.all('SELECT * FROM vehicle_geofence_state', [], (err, rows) => {
@@ -1454,13 +1554,8 @@ async function performGeofenceCheck() {
       prevMap[`${p.vehicle_id}_${p.geofence_id}`] = p;
     }
 
-    const locRes = await axios.get('https://api.samsara.com/fleet/vehicles/locations', {
-      headers: { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' },
-      timeout: 15000,
-    });
-
     const alerts = [];
-    const vehicles = locRes.data?.data || [];
+    const vehicles = await fetchSamsaraVehicleLocations();
 
     for (const v of vehicles) {
       if (!v.location) continue;
@@ -1468,16 +1563,15 @@ async function performGeofenceCheck() {
       const vLon = v.location.longitude;
 
       for (const g of geofences) {
-        const dist = haversineDistance(vLat, vLon, g.latitud, g.longitud);
-        const inside = dist <= g.radio_metros;
-        const key = `${v.id}_${g.id}`;
+        const inside = pointInsideGeofence(vLat, vLon, g);
+        const key = `${v.id}_${g.stateId}`;
         const prev = prevMap[key];
         const wasInside = prev ? prev.inside === 1 : false;
 
         if (inside && !wasInside) {
           await runQuery(
-            `INSERT INTO geofence_events (vehicle_id, vehicle_name, geofence_id, geofence_nombre, tipo, latitud, longitud) VALUES (?, ?, ?, ?, 'entrada', ?, ?)`,
-            [v.id, v.name, g.id, g.nombre, vLat, vLon]
+            `INSERT INTO geofence_events (vehicle_id, vehicle_name, geofence_id, geofence_nombre, tipo, latitud, longitud, source) VALUES (?, ?, ?, ?, 'entrada', ?, ?, ?)`,
+            [v.id, v.name, g.eventId, g.nombre, vLat, vLon, g.source]
           );
           await runQuery(
             'INSERT INTO alertas (vehicle_id, vehicle_name, tipo, mensaje, severidad) VALUES (?, ?, ?, ?, ?)',
@@ -1486,8 +1580,8 @@ async function performGeofenceCheck() {
           alerts.push({ vehicle: v.name, geofence: g.nombre, tipo: 'entrada' });
         } else if (!inside && wasInside) {
           await runQuery(
-            `INSERT INTO geofence_events (vehicle_id, vehicle_name, geofence_id, geofence_nombre, tipo, latitud, longitud) VALUES (?, ?, ?, ?, 'salida', ?, ?)`,
-            [v.id, v.name, g.id, g.nombre, vLat, vLon]
+            `INSERT INTO geofence_events (vehicle_id, vehicle_name, geofence_id, geofence_nombre, tipo, latitud, longitud, source) VALUES (?, ?, ?, ?, 'salida', ?, ?, ?)`,
+            [v.id, v.name, g.eventId, g.nombre, vLat, vLon, g.source]
           );
           await runQuery(
             'INSERT INTO alertas (vehicle_id, vehicle_name, tipo, mensaje, severidad) VALUES (?, ?, ?, ?, ?)',
@@ -1499,7 +1593,7 @@ async function performGeofenceCheck() {
         await runQuery(
           `INSERT OR REPLACE INTO vehicle_geofence_state (vehicle_id, geofence_id, inside, last_check)
            VALUES (?, ?, ?, datetime('now'))`,
-          [v.id, g.id, inside ? 1 : 0]
+          [v.id, g.stateId, inside ? 1 : 0]
         );
       }
     }
@@ -1968,22 +2062,31 @@ app.delete('/api/comentarios/:id', (req, res) => {
 });
 
 app.get('/api/reportes/seguimiento', (req, res) => {
-  const { vehicle_id, fecha_inicio, fecha_fin } = req.query;
-  let query = "SELECT * FROM comentarios WHERE tipo IN ('seguimiento', 'incidente', 'mantenimiento')";
+  const { vehicle_id, unidad, fecha_inicio, fecha_fin } = req.query;
+  let query = `SELECT id, unidad, grupo, remolque, operador, origen, destino, ruta,
+                      cita_carga, cita_descarga, hora_llegada, hora_liberacion,
+                      estatus, comentarios_cliente, comentarios_monitoreo, fecha_actualizacion
+               FROM seguimiento WHERE 1=1`;
   const params = [];
-  if (vehicle_id) {
-    query += ' AND vehicle_id = ?';
-    params.push(vehicle_id);
+  if (unidad) {
+    query += ' AND LOWER(unidad) = LOWER(?)';
+    params.push(unidad);
+  } else if (vehicle_id) {
+    query += ` AND unidad IN (
+      SELECT vehicle_name FROM vehicle_locations WHERE vehicle_id = ?
+      UNION SELECT vehicle_name FROM viajes WHERE vehicle_id = ?
+    )`;
+    params.push(vehicle_id, vehicle_id);
   }
   if (fecha_inicio) {
-    query += ' AND created_at >= ?';
+    query += ' AND fecha_actualizacion >= ?';
     params.push(fecha_inicio);
   }
   if (fecha_fin) {
-    query += ' AND created_at <= ?';
-    params.push(fecha_fin + ' 23:59:59');
+    query += " AND fecha_actualizacion < datetime(?, '+1 day')";
+    params.push(fecha_fin);
   }
-  query += ' ORDER BY created_at DESC';
+  query += ' ORDER BY unidad COLLATE NOCASE ASC, id ASC';
   db.all(query, params, (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
@@ -2170,10 +2273,16 @@ function detectVehicleStops(rows, minimumMinutes) {
 }
 
 app.get('/api/route-history/last', (req, res) => {
-  const { vehicle_id, hours, stops_minutes: stopsMinutes } = req.query;
+  const { vehicle_id, hours, stops_minutes: stopsMinutes, since_ms: sinceMs, include_route: includeRouteValue } = req.query;
   if (!vehicle_id) return res.status(400).json({ error: 'vehicle_id es requerido' });
   const h = Math.min(168, Math.max(1, Number(hours) || 24));
   const minimumStopMinutes = stopsMinutes === undefined ? null : Math.min(1440, Math.max(1, Number(stopsMinutes) || 20));
+  const includeRoute = includeRouteValue === '1' || includeRouteValue === 'true';
+  const earliestAllowed = Date.now() - 168 * 60 * 60 * 1000;
+  const requestedSince = Number(sinceMs);
+  const lowerBoundMs = Number.isFinite(requestedSince) && requestedSince > 0
+    ? Math.max(earliestAllowed, Math.min(Date.now(), requestedSince))
+    : Date.now() - h * 60 * 60 * 1000;
   const select = minimumStopMinutes
     ? `SELECT MIN(id) AS id, vehicle_id, MAX(vehicle_name) AS vehicle_name,
               AVG(latitude) AS latitude, AVG(longitude) AS longitude,
@@ -2181,7 +2290,7 @@ app.get('/api/route-history/last', (req, res) => {
               MAX(location) AS location, MIN(source_time_ms) AS source_time_ms
        FROM route_history
        WHERE vehicle_id = ? AND source_time_ms IS NOT NULL
-         AND source_time_ms >= (unixepoch('now') - ? * 3600) * 1000
+         AND source_time_ms >= ?
        GROUP BY CAST(source_time_ms / 60000 AS INTEGER)
        ORDER BY source_time_ms ASC`
     : `SELECT * FROM route_history
@@ -2189,10 +2298,17 @@ app.get('/api/route-history/last', (req, res) => {
        ORDER BY recorded_at ASC`;
   db.all(
     select,
-    [vehicle_id, h],
+    [vehicle_id, minimumStopMinutes ? lowerBoundMs : h],
     (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
-      res.json(minimumStopMinutes ? detectVehicleStops(rows || [], minimumStopMinutes) : (rows || []));
+      if (!minimumStopMinutes) return res.json(rows || []);
+      const stops = detectVehicleStops(rows || [], minimumStopMinutes);
+      if (!includeRoute) return res.json(stops);
+      const route = (rows || []).map(row => ({
+        ...row,
+        recorded_at: new Date(Number(row.source_time_ms)).toISOString(),
+      }));
+      res.json({ route, stops });
     }
   );
 });
@@ -2234,27 +2350,157 @@ app.get('/api/viajes/activos', (req, res) => {
 
 // ============ CLIENTES ============
 
+function normalizeClientPayload(body, current = {}) {
+  const has = key => Object.prototype.hasOwnProperty.call(body || {}, key);
+  const text = (key, fallback = '') => {
+    const value = has(key) ? body[key] : (current[key] ?? fallback);
+    if (value !== null && value !== undefined && typeof value !== 'string') throw new Error(`${key} debe ser texto`);
+    return String(value || '').trim().replace(/\s+/g, ' ');
+  };
+  const client = {
+    nombre: text('nombre'),
+    contacto: text('contacto'),
+    telefono: text('telefono'),
+    email: text('email').toLowerCase(),
+  };
+  if (!client.nombre) throw new Error('nombre es requerido');
+  if (client.nombre.length > 150) throw new Error('nombre no puede exceder 150 caracteres');
+  if (client.contacto.length > 150) throw new Error('contacto no puede exceder 150 caracteres');
+  if (client.telefono.length > 40) throw new Error('telefono no puede exceder 40 caracteres');
+  if (client.email.length > 254 || (client.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(client.email))) {
+    throw new Error('email no es válido');
+  }
+  return client;
+}
+
 app.get('/api/clientes', (req, res) => {
   db.all('SELECT * FROM clientes ORDER BY nombre ASC', [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
+    res.json(rows || []);
+  });
+});
+
+app.get('/api/clientes/geofence-links', (req, res) => {
+  db.all('SELECT * FROM cliente_geofence_links ORDER BY created_at ASC, id ASC', [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows || []);
+  });
+});
+
+app.get('/api/clientes/:id', (req, res) => {
+  db.get('SELECT * FROM clientes WHERE id = ?', [req.params.id], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.status(404).json({ error: 'Cliente no encontrado' });
+    res.json(row);
   });
 });
 
 app.post('/api/clientes', (req, res) => {
-  const { nombre, contacto, telefono, email } = req.body;
-  if (!nombre) return res.status(400).json({ error: 'nombre es requerido' });
-  db.run('INSERT INTO clientes (nombre, contacto, telefono, email) VALUES (?, ?, ?, ?)', [nombre, contacto || '', telefono || '', email || ''], function (err) {
+  let client;
+  try {
+    client = normalizeClientPayload(req.body);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+  db.run('INSERT INTO clientes (nombre, contacto, telefono, email) VALUES (?, ?, ?, ?)', [client.nombre, client.contacto, client.telefono, client.email], function (err) {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ id: this.lastID });
+    db.get('SELECT * FROM clientes WHERE id = ?', [this.lastID], (getErr, row) => {
+      if (getErr) return res.status(500).json({ error: getErr.message });
+      res.status(201).json(row);
+    });
   });
 });
 
-app.delete('/api/clientes/:id', (req, res) => {
-  db.run('DELETE FROM clientes WHERE id = ?', [req.params.id], function (err) {
+app.put('/api/clientes/:id', (req, res) => {
+  db.get('SELECT * FROM clientes WHERE id = ?', [req.params.id], (err, row) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ changes: this.changes });
+    if (!row) return res.status(404).json({ error: 'Cliente no encontrado' });
+    let client;
+    try {
+      client = normalizeClientPayload(req.body, row);
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
+    db.run(
+      'UPDATE clientes SET nombre = ?, contacto = ?, telefono = ?, email = ? WHERE id = ?',
+      [client.nombre, client.contacto, client.telefono, client.email, req.params.id],
+      function (runErr) {
+        if (runErr) return res.status(500).json({ error: runErr.message });
+        db.get('SELECT * FROM clientes WHERE id = ?', [req.params.id], (getErr, updated) => {
+          if (getErr) return res.status(500).json({ error: getErr.message });
+          res.json(updated);
+        });
+      }
+    );
   });
+});
+
+app.post('/api/clientes/:id/geofences/link', async (req, res) => {
+  const source = String(req.body?.source || '').toLowerCase();
+  const geofenceRef = String(req.body?.geofence_id ?? '').trim();
+  if (!['local', 'samsara'].includes(source) || !geofenceRef) {
+    return res.status(400).json({ error: 'source y geofence_id son requeridos' });
+  }
+  try {
+    const client = await getQuery('SELECT id FROM clientes WHERE id = ?', [req.params.id]);
+    if (!client) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+    if (source === 'local') {
+      const geofence = await getQuery('SELECT id, nombre, cliente_id FROM geofences WHERE id = ?', [geofenceRef]);
+      if (!geofence) return res.status(404).json({ error: 'Geocerca no encontrada' });
+      if (geofence.cliente_id && String(geofence.cliente_id) !== String(client.id)) {
+        return res.status(409).json({ error: 'La geocerca ya está asociada a otro cliente' });
+      }
+      await runQuery('UPDATE geofences SET cliente_id = ? WHERE id = ?', [client.id, geofence.id]);
+      return res.json({ cliente_id: client.id, source, geofence_ref: String(geofence.id), geofence_nombre: geofence.nombre });
+    }
+
+    const addresses = await fetchSamsaraAddresses();
+    const geofence = addresses.find(address => String(address.id) === geofenceRef);
+    if (!geofence) return res.status(404).json({ error: 'Geocerca Samsara no encontrada' });
+    const existing = await getQuery('SELECT * FROM cliente_geofence_links WHERE source = ? AND geofence_ref = ?', [source, geofenceRef]);
+    if (existing && String(existing.cliente_id) !== String(client.id)) {
+      return res.status(409).json({ error: 'La geocerca ya está asociada a otro cliente' });
+    }
+    if (!existing) {
+      await runQuery(
+        'INSERT INTO cliente_geofence_links (cliente_id, source, geofence_ref, geofence_nombre) VALUES (?, ?, ?, ?)',
+        [client.id, source, geofenceRef, geofence.nombre]
+      );
+    }
+    res.json(await getQuery('SELECT * FROM cliente_geofence_links WHERE source = ? AND geofence_ref = ?', [source, geofenceRef]));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/clientes/:id/geofences/:source/:geofenceRef', async (req, res) => {
+  const source = String(req.params.source || '').toLowerCase();
+  try {
+    if (source === 'local') {
+      const result = await runQuery('UPDATE geofences SET cliente_id = NULL WHERE id = ? AND cliente_id = ?', [req.params.geofenceRef, req.params.id]);
+      return res.json({ unlinked: result.changes });
+    }
+    if (source !== 'samsara') return res.status(400).json({ error: 'Fuente de geocerca inválida' });
+    const result = await runQuery(
+      'DELETE FROM cliente_geofence_links WHERE cliente_id = ? AND source = ? AND geofence_ref = ?',
+      [req.params.id, source, req.params.geofenceRef]
+    );
+    res.json({ unlinked: result.changes });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/clientes/:id', (req, res) => {
+  withTransaction(async tx => {
+    await tx.run('UPDATE geofences SET cliente_id = NULL WHERE cliente_id = ?', [req.params.id]);
+    await tx.run('DELETE FROM cliente_geofence_links WHERE cliente_id = ?', [req.params.id]);
+    return tx.run('DELETE FROM clientes WHERE id = ?', [req.params.id]);
+  }).then(result => {
+    if (!result.changes) return res.status(404).json({ error: 'Cliente no encontrado' });
+    res.json({ deleted: result.changes });
+  }).catch(err => res.status(500).json({ error: err.message }));
 });
 
 // ============ REMOLQUES ============
