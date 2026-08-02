@@ -2549,10 +2549,10 @@ export default function Home() {
             label = 'Programada';
           } else if (differenceMinutes !== null && differenceMinutes > 10) {
             status = 'delayed';
-            label = `Retraso ${differenceMinutes} min`;
+            label = `Retraso ${(differenceMinutes / 60).toFixed(1)} h`;
           } else if (differenceMinutes !== null && differenceMinutes < -10) {
             status = 'early';
-            label = `Adelanto ${Math.abs(differenceMinutes)} min`;
+            label = `Adelanto ${(Math.abs(differenceMinutes) / 60).toFixed(1)} h`;
           }
           if (citasEtaRequestRef.current.generation === generation) {
             setCitasEta(prev => ({ ...prev, [current.item.id]: { status, label, eta, arrival, differenceMinutes } }));
@@ -3427,15 +3427,16 @@ export default function Home() {
               avanceEsperadoLabel = `Esperado: ${avanceEsperadoPct}% · ${expectedKm.toFixed(1)} km`;
               const differencePct = avancePct - avanceEsperadoPct;
               const differenceMinutes = Math.round(Math.abs(differencePct) / 100 * scheduleDurationMs / 60000);
+              const differenceHours = (differenceMinutes / 60).toFixed(1);
               const differenceKm = Math.abs(differencePct) / 100 * totalM / 1000;
               if (Date.now() < scheduledStart.getTime()) {
                 estadoAvance = { label: 'Aún no inicia', color: '#94a3b8' };
               } else if (differenceMinutes <= 10) {
                 estadoAvance = { label: 'En tiempo', color: '#10b981' };
               } else if (differencePct < 0) {
-                estadoAvance = { label: `Retraso estimado: ${differenceMinutes} min · ${differenceKm.toFixed(1)} km`, color: '#ef4444' };
+                estadoAvance = { label: `Retraso estimado: ${differenceHours} h · ${differenceKm.toFixed(1)} km`, color: '#ef4444' };
               } else {
-                estadoAvance = { label: `Adelanto estimado: ${differenceMinutes} min · ${differenceKm.toFixed(1)} km`, color: '#3b82f6' };
+                estadoAvance = { label: `Adelanto estimado: ${differenceHours} h · ${differenceKm.toFixed(1)} km`, color: '#3b82f6' };
               }
             }
           } else if (monitoreoEtaLoading) {
@@ -3561,35 +3562,6 @@ export default function Home() {
                 )}
               </div>
               <div style={{ overflow: 'auto', maxHeight: 'calc(100vh - 180px)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {viajesActivos.length > 0 && (
-                  <div style={{ ...s.card, padding: '0.75rem' }}>
-                    <h3 style={{ marginTop: 0, fontSize: '0.9rem', marginBottom: '0.75rem', color: '#f59e0b' }}>🚐 Viajes Activos ({viajesActivos.length})</h3>
-                    {viajesActivos.slice(0, 8).map((vj) => {
-                      const vehicleNow = vehiculos.find(v => String(v.id) === String(vj.vehicle_id) || v.name === vj.vehicle_name);
-                      const hasLoc = vehicleNow?.location;
-                       const destinos = vj.tipo_entrega === 'reparto' ? destinosViaje(vj) : [];
-                       const destino = vj.destino || vj.seg_destino || '';
-                      const remolque = vj.seg_remolque || '';
-                      const estatus = vj.estado || vj.seg_estatus || '';
-                      return (
-                        <div key={vj.id} role="button" tabIndex={0} onKeyDown={(e) => activarConTeclado(e, () => selectMonitoreoVehicle({ id: vj.vehicle_id, name: vj.vehicle_name }))} onClick={() => selectMonitoreoVehicle({ id: vj.vehicle_id, name: vj.vehicle_name })} style={{ padding: '0.5rem', borderBottom: '1px solid #1a1a1a', cursor: 'pointer', borderRadius: '6px', transition: 'background 0.15s', background: monitoreoSelectedId === String(vj.vehicle_id) ? '#00ff4110' : 'transparent' }}
-                          onMouseEnter={e => e.currentTarget.style.background = '#152015'}
-                          onMouseLeave={e => e.currentTarget.style.background = monitoreoSelectedId === String(vj.vehicle_id) ? '#00ff4110' : 'transparent'}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
-                            <span style={{ fontWeight: 700, fontSize: '0.8rem', color: '#00ff41' }}>{vj.vehicle_name}</span>
-                            {hasLoc && <span style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: '8px', background: vehicleNow.isOnline ? '#003311' : '#3a1111', color: vehicleNow.isOnline ? '#00ff41' : '#ef4444', border: `1px solid ${vehicleNow.isOnline ? '#00ff4133' : '#ef444433'}` }}>{vehicleNow.isOnline ? 'Online' : 'Offline'}</span>}
-                          </div>
-                          {remolque && <div style={{ fontSize: '0.7rem', color: '#f59e0b' }}>🚛 {remolque}</div>}
-                           {vj.tipo_entrega === 'reparto' ? destinos.map((stop, index) => <div key={`${vj.id}-monitor-stop-${index}`} style={{ fontSize: '0.7rem', color: '#60a5fa' }}>{index + 1}. {stop}</div>) : destino && <div style={{ fontSize: '0.7rem', color: '#60a5fa' }}>🏁 {destino}</div>}
-                           <div style={{ marginTop: '0.2rem' }}>
-                             <span style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: '8px', background: '#1a1a1a', color: '#94a3b8', border: '1px solid #333' }}>{estatus}</span>
-                             {vj.tipo_entrega === 'reparto' && <span className="trip-reparto-badge">Reparto</span>}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
                 <div style={{ ...s.card, overflow: 'auto', flex: 1, padding: '0.75rem' }}>
                   <h3 style={{ marginTop: 0, fontSize: '0.9rem', marginBottom: '0.75rem' }}>Todas las Unidades ({vehiculos.length})</h3>
                   {vehiculos.map((v) => (
