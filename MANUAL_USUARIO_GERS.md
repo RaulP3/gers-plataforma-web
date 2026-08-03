@@ -1,7 +1,7 @@
 # Manual de Usuario GERS
 
 ## Version
-- Version actual: `1.1.0`
+- Version actual: `1.2.0`
 
 ## Acceso
 - URL local: `http://localhost:3000`
@@ -14,7 +14,8 @@
 - Monitorear vehiculos en mapa.
 - Registrar notas, pendientes y viajes.
 - Consultar alertas y rutas historicas.
-- Administrar remolques y usuarios.
+- Administrar remolques, clientes y usuarios.
+- Ver la agenda operativa unificada de citas con estado del vehiculo.
 - Generar y descargar reportes en PDF.
 - Entregar turno con resumen y cierre de sesion.
 
@@ -59,6 +60,25 @@
 - Permite crear y editar viajes.
 - Guarda origen, destino, conductor, telefono, remolque y fechas.
 - Muestra ETA con fecha y hora de llegada.
+- Un viaje puede ser directo o tipo reparto (varias paradas).
+- Al activar un viaje con remolque, el sistema asigna el remolque a la unidad automaticamente. Si el remolque ya esta asignado a otra unidad, el sistema muestra el aviso correspondiente.
+- En viajes tipo reparto, la cita del viaje muestra el destino de la parada en curso: inicia con el primer destino y cambia al siguiente cuando el vehiculo sale de la parada anterior.
+
+### Citas
+- Muestra la agenda operativa unificada de viajes y seguimiento.
+- Cada cita muestra el estado del vehiculo: `Circulando`, `Detenido`, `Sin senal`, `Sin GPS reciente` o `En destino`.
+- Cuando el vehiculo esta en destino, muestra la hora de llegada a la geocerca.
+- Muestra la ETA calculada a la geocerca del destino.
+- Si una unidad ya tiene un viaje, su fila de seguimiento se oculta para evitar citas duplicadas.
+
+### Clientes
+- Permite administrar clientes.
+- Permite vincular cada cliente con geocercas propias o de Samsara.
+- Las entradas y salidas de las geocercas vinculadas generan alertas del cliente.
+
+### Mapas
+- Permite administrar enlaces a Google My Maps.
+- Cada enlace se abre en una pestana nueva.
 
 ### Operadores
 - Muestra la lista de operadores.
@@ -70,11 +90,15 @@
   - Thermo Refrigerado
   - Caja Seca
   - Tanque
+  - Porta Contenedores
 - Permite asignar y desasignar remolques a unidades.
+- Permite asignar un grupo full (doble remolque) a una unidad.
+- Al asignar un remolque a un viaje activo, la unidad queda vinculada al remolque.
 
 ### Seguimiento
 - Muestra las notas registradas por unidad.
 - Sirve como historial operativo de seguimiento.
+- Permite consultar el historial de cada fila de seguimiento.
 
 ### Geocercas
 - Permite crear y administrar geocercas.

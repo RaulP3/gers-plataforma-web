@@ -14,6 +14,11 @@ let token = '';
 let server = null;
 let samsaraServer = null;
 let serverOutput = '';
+let mockLocations = [
+  { id: 'smoke-circle-unit', name: 'Smoke Circle Unit', location: { latitude: 20, longitude: -100 } },
+  { id: 'smoke-polygon-unit', name: 'Smoke Polygon Unit', location: { latitude: 22, longitude: -101 } },
+  { id: 'smoke-catalog-unit', name: 'Smoke Catalog Unit', location: { latitude: 25.7894, longitude: -100.1824 } },
+];
 
 function startServer() {
   server = spawn(process.execPath, ['server.js'], {
@@ -61,14 +66,7 @@ function startSamsaraServer() {
       }));
     }
     if (req.url.startsWith('/fleet/vehicles/locations')) {
-      return res.end(JSON.stringify({
-        data: [
-          { id: 'smoke-circle-unit', name: 'Smoke Circle Unit', location: { latitude: 20, longitude: -100 } },
-          { id: 'smoke-polygon-unit', name: 'Smoke Polygon Unit', location: { latitude: 22, longitude: -101 } },
-          { id: 'smoke-catalog-unit', name: 'Smoke Catalog Unit', location: { latitude: 25.7894, longitude: -100.1824 } },
-        ],
-        pagination: { hasNextPage: false },
-      }));
+      return res.end(JSON.stringify({ data: mockLocations, pagination: { hasNextPage: false } }));
     }
     if (req.url.startsWith('/v1/fleet/list')) return res.end(JSON.stringify({ vehicles: [] }));
     res.statusCode = 404;
@@ -240,6 +238,31 @@ async function run() {
   assert.equal(storedReparto.tipo_entrega, 'reparto');
   assert.deepEqual(JSON.parse(storedReparto.destinos_json), ['San Luis Potosí', 'Querétaro', 'Ciudad de México']);
   assert.equal(storedReparto.destino, 'Ciudad de México');
+  assert.equal(storedReparto.paradas.length, 3);
+  assert.deepEqual(storedReparto.paradas.map(stop => stop.estado), ['en_camino', 'pendiente', 'pendiente']);
+  let stopUpdate = await request(`/viajes/${repartoTrip.id}/paradas/${storedReparto.paradas[0].id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ estado: 'llego' }),
+  });
+  const firstArrival = stopUpdate.paradas[0].hora_llegada;
+  assert.ok(firstArrival);
+  stopUpdate = await request(`/viajes/${repartoTrip.id}/paradas/${storedReparto.paradas[0].id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ estado: 'llego' }),
+  });
+  assert.equal(stopUpdate.paradas[0].hora_llegada, firstArrival);
+  stopUpdate = await request(`/viajes/${repartoTrip.id}/paradas/${storedReparto.paradas[0].id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ estado: 'completada' }),
+  });
+  const firstDeparture = stopUpdate.paradas[0].hora_salida;
+  await new Promise(resolve => setTimeout(resolve, 10));
+  stopUpdate = await request(`/viajes/${repartoTrip.id}/paradas/${storedReparto.paradas[0].id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ estado: 'completada' }),
+  });
+  assert.notEqual(stopUpdate.paradas[0].hora_salida, firstDeparture);
+  assert.equal(stopUpdate.paradas[1].estado, 'en_camino');
 
   await request(`/viajes/${directTrip.id}`, {
     method: 'PUT',
@@ -262,6 +285,12 @@ async function run() {
   assert.deepEqual(JSON.parse(storedReparto.destinos_json), ['San Luis Potosí', 'Querétaro', 'Ciudad de México']);
   assert.equal(storedReparto.destino, 'Ciudad de México');
   assert.equal(storedReparto.conductor, 'Reparto Driver');
+
+  const activos = await request('/viajes/activos');
+  const activoReparto = activos.find(row => row.id === repartoTrip.id);
+  assert.ok(activoReparto, 'viaje reparto debe aparecer en activos');
+  assert.equal(activoReparto.paradas.length, 3);
+  assert.equal(activoReparto.paradas.find(stop => stop.orden === 2)?.estado, 'en_camino');
 
   const completedPending = await request('/pendientes', {
     method: 'POST',
@@ -323,14 +352,13 @@ async function run() {
     request(`/clientes/${client.id}`, { method: 'PUT', body: JSON.stringify({ email: 'correo-invalido' }) }),
     /400.*email no es válido/
   );
-  assert.equal((await request(`/clientes/${client.id}`, { method: 'DELETE' })).deleted, 1);
-  assert.equal((await request('/geofences')).find(row => row.id === clientGeofence.id)?.cliente_id, null);
-  assert.equal((await request('/clientes/geofence-links')).some(link => link.cliente_id === client.id), false);
-  await request(`/geofences/${clientGeofence.id}`, { method: 'DELETE' });
 
-  const trailerA = await request('/remolques', { method: 'POST', body: JSON.stringify({ numero: `SMOKE-A-${Date.now()}`, categoria: 'Tanque' }) });
-  const trailerB = await request('/remolques', { method: 'POST', body: JSON.stringify({ numero: `SMOKE-B-${Date.now()}`, categoria: 'tanque' }) });
-  const trailerC = await request('/remolques', { method: 'POST', body: JSON.stringify({ numero: `SMOKE-C-${Date.now()}`, categoria: 'Caja Seca' }) });
+  const trailerNumA = `SMOKE-A-${Date.now()}`;
+  const trailerNumB = `SMOKE-B-${Date.now()}`;
+  const trailerNumC = `SMOKE-C-${Date.now()}`;
+  const trailerA = await request('/remolques', { method: 'POST', body: JSON.stringify({ numero: trailerNumA, categoria: 'Tanque' }) });
+  const trailerB = await request('/remolques', { method: 'POST', body: JSON.stringify({ numero: trailerNumB, categoria: 'tanque' }) });
+  const trailerC = await request('/remolques', { method: 'POST', body: JSON.stringify({ numero: trailerNumC, categoria: 'Caja Seca' }) });
   const assignment = JSON.stringify({ vehicle_id: 'smoke-unit', vehicle_name: 'Smoke Unit' });
   const full = await request('/remolques/full/asignar', {
     method: 'POST',
@@ -350,6 +378,53 @@ async function run() {
   assert.equal(trailers.find(row => row.id === trailerA.id)?.status, 'disponible');
   assert.equal(trailers.find(row => row.id === trailerB.id)?.status, 'disponible');
   assert.equal(trailers.find(row => row.id === trailerC.id)?.tipo_asignacion, 'sencillo');
+
+  const tripSencillo = await request('/viajes', {
+    method: 'POST',
+    body: JSON.stringify({
+      vehicle_id: 'smoke-unit',
+      vehicle_name: 'Smoke Unit',
+      origen: 'Monterrey',
+      destino: 'Saltillo',
+      tipo_entrega: 'directo',
+      remolque: trailerNumA,
+    }),
+  });
+  await request(`/viajes/${tripSencillo.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ estado: 'en_ruta_cargado' }),
+  });
+  let activeAfterTrip = await request('/remolques/asignaciones/activas');
+  assert.deepEqual(activeAfterTrip.filter(row => row.vehicle_id === 'smoke-unit').map(row => row.remolque_id), [trailerA.id]);
+  let trailersAfterTrip = await request('/remolques');
+  assert.equal(trailersAfterTrip.find(row => row.id === trailerA.id)?.status, 'asignado');
+  assert.equal(trailersAfterTrip.find(row => row.id === trailerC.id)?.status, 'disponible');
+
+  const tripFull = await request('/viajes', {
+    method: 'POST',
+    body: JSON.stringify({
+      vehicle_id: 'smoke-unit',
+      vehicle_name: 'Smoke Unit',
+      origen: 'Monterrey',
+      destino: 'Querétaro',
+      tipo_entrega: 'directo',
+      remolque: `#${trailerNumA} + #${trailerNumB}`,
+    }),
+  });
+  await request(`/viajes/${tripFull.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ estado: 'en_ruta_vacio' }),
+  });
+  activeAfterTrip = await request('/remolques/asignaciones/activas');
+  assert.deepEqual(
+    activeAfterTrip.filter(row => row.vehicle_id === 'smoke-unit').map(row => row.remolque_id).sort((a, b) => a - b),
+    [trailerA.id, trailerB.id].sort((a, b) => a - b)
+  );
+  assert.ok(activeAfterTrip.every(row => row.vehicle_id === 'smoke-unit' && row.tipo_asignacion === 'full' && row.grupo_full));
+  trailersAfterTrip = await request('/remolques');
+  assert.equal(trailersAfterTrip.find(row => row.id === trailerA.id)?.status, 'asignado');
+  assert.equal(trailersAfterTrip.find(row => row.id === trailerB.id)?.status, 'asignado');
+  assert.equal(trailersAfterTrip.find(row => row.id === trailerC.id)?.status, 'disponible');
 
   await assert.rejects(
     request('/remolques/full/asignar', {
@@ -379,6 +454,82 @@ async function run() {
   assert.equal(geofenceEvents.some(event => event.geofence_nombre === 'Samsara Circle' && event.source === 'samsara' && event.tipo === 'entrada'), true);
   assert.equal(geofenceEvents.some(event => event.geofence_nombre === 'Samsara Polygon' && event.source === 'samsara' && event.tipo === 'entrada'), true);
   assert.equal(geofenceEvents.some(event => event.geofence_nombre === 'GERS Planta Principal' && event.source === 'local' && event.tipo === 'entrada'), true);
+  const customerAlert = (await request('/alertas')).find(alert => alert.tipo === 'cliente_geocerca');
+  assert.ok(customerAlert);
+  assert.match(customerAlert.mensaje, /Smoke Circle Unit entró a "Samsara Circle" del cliente "Smoke Cliente"/);
+  const archivedAlerts = await request('/alertas/archivar-todas', { method: 'PUT' });
+  assert.ok(archivedAlerts.archived >= 1);
+  assert.equal((await request('/alertas')).some(alert => alert.id === customerAlert.id), false);
+  assert.equal((await request('/alertas?archivadas=1')).some(alert => alert.id === customerAlert.id), true);
+  assert.equal((await request(`/alertas/${customerAlert.id}/restaurar`, { method: 'PUT' })).restored, 1);
+  assert.equal((await request('/alertas')).some(alert => alert.id === customerAlert.id), true);
+
+  const liveStream = await fetch(`${baseUrl}/live?token=${encodeURIComponent(token)}`);
+  assert.equal(liveStream.status, 200);
+  const liveReader = liveStream.body.getReader();
+  const decoder = new TextDecoder();
+  let liveBuffer = '';
+  const liveEvents = [];
+  const liveCollector = (async () => {
+    for (let i = 0; i < 400; i++) {
+      const { done, value } = await liveReader.read();
+      if (done) break;
+      liveBuffer += decoder.decode(value, { stream: true });
+      let boundary;
+      while ((boundary = liveBuffer.indexOf('\n\n')) !== -1) {
+        const chunk = liveBuffer.slice(0, boundary);
+        liveBuffer = liveBuffer.slice(boundary + 2);
+        const eventLine = chunk.split('\n').find(line => line.startsWith('event: '));
+        if (eventLine) liveEvents.push(eventLine.slice(7));
+      }
+    }
+  })();
+  await request('/alertas', {
+    method: 'POST',
+    body: JSON.stringify({ vehicle_id: 'smoke-live', vehicle_name: 'Smoke Live', tipo: 'velocidad', mensaje: 'Smoke Live alerta', severidad: 'alta' }),
+  });
+  await new Promise(resolve => setTimeout(resolve, 500));
+  await liveReader.cancel();
+  await liveCollector;
+  assert.equal(liveEvents.includes('new-alert'), true, 'debe emitirse el evento SSE new-alert al crear una alerta');
+
+  assert.equal((await request(`/clientes/${client.id}`, { method: 'DELETE' })).deleted, 1);
+  assert.equal((await request('/geofences')).find(row => row.id === clientGeofence.id)?.cliente_id, null);
+  assert.equal((await request('/clientes/geofence-links')).some(link => link.cliente_id === client.id), false);
+  await request(`/geofences/${clientGeofence.id}`, { method: 'DELETE' });
+
+  const destinoGeofence = await request('/geofences', {
+    method: 'POST',
+    body: JSON.stringify({ nombre: 'Smoke Destino', latitud: 20, longitud: -100, radio_metros: 500 }),
+  });
+  const geofenceTrip = await request('/viajes', {
+    method: 'POST',
+    body: JSON.stringify({
+      vehicle_id: 'smoke-circle-unit',
+      vehicle_name: 'Smoke Circle Unit',
+      origen: 'Monterrey',
+      destino: 'Smoke Destino',
+      conductor: 'Geofence Driver',
+      tipo_entrega: 'directo',
+    }),
+  });
+  await request(`/viajes/${geofenceTrip.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ estado: 'en_ruta_cargado' }),
+  });
+  mockLocations = mockLocations.map(v => v.id === 'smoke-circle-unit' ? { ...v, location: { latitude: 20, longitude: -100 } } : v);
+  await request('/check-geofences', { method: 'POST' });
+  let viajeGeo = (await request('/viajes')).find(row => row.id === geofenceTrip.id);
+  assert.equal(viajeGeo.estado, 'espera_ingreso', 'entrada a destino debe poner el viaje en espera_ingreso');
+  assert.ok(viajeGeo.hora_llegada, 'entrada a destino debe registrar hora_llegada en el viaje directo');
+  mockLocations = mockLocations.map(v => v.id === 'smoke-circle-unit' ? { ...v, location: { latitude: 30, longitude: -110 } } : v);
+  await request('/check-geofences', { method: 'POST' });
+  viajeGeo = (await request('/viajes')).find(row => row.id === geofenceTrip.id);
+  assert.equal(viajeGeo.estado, 'completado', 'salida de destino debe completar el viaje');
+  assert.ok(viajeGeo.fecha_fin, 'fecha_fin debe quedar registrada al completar');
+  assert.ok(viajeGeo.hora_salida, 'salida de destino debe registrar hora_salida en el viaje directo');
+  await request(`/viajes/${geofenceTrip.id}`, { method: 'DELETE' });
+  await request(`/geofences/${destinoGeofence.id}`, { method: 'DELETE' });
 
   const imported = await request('/seguimiento/import', {
     method: 'POST',

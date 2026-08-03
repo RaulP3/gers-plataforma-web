@@ -259,6 +259,8 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
     estado TEXT DEFAULT 'programado',
     fecha_inicio DATETIME,
     fecha_fin DATETIME,
+    hora_llegada DATETIME,
+    hora_salida DATETIME,
     notas TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
@@ -266,6 +268,26 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
   db.run("ALTER TABLE viajes ADD COLUMN remolque TEXT", [], () => {});
   db.run("ALTER TABLE viajes ADD COLUMN tipo_entrega TEXT DEFAULT 'directo'", [], () => {});
   db.run("ALTER TABLE viajes ADD COLUMN destinos_json TEXT DEFAULT '[]'", [], () => {});
+  db.run("ALTER TABLE viajes ADD COLUMN estado_previo TEXT", [], () => {});
+  db.run("ALTER TABLE viajes ADD COLUMN updated_at DATETIME", [], () => {});
+  db.run("ALTER TABLE viajes ADD COLUMN hora_llegada DATETIME", [], () => {});
+  db.run("ALTER TABLE viajes ADD COLUMN hora_salida DATETIME", [], () => {});
+  db.run("ALTER TABLE viajes ADD COLUMN hora_llegada DATETIME", [], () => {});
+  db.run("ALTER TABLE viajes ADD COLUMN hora_salida DATETIME", [], () => {});
+
+  db.run(`CREATE TABLE IF NOT EXISTS viaje_paradas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    viaje_id INTEGER NOT NULL,
+    orden INTEGER NOT NULL,
+    destino TEXT NOT NULL,
+    estado TEXT DEFAULT 'pendiente',
+    hora_llegada DATETIME,
+    hora_salida DATETIME,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(viaje_id, orden),
+    FOREIGN KEY (viaje_id) REFERENCES viajes(id) ON DELETE CASCADE
+  )`);
+  db.run('CREATE INDEX IF NOT EXISTS idx_viaje_paradas_viaje_estado ON viaje_paradas(viaje_id, estado)', [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS alertas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -275,8 +297,13 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
     mensaje TEXT,
     severidad TEXT DEFAULT 'info',
     leida INTEGER DEFAULT 0,
+    archivada INTEGER DEFAULT 0,
+    archived_at DATETIME,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+  db.run('ALTER TABLE alertas ADD COLUMN archivada INTEGER DEFAULT 0', [], () => {});
+  db.run('ALTER TABLE alertas ADD COLUMN archived_at DATETIME', [], () => {});
+  db.run('CREATE INDEX IF NOT EXISTS idx_alertas_archivada_timestamp ON alertas(archivada, timestamp)', [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS pendientes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -820,7 +847,7 @@ async function getTurnoSummary(hours = 8, turno = '', observaciones = '') {
   const periodStart = `datetime('now', '-${safeHours} hours')`;
 
   const [alertasNoLeidas, alertasCombustibleBajo, pendientesQueQuedanTotal, pendientesResueltosTotal, viajesActivos, eventosGeocerca, eventosRecientes, alertasCriticas, pendientesQueQuedan, pendientesResueltos, unidadesConUbicacion] = await Promise.all([
-    getQuery('SELECT COUNT(*) as total FROM alertas WHERE leida = 0'),
+    getQuery('SELECT COUNT(*) as total FROM alertas WHERE leida = 0 AND COALESCE(archivada, 0) = 0'),
     getQuery(`SELECT COUNT(*) as total FROM alertas WHERE tipo = 'combustible_bajo' AND timestamp >= ${periodStart}`),
     getQuery("SELECT COUNT(*) as total FROM pendientes WHERE estado != 'completado'"),
     getQuery(`SELECT COUNT(*) as total FROM pendientes WHERE estado = 'completado' AND fecha_actualizacion >= ${periodStart}`),
@@ -1464,6 +1491,144 @@ app.delete('/api/geofence-events', requireAdmin, async (req, res) => {
   }
 });
 
+const TRIP_ROUTE_STATES = new Set(['programado', 'en_ruta_vacio', 'en_ruta_cargado']);
+
+async function updateTripStopFromGeofence(vehicle, geofenceName, type, eventTime = new Date().toISOString()) {
+  const normalizedGeofence = normalizeDestination(geofenceName);
+  if (!normalizedGeofence || (!vehicle?.id && !vehicle?.name)) return null;
+  const params = [String(vehicle.id || ''), String(vehicle.name || '')];
+  const activeTrips = await allQuery(
+    `SELECT * FROM viajes
+      WHERE (CAST(vehicle_id AS TEXT) = ? OR LOWER(COALESCE(vehicle_name, '')) = LOWER(?))
+        AND LOWER(COALESCE(estado, '')) NOT IN ('completado', 'cancelado')`,
+    params
+  );
+  for (const trip of activeTrips) {
+    if (trip.tipo_entrega === 'reparto') await syncTripStops(trip);
+  }
+  const candidatesQuery = `SELECT vp.*, v.vehicle_id, v.vehicle_name, v.estado AS viaje_estado
+       FROM viaje_paradas vp
+       JOIN viajes v ON v.id = vp.viaje_id
+      WHERE (CAST(v.vehicle_id AS TEXT) = ? OR LOWER(COALESCE(v.vehicle_name, '')) = LOWER(?))
+        AND LOWER(COALESCE(v.estado, '')) NOT IN ('completado', 'cancelado')
+      ORDER BY v.id DESC, vp.orden ASC`;
+  const candidates = await allQuery(candidatesQuery, params);
+  const stop = candidates.find(candidate => normalizeDestination(candidate.destino) === normalizedGeofence);
+  const directTrip = activeTrips.find(trip => trip.tipo_entrega !== 'reparto' && normalizeDestination(trip.destino) === normalizedGeofence);
+
+  if (type === 'entrada') {
+    if (stop) {
+      if (stop.estado === 'omitida') return stop;
+      if (stop.estado === 'completada') {
+        await runQuery(
+          `UPDATE viaje_paradas
+              SET estado = 'llego', hora_salida = NULL, updated_at = datetime('now')
+            WHERE id = ?`,
+          [stop.id]
+        );
+        const nextStop = await getQuery(
+          "SELECT id FROM viaje_paradas WHERE viaje_id = ? AND orden > ? AND estado = 'en_camino' AND hora_llegada IS NULL ORDER BY orden ASC LIMIT 1",
+          [stop.viaje_id, stop.orden]
+        );
+        if (nextStop) await runQuery("UPDATE viaje_paradas SET estado = 'pendiente', updated_at = datetime('now') WHERE id = ?", [nextStop.id]);
+      } else {
+        await runQuery(
+          `UPDATE viaje_paradas
+              SET estado = 'llego', hora_llegada = COALESCE(hora_llegada, ?), updated_at = datetime('now')
+            WHERE id = ?`,
+          [eventTime, stop.id]
+        );
+      }
+    }
+    const tripId = stop?.viaje_id || directTrip?.id;
+    if (tripId) {
+      const trip = activeTrips.find(trip => trip.id === tripId);
+      const estadoActual = String(trip?.estado || '').toLowerCase();
+      if (estadoActual === 'completado') {
+        await runQuery("UPDATE viajes SET estado = 'espera_ingreso', fecha_fin = NULL, estado_previo = NULL, updated_at = datetime('now') WHERE id = ?", [tripId]);
+      } else if (TRIP_ROUTE_STATES.has(estadoActual)) {
+        await runQuery("UPDATE viajes SET estado_previo = ?, estado = 'espera_ingreso', hora_llegada = COALESCE(hora_llegada, ?), updated_at = datetime('now') WHERE id = ?", [estadoActual, eventTime, tripId]);
+      }
+    }
+  } else if (type === 'salida' && stop && stop.hora_llegada && stop.estado !== 'omitida') {
+    const wasCompleted = stop.estado === 'completada';
+    await runQuery(
+      `UPDATE viaje_paradas
+          SET estado = 'completada', hora_salida = ?, updated_at = datetime('now')
+        WHERE id = ?`,
+      [eventTime, stop.id]
+    );
+    if (!wasCompleted) {
+      const nextStop = await getQuery("SELECT id FROM viaje_paradas WHERE viaje_id = ? AND orden > ? AND estado = 'pendiente' ORDER BY orden ASC LIMIT 1", [stop.viaje_id, stop.orden]);
+      if (nextStop) await runQuery("UPDATE viaje_paradas SET estado = 'en_camino', updated_at = datetime('now') WHERE id = ?", [nextStop.id]);
+    }
+    const trip = activeTrips.find(trip => trip.id === stop.viaje_id);
+    const restantes = await allQuery(
+      "SELECT id FROM viaje_paradas WHERE viaje_id = ? AND estado NOT IN ('completada', 'omitida')",
+      [stop.viaje_id]
+    );
+    if (restantes.length === 0) {
+      await runQuery("UPDATE viajes SET estado = 'completado', fecha_fin = ?, estado_previo = NULL, updated_at = datetime('now') WHERE id = ?", [eventTime, stop.viaje_id]);
+    } else {
+      const previo = String(trip?.estado_previo || 'en_ruta_cargado');
+      await runQuery("UPDATE viajes SET estado = ?, estado_previo = NULL, updated_at = datetime('now') WHERE id = ?", [previo, stop.viaje_id]);
+    }
+  } else if (type === 'salida' && directTrip) {
+    await runQuery("UPDATE viajes SET estado = 'completado', fecha_fin = ?, estado_previo = NULL, hora_salida = COALESCE(hora_salida, ?), updated_at = datetime('now') WHERE id = ?", [eventTime, eventTime, directTrip.id]);
+  }
+  return stop ? getQuery('SELECT * FROM viaje_paradas WHERE id = ?', [stop.id]) : null;
+}
+
+async function findSamsaraGeofenceClient(geofenceId, geofenceName) {
+  if (geofenceId) {
+    const byId = await getQuery(
+      `SELECT c.id, c.nombre FROM cliente_geofence_links link
+       JOIN clientes c ON c.id = link.cliente_id
+       WHERE link.source = 'samsara' AND link.geofence_ref = ?`,
+      [String(geofenceId)]
+    );
+    if (byId) return byId;
+  }
+  return getQuery(
+    `SELECT c.id, c.nombre FROM cliente_geofence_links link
+     JOIN clientes c ON c.id = link.cliente_id
+     WHERE link.source = 'samsara' AND LOWER(link.geofence_nombre) = LOWER(?)`,
+    [String(geofenceName || '')]
+  );
+}
+
+async function createAlertRecord({ vehicle_id = '', vehicle_name = '', tipo = 'alerta', mensaje = '', severidad = 'info', timestamp }) {
+  const result = await runQuery(
+    'INSERT INTO alertas (vehicle_id, vehicle_name, tipo, mensaje, severidad, timestamp) VALUES (?, ?, ?, ?, ?, COALESCE(?, datetime(\'now\')))',
+    [String(vehicle_id), String(vehicle_name), tipo, String(mensaje), severidad, timestamp || null]
+  );
+  const alert = await getQuery('SELECT * FROM alertas WHERE id = ?', [result.lastID]);
+  broadcastLiveUpdate('new-alert', { alert });
+  return alert;
+}
+
+async function createCustomerGeofenceAlert(vehicle, client, geofenceName, eventTime = new Date().toISOString()) {
+  if (!client?.id) return null;
+  const vehicleId = String(vehicle.id || '');
+  const vehicleName = vehicle.name || vehicleId;
+  const message = `${vehicleName} entró a "${geofenceName}" del cliente "${client.nombre}"`;
+  const recent = await getQuery(
+    `SELECT * FROM alertas
+      WHERE vehicle_id = ? AND tipo = 'cliente_geocerca' AND mensaje = ?
+        AND datetime(timestamp) >= datetime('now', '-1 minute')
+      ORDER BY id DESC LIMIT 1`,
+    [vehicleId, message]
+  );
+  if (recent) return recent;
+  const result = await runQuery(
+    'INSERT INTO alertas (vehicle_id, vehicle_name, tipo, mensaje, severidad, timestamp) VALUES (?, ?, ?, ?, ?, ?)',
+    [vehicleId, vehicleName, 'cliente_geocerca', message, 'alta', eventTime]
+  );
+  const alert = await getQuery('SELECT * FROM alertas WHERE id = ?', [result.lastID]);
+  broadcastLiveUpdate('client-geofence-alert', { alert });
+  return alert;
+}
+
 function validWebhookSignature(req) {
   const secret = process.env.SAMSARA_WEBHOOK_SECRET;
   if (!secret) return !IS_PRODUCTION;
@@ -1513,6 +1678,16 @@ app.post('/api/webhooks/samsara', (req, res) => {
       [String(vehicle.id || ''), vehicle.name || '', geofenceId, geofenceName, tipo, latitud, longitud, payload.eventId ? String(payload.eventId) : null, JSON.stringify(payload), createdAt],
       function (err) {
         if (err) return res.status(500).json({ error: err.message });
+        if (this.changes > 0) {
+          updateTripStopFromGeofence(vehicle, geofenceName, tipo, createdAt).catch(updateErr => {
+            console.error('Error actualizando parada desde webhook:', updateErr.message);
+          });
+          if (tipo === 'entrada') {
+            findSamsaraGeofenceClient(geofenceId, geofenceName)
+              .then(client => createCustomerGeofenceAlert(vehicle, client, geofenceName, createdAt))
+              .catch(alertErr => console.error('Error creando alerta de cliente:', alertErr.message));
+          }
+        }
         res.json({ ok: true, saved: this.changes > 0 });
       }
     );
@@ -1524,7 +1699,9 @@ app.post('/api/webhooks/samsara', (req, res) => {
 
 async function performGeofenceCheck() {
     const localGeofences = await new Promise((resolve, reject) => {
-      db.all('SELECT * FROM geofences WHERE activa = 1', [], (err, rows) => {
+      db.all(`SELECT g.*, c.nombre AS cliente_nombre
+              FROM geofences g LEFT JOIN clientes c ON c.id = g.cliente_id
+              WHERE g.activa = 1`, [], (err, rows) => {
         if (err) reject(err); else resolve(rows || []);
       });
     });
@@ -1534,6 +1711,11 @@ async function performGeofenceCheck() {
     } catch (error) {
       console.error('Error fetching Samsara geofences:', error.message);
     }
+    const samsaraClientLinks = await allQuery(
+      `SELECT link.geofence_ref, c.id AS cliente_id, c.nombre AS cliente_nombre
+       FROM cliente_geofence_links link JOIN clientes c ON c.id = link.cliente_id
+       WHERE link.source = 'samsara'`
+    );
     const geofences = [
       ...localGeofences.map(g => ({ ...g, stateId: String(g.id), eventId: g.id, source: 'local' })),
       ...samsaraGeofences.map(g => ({
@@ -1541,6 +1723,7 @@ async function performGeofenceCheck() {
         stateId: `samsara:${g.id || `${g.nombre}:${g.latitud}:${g.longitud}`}`,
         eventId: `samsara:${g.id || `${g.nombre}:${g.latitud}:${g.longitud}`}`,
         source: 'samsara',
+        ...(samsaraClientLinks.find(link => String(link.geofence_ref) === String(g.id)) || {}),
       })),
     ];
 
@@ -1573,28 +1756,42 @@ async function performGeofenceCheck() {
             `INSERT INTO geofence_events (vehicle_id, vehicle_name, geofence_id, geofence_nombre, tipo, latitud, longitud, source) VALUES (?, ?, ?, ?, 'entrada', ?, ?, ?)`,
             [v.id, v.name, g.eventId, g.nombre, vLat, vLon, g.source]
           );
-          await runQuery(
-            'INSERT INTO alertas (vehicle_id, vehicle_name, tipo, mensaje, severidad) VALUES (?, ?, ?, ?, ?)',
-            [v.id, v.name, 'geocerca', `${v.name} entró a la geocerca "${g.nombre}"`, 'info']
-          );
+          if (g.cliente_id) {
+            await createCustomerGeofenceAlert(v, { id: g.cliente_id, nombre: g.cliente_nombre }, g.nombre);
+          } else {
+            await createAlertRecord({
+              vehicle_id: v.id,
+              vehicle_name: v.name,
+              tipo: 'geocerca',
+              mensaje: `${v.name} entró a la geocerca "${g.nombre}"`,
+              severidad: 'info',
+            });
+          }
+          await updateTripStopFromGeofence(v, g.nombre, 'entrada');
           alerts.push({ vehicle: v.name, geofence: g.nombre, tipo: 'entrada' });
         } else if (!inside && wasInside) {
           await runQuery(
             `INSERT INTO geofence_events (vehicle_id, vehicle_name, geofence_id, geofence_nombre, tipo, latitud, longitud, source) VALUES (?, ?, ?, ?, 'salida', ?, ?, ?)`,
             [v.id, v.name, g.eventId, g.nombre, vLat, vLon, g.source]
           );
-          await runQuery(
-            'INSERT INTO alertas (vehicle_id, vehicle_name, tipo, mensaje, severidad) VALUES (?, ?, ?, ?, ?)',
-            [v.id, v.name, 'geocerca', `${v.name} salió de la geocerca "${g.nombre}"`, 'info']
-          );
+          await createAlertRecord({
+            vehicle_id: v.id,
+            vehicle_name: v.name,
+            tipo: 'geocerca',
+            mensaje: `${v.name} salió de la geocerca "${g.nombre}"`,
+            severidad: 'info',
+          });
+          await updateTripStopFromGeofence(v, g.nombre, 'salida');
           alerts.push({ vehicle: v.name, geofence: g.nombre, tipo: 'salida' });
         }
 
-        await runQuery(
-          `INSERT OR REPLACE INTO vehicle_geofence_state (vehicle_id, geofence_id, inside, last_check)
-           VALUES (?, ?, ?, datetime('now'))`,
-          [v.id, g.stateId, inside ? 1 : 0]
-        );
+        if (!prev || wasInside !== inside) {
+          await runQuery(
+            `INSERT OR REPLACE INTO vehicle_geofence_state (vehicle_id, geofence_id, inside, last_check)
+             VALUES (?, ?, ?, datetime('now'))`,
+            [v.id, g.stateId, inside ? 1 : 0]
+          );
+        }
       }
     }
 
@@ -1634,10 +1831,13 @@ async function performFuelCheck() {
 
         if (!recent) {
           const pct = Math.round(v.fuelLevelPercent * 100);
-          await runQuery(
-            'INSERT INTO alertas (vehicle_id, vehicle_name, tipo, mensaje, severidad) VALUES (?, ?, ?, ?, ?)',
-            [String(v.id), v.name, 'combustible_bajo', `${v.name} tiene ${pct}% de diesel - Nivel bajo`, 'alta']
-          );
+          await createAlertRecord({
+            vehicle_id: v.id,
+            vehicle_name: v.name,
+            tipo: 'combustible_bajo',
+            mensaje: `${v.name} tiene ${pct}% de diesel - Nivel bajo`,
+            severidad: 'alta',
+          });
           alerts.push({ vehicle: v.name, fuel: pct });
         }
       }
@@ -1709,8 +1909,117 @@ function normalizeTripDelivery(body, current = null) {
   return { tipo_entrega: tipoEntrega, destinos_json: JSON.stringify(destino ? [destino] : []), destino };
 }
 
-app.get('/api/viajes', (req, res) => {
-  db.all(`SELECT * FROM viajes ORDER BY
+function tripDestinations(trip) {
+  if (trip?.tipo_entrega !== 'reparto') return [];
+  try {
+    const values = JSON.parse(trip.destinos_json || '[]');
+    return Array.isArray(values) ? values.map(value => String(value || '').trim()).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function syncTripStops(trip, force = false) {
+  const destinations = tripDestinations(trip);
+  const existing = await allQuery('SELECT * FROM viaje_paradas WHERE viaje_id = ? ORDER BY orden ASC', [trip.id]);
+  if (destinations.length === 0) {
+    if (existing.length) await runQuery('DELETE FROM viaje_paradas WHERE viaje_id = ?', [trip.id]);
+    return [];
+  }
+  const unchanged = existing.length === destinations.length && existing.every((stop, index) => normalizeDestination(stop.destino) === normalizeDestination(destinations[index]));
+  if (unchanged && !force) return existing;
+  if (unchanged) return existing;
+
+  await runQuery('DELETE FROM viaje_paradas WHERE viaje_id = ?', [trip.id]);
+  const usedIds = new Set();
+  for (let index = 0; index < destinations.length; index += 1) {
+    const destination = destinations[index];
+    const preserved = existing.find(stop => !usedIds.has(stop.id) && normalizeDestination(stop.destino) === normalizeDestination(destination));
+    if (preserved) usedIds.add(preserved.id);
+    const estado = preserved?.estado || (index === 0 ? 'en_camino' : 'pendiente');
+    await runQuery(
+      `INSERT INTO viaje_paradas (viaje_id, orden, destino, estado, hora_llegada, hora_salida, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
+      [trip.id, index + 1, destination, estado, preserved?.hora_llegada || null, preserved?.hora_salida || null]
+    );
+  }
+  return allQuery('SELECT * FROM viaje_paradas WHERE viaje_id = ? ORDER BY orden ASC', [trip.id]);
+}
+
+async function attachTripStops(rows) {
+  for (const trip of rows) await syncTripStops(trip);
+  if (!rows.length) return rows;
+  const placeholders = rows.map(() => '?').join(',');
+  const stops = await allQuery(`SELECT * FROM viaje_paradas WHERE viaje_id IN (${placeholders}) ORDER BY viaje_id, orden`, rows.map(row => row.id));
+  return rows.map(trip => ({ ...trip, paradas: stops.filter(stop => stop.viaje_id === trip.id) }));
+}
+
+const TRIP_TRAILER_ACTIVE_STATES = new Set(['en_ruta_vacio', 'en_ruta_cargado', 'proceso_carga', 'proceso_descarga', 'proceso_liberacion', 'espera_ingreso', 'en_resguardo']);
+
+async function resolveTripTrailerIds(remolqueValue) {
+  const text = String(remolqueValue || '').trim();
+  if (!text) return [];
+  const numbers = text.split('+').map(part => String(part).replace(/[#\s]/g, '').trim()).filter(Boolean);
+  if (!numbers.length) return [];
+  const placeholders = numbers.map(() => '?').join(',');
+  const rows = await allQuery(`SELECT id, numero FROM remolques WHERE numero IN (${placeholders})`, numbers);
+  if (rows.length !== numbers.length) return [];
+  return rows.map(row => row.id);
+}
+
+async function syncTripTrailer(trip) {
+  const ids = await resolveTripTrailerIds(trip.remolque);
+  if (!ids.length) return null;
+  const isFull = ids.length > 1;
+  const vehicleId = trip.vehicle_id;
+  const vehicleName = String(trip.vehicle_name || '');
+  return withTransaction(async tx => {
+    const current = await tx.all('SELECT remolque_id FROM remolque_asignaciones WHERE activa = 1 AND vehicle_id = ?', [vehicleId]);
+    const currentIds = current.map(row => row.remolque_id);
+    const same = ids.length === currentIds.length && ids.every(id => currentIds.includes(id));
+    if (same) return null;
+    if (isFull) {
+      const elsewhere = await tx.get(
+        'SELECT id FROM remolque_asignaciones WHERE activa = 1 AND remolque_id IN (?, ?) AND vehicle_id <> ? LIMIT 1',
+        [ids[0], ids[1], vehicleId]
+      );
+      if (elsewhere) {
+        const error = new Error('Uno de los tanques ya está asignado a otra unidad');
+        error.status = 409;
+        throw error;
+      }
+    }
+    const placeholders = ids.map(() => '?').join(',');
+    const displaced = await tx.all(
+      `SELECT DISTINCT remolque_id FROM remolque_asignaciones
+       WHERE activa = 1 AND (vehicle_id = ? OR remolque_id IN (${placeholders}))`,
+      [vehicleId, ...ids]
+    );
+    await tx.run(
+      `UPDATE remolque_asignaciones SET activa = 0, fecha_fin = CURRENT_TIMESTAMP
+       WHERE activa = 1 AND (vehicle_id = ? OR remolque_id IN (${placeholders}))`,
+      [vehicleId, ...ids]
+    );
+    for (const row of displaced) {
+      await tx.run('UPDATE remolques SET status = ? WHERE id = ?', ['disponible', row.remolque_id]);
+    }
+    const grupoFull = isFull ? crypto.randomUUID() : null;
+    const tipo = isFull ? 'full' : 'sencillo';
+    for (const id of ids) {
+      await tx.run(
+        `INSERT INTO remolque_asignaciones (remolque_id, vehicle_id, vehicle_name, tipo_asignacion, grupo_full)
+         VALUES (?, ?, ?, ?, ?)`,
+        [id, vehicleId, vehicleName, tipo, grupoFull]
+      );
+      await tx.run('UPDATE remolques SET status = ? WHERE id = ?', ['asignado', id]);
+    }
+    return { tipo_asignacion: tipo, grupo_full: grupoFull, remolque_ids: ids };
+  });
+}
+
+app.get('/api/viajes', async (req, res) => {
+  try {
+    const rows = await allQuery(`SELECT * FROM viajes ORDER BY
     CASE LOWER(COALESCE(estado, ''))
       WHEN 'en_ruta_cargado' THEN 0
       WHEN 'en_ruta_vacio' THEN 1
@@ -1725,13 +2034,14 @@ app.get('/api/viajes', (req, res) => {
       WHEN 'cancelado' THEN 10
       ELSE 99
     END,
-    COALESCE(fecha_inicio, created_at) ASC`, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
+    COALESCE(fecha_inicio, created_at) ASC`);
+    res.json(await attachTripStops(rows));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.post('/api/viajes', (req, res) => {
+app.post('/api/viajes', async (req, res) => {
   const { vehicle_id, vehicle_name, origen, conductor, telefono, fecha_inicio, fecha_fin, notas } = req.body;
   let delivery;
   try {
@@ -1739,19 +2049,22 @@ app.post('/api/viajes', (req, res) => {
   } catch (err) {
     return res.status(400).json({ error: err.message });
   }
-  db.run(
-    'INSERT INTO viajes (vehicle_id, vehicle_name, origen, destino, tipo_entrega, destinos_json, conductor, telefono, remolque, fecha_inicio, fecha_fin, notas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [vehicle_id, vehicle_name, origen, delivery.destino, delivery.tipo_entrega, delivery.destinos_json, conductor, telefono || '', req.body.remolque || '', fecha_inicio, fecha_fin, notas],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ id: this.lastID });
-    }
-  );
+  try {
+    const result = await runQuery(
+      'INSERT INTO viajes (vehicle_id, vehicle_name, origen, destino, tipo_entrega, destinos_json, conductor, telefono, remolque, fecha_inicio, fecha_fin, notas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [vehicle_id, vehicle_name, origen, delivery.destino, delivery.tipo_entrega, delivery.destinos_json, conductor, telefono || '', req.body.remolque || '', fecha_inicio, fecha_fin, notas]
+    );
+    const trip = await getQuery('SELECT * FROM viajes WHERE id = ?', [result.lastID]);
+    const paradas = await syncTripStops(trip);
+    res.json({ id: result.lastID, paradas });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.put('/api/viajes/:id', (req, res) => {
-  db.get('SELECT * FROM viajes WHERE id = ?', [req.params.id], (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
+app.put('/api/viajes/:id', async (req, res) => {
+  try {
+    const row = await getQuery('SELECT * FROM viajes WHERE id = ?', [req.params.id]);
     if (!row) return res.status(404).json({ error: 'Viaje no encontrado' });
 
     const has = (key) => Object.prototype.hasOwnProperty.call(req.body || {}, key);
@@ -1779,43 +2092,94 @@ app.put('/api/viajes/:id', (req, res) => {
       remolque: has('remolque') ? req.body.remolque : row.remolque,
     };
 
-    db.run(
+    const result = await runQuery(
       'UPDATE viajes SET vehicle_id = ?, vehicle_name = ?, origen = ?, destino = ?, tipo_entrega = ?, destinos_json = ?, conductor = ?, telefono = ?, fecha_inicio = ?, fecha_fin = ?, notas = ?, estado = ?, remolque = ? WHERE id = ?',
-      [next.vehicle_id, next.vehicle_name, next.origen, next.destino, next.tipo_entrega, next.destinos_json, next.conductor, next.telefono, next.fecha_inicio, next.fecha_fin, next.notas, next.estado, next.remolque, req.params.id],
-      function (runErr) {
-        if (runErr) return res.status(500).json({ error: runErr.message });
-        res.json({ changes: this.changes });
-      }
+      [next.vehicle_id, next.vehicle_name, next.origen, next.destino, next.tipo_entrega, next.destinos_json, next.conductor, next.telefono, next.fecha_inicio, next.fecha_fin, next.notas, next.estado, next.remolque, req.params.id]
     );
-  });
+    const paradas = await syncTripStops({ id: Number(req.params.id), ...next }, has('tipo_entrega') || has('destinos') || has('destino'));
+    let trailerSync = null;
+    const nuevoEstado = String(next.estado || '').toLowerCase();
+    const estadoPrevio = String(row.estado || '').toLowerCase();
+    const viajeActivoPrevio = TRIP_TRAILER_ACTIVE_STATES.has(estadoPrevio);
+    if (!viajeActivoPrevio && TRIP_TRAILER_ACTIVE_STATES.has(nuevoEstado) && (next.remolque || row.remolque)) {
+      try {
+        trailerSync = await syncTripTrailer({ ...next, remolque: next.remolque || row.remolque });
+      } catch (syncErr) {
+        if (syncErr.status === 409) return res.status(409).json({ error: syncErr.message });
+        console.error('Error sincronizando remolque del viaje:', syncErr.message);
+      }
+    }
+    res.json({ changes: result.changes, paradas, trailerSync });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.delete('/api/viajes/:id', (req, res) => {
-  db.run('DELETE FROM viajes WHERE id = ?', [req.params.id], function (err) {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json({ changes: this.changes });
-  });
+app.put('/api/viajes/:id/paradas/:paradaId', async (req, res) => {
+  const estado = String(req.body?.estado || '').toLowerCase();
+  if (!['pendiente', 'en_camino', 'llego', 'completada', 'omitida'].includes(estado)) {
+    return res.status(400).json({ error: 'Estado de parada inválido' });
+  }
+  try {
+    await withTransaction(async tx => {
+      const stop = await tx.get('SELECT * FROM viaje_paradas WHERE id = ? AND viaje_id = ?', [req.params.paradaId, req.params.id]);
+      if (!stop) throw Object.assign(new Error('Parada no encontrada'), { status: 404 });
+      const now = new Date().toISOString();
+      const arrival = ['llego', 'completada'].includes(estado) ? (stop.hora_llegada || now) : stop.hora_llegada;
+      const departure = ['completada', 'omitida'].includes(estado) ? now : stop.hora_salida;
+      await tx.run(
+        'UPDATE viaje_paradas SET estado = ?, hora_llegada = ?, hora_salida = ?, updated_at = datetime(\'now\') WHERE id = ?',
+        [estado, arrival || null, departure || null, stop.id]
+      );
+      if (['completada', 'omitida'].includes(estado)) {
+        const nextStop = await tx.get("SELECT id FROM viaje_paradas WHERE viaje_id = ? AND orden > ? AND estado = 'pendiente' ORDER BY orden ASC LIMIT 1", [stop.viaje_id, stop.orden]);
+        if (nextStop) await tx.run("UPDATE viaje_paradas SET estado = 'en_camino', updated_at = datetime('now') WHERE id = ?", [nextStop.id]);
+      }
+    });
+    res.json({ paradas: await allQuery('SELECT * FROM viaje_paradas WHERE viaje_id = ? ORDER BY orden ASC', [req.params.id]) });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/viajes/:id', async (req, res) => {
+  try {
+    const changes = await withTransaction(async tx => {
+      await tx.run('DELETE FROM viaje_paradas WHERE viaje_id = ?', [req.params.id]);
+      return (await tx.run('DELETE FROM viajes WHERE id = ?', [req.params.id])).changes;
+    });
+    res.json({ changes });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ============ ALERTAS ============
 
 app.get('/api/alertas', (req, res) => {
-  db.all('SELECT * FROM alertas ORDER BY timestamp DESC', [], (err, rows) => {
+  const archived = req.query.archivadas === '1' || req.query.archivadas === 'true';
+  const all = req.query.todas === '1' || req.query.todas === 'true';
+  const query = `SELECT * FROM alertas${all ? '' : ' WHERE COALESCE(archivada, 0) = ?'} ORDER BY timestamp DESC`;
+  db.all(query, all ? [] : [archived ? 1 : 0], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
   });
 });
 
-app.post('/api/alertas', (req, res) => {
+app.post('/api/alertas', async (req, res) => {
   const { vehicle_id, vehicle_name, tipo, mensaje, severidad } = req.body;
-  db.run(
-    'INSERT INTO alertas (vehicle_id, vehicle_name, tipo, mensaje, severidad) VALUES (?, ?, ?, ?, ?)',
-    [vehicle_id, vehicle_name, tipo, mensaje, severidad || 'info'],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ id: this.lastID });
-    }
-  );
+  try {
+    const alert = await createAlertRecord({
+      vehicle_id,
+      vehicle_name,
+      tipo: tipo || 'alerta',
+      mensaje: mensaje || '',
+      severidad: severidad || 'info',
+    });
+    res.json({ id: alert.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.put('/api/alertas/:id/leer', (req, res) => {
@@ -1825,15 +2189,38 @@ app.put('/api/alertas/:id/leer', (req, res) => {
   });
 });
 
+app.put('/api/alertas/archivar-todas', (req, res) => {
+  db.run("UPDATE alertas SET archivada = 1, leida = 1, archived_at = datetime('now') WHERE COALESCE(archivada, 0) = 0", [], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ archived: this.changes });
+  });
+});
+
+app.put('/api/alertas/:id/archivar', (req, res) => {
+  db.run("UPDATE alertas SET archivada = 1, leida = 1, archived_at = datetime('now') WHERE id = ?", [req.params.id], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!this.changes) return res.status(404).json({ error: 'Alerta no encontrada' });
+    res.json({ archived: this.changes });
+  });
+});
+
+app.put('/api/alertas/:id/restaurar', (req, res) => {
+  db.run('UPDATE alertas SET archivada = 0, archived_at = NULL WHERE id = ?', [req.params.id], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!this.changes) return res.status(404).json({ error: 'Alerta no encontrada' });
+    res.json({ restored: this.changes });
+  });
+});
+
 app.delete('/api/alertas/:id', (req, res) => {
-  db.run('DELETE FROM alertas WHERE id = ?', [req.params.id], function (err) {
+  db.run("UPDATE alertas SET archivada = 1, leida = 1, archived_at = datetime('now') WHERE id = ?", [req.params.id], function (err) {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ changes: this.changes });
   });
 });
 
 app.delete('/api/alertas', requireAdmin, (req, res) => {
-  db.run('DELETE FROM alertas', [], function (err) {
+  db.run("UPDATE alertas SET archivada = 1, leida = 1, archived_at = datetime('now') WHERE COALESCE(archivada, 0) = 0", [], function (err) {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ changes: this.changes });
   });
@@ -2103,7 +2490,7 @@ app.get('/api/reportes/resumen', (req, res) => {
       stats.totalViajes = row?.total || 0;
       db.get("SELECT COUNT(*) as programados FROM viajes WHERE estado = 'programado'", [], (err, row) => {
         stats.viajesProgramados = row?.programados || 0;
-        db.get('SELECT COUNT(*) as total FROM alertas WHERE leida = 0', [], (err, row) => {
+        db.get('SELECT COUNT(*) as total FROM alertas WHERE leida = 0 AND COALESCE(archivada, 0) = 0', [], (err, row) => {
           stats.alertasNoLeidas = row?.total || 0;
           res.json(stats);
         });
@@ -2313,9 +2700,10 @@ app.get('/api/route-history/last', (req, res) => {
   );
 });
 
-app.get('/api/viajes/activos', (req, res) => {
-  db.all(
-    `SELECT v.*, s.remolque as seg_remolque, s.origen as seg_origen, s.destino as seg_destino, s.estatus as seg_estatus,
+app.get('/api/viajes/activos', async (req, res) => {
+  try {
+    const rows = await allQuery(
+      `SELECT v.*, s.remolque as seg_remolque, s.origen as seg_origen, s.destino as seg_destino, s.estatus as seg_estatus,
             s.cita_carga, s.cita_descarga, s.hora_llegada, s.hora_liberacion
       FROM viajes v
       LEFT JOIN seguimiento s ON s.id = (
@@ -2339,13 +2727,12 @@ app.get('/api/viajes/activos', (req, res) => {
          WHEN 'disponible' THEN 8
          ELSE 99
        END,
-       COALESCE(v.fecha_inicio, v.created_at) ASC`,
-    [],
-    (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json(rows || []);
-    }
-  );
+       COALESCE(v.fecha_inicio, v.created_at) ASC`
+    );
+    res.json(await attachTripStops(rows));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ============ CLIENTES ============

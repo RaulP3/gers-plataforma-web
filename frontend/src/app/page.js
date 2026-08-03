@@ -8,6 +8,7 @@ import 'jspdf-autotable';
 const MapaUnidades = dynamic(() => import('../components/MapaUnidades'), { ssr: false });
 const RouteMap = dynamic(() => import('../components/RouteMap'), { ssr: false });
 const MOVEMENT_THRESHOLD_MPH = 1;
+const CITAS_GPS_STALE_MIN = 60;
 const estaEnMovimiento = (speedMph) => Number(speedMph || 0) > MOVEMENT_THRESHOLD_MPH;
 const VIAJE_DEFAULT = { vehicle_id: '', vehicle_name: '', origen: '', destino: '', tipo_entrega: 'directo', destinos: ['', ''], conductor: '', telefono: '', fecha_inicio: '', fecha_fin: '', notas: '', remolque: '' };
 const CLIENTE_DEFAULT = { nombre: '', contacto: '', telefono: '', email: '' };
@@ -26,6 +27,32 @@ const destinosViaje = (viaje = {}) => {
   const parsed = parseDestinos(viaje.destinos?.length ? viaje.destinos : viaje.destinos_json);
   const reparto = viaje.tipo_entrega === 'reparto' || parsed.length > 1;
   return reparto ? (parsed.length ? parsed : [viaje.destino].filter(Boolean)) : [viaje.destino].filter(Boolean);
+};
+const paradasViaje = (viaje = {}) => {
+  if (Array.isArray(viaje.paradas) && viaje.paradas.length > 0) return [...viaje.paradas].sort((a, b) => a.orden - b.orden);
+  return viaje.tipo_entrega === 'reparto'
+    ? destinosViaje(viaje).map((destino, index) => ({ id: null, viaje_id: viaje.id, orden: index + 1, destino, estado: index === 0 ? 'en_camino' : 'pendiente', hora_llegada: null, hora_salida: null }))
+    : [];
+};
+const paradaActualViaje = (viaje = {}) => {
+  const paradas = paradasViaje(viaje);
+  if (!paradas.length) return null;
+  return paradas.find(parada => !['completada', 'omitida'].includes(parada.estado)) || paradas[paradas.length - 1];
+};
+const destinoViajeActual = (viaje = {}) => viaje?.tipo_entrega === 'reparto'
+  ? (paradaActualViaje(viaje)?.destino || destinosViaje(viaje)[0])
+  : (viaje?.destino || viaje?.seg_destino || '');
+const numeroUnidad = (viaje = {}) => {
+  const match = String(viaje.vehicle_name || viaje.vehicle_id || '').match(/(\d+)/);
+  return match ? Number(match[1]) : null;
+};
+const ordenarViajesPorUnidad = (a, b) => {
+  const na = numeroUnidad(a);
+  const nb = numeroUnidad(b);
+  if (na != null && nb != null) return na - nb;
+  if (na != null) return -1;
+  if (nb != null) return 1;
+  return String(a.vehicle_name || a.vehicle_id || '').localeCompare(String(b.vehicle_name || b.vehicle_id || ''));
 };
 const normalizarViaje = (viaje = {}) => {
   const parsed = parseDestinos(viaje.destinos?.length ? viaje.destinos : viaje.destinos_json);
@@ -47,6 +74,19 @@ const activarConTeclado = (e, action) => {
     e.preventDefault();
     action();
   }
+};
+
+const tituloAlerta = (tipo = '') => {
+  const map = {
+    cliente_geocerca: 'Entrada a cliente',
+    geocerca: 'Geocerca',
+    combustible_bajo: 'Combustible bajo',
+    alerta: 'Alerta',
+    velocidad: 'Velocidad',
+    detencion: 'Detención',
+    emergencia: 'Emergencia',
+  };
+  return map[tipo] || 'Alerta';
 };
 
 export default function Home() {
@@ -75,6 +115,9 @@ export default function Home() {
   const [nuevoComentarioPendiente, setNuevoComentarioPendiente] = useState('');
   const [viajes, setViajes] = useState([]);
   const [alertas, setAlertas] = useState([]);
+  const [alertasArchivadas, setAlertasArchivadas] = useState([]);
+  const [alertasView, setAlertasView] = useState('activas');
+  const [floatingAlerts, setFloatingAlerts] = useState([]);
   const [vehiculos, setVehiculos] = useState([]);
   const [reportes, setReportes] = useState([]);
   const [reporteLoading, setReporteLoading] = useState(false);
@@ -345,7 +388,9 @@ export default function Home() {
       const key = String(value || 'programado').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
       return { en_proceso_de_carga: 'proceso_carga', en_proceso_de_descarga: 'proceso_descarga', en_proceso_de_liberacion: 'proceso_liberacion' }[key] || key;
     };
-    const viajeItems = viajes.filter(viaje => viaje.fecha_inicio || viaje.fecha_fin).map(viaje => {
+    const viajesConFechas = viajes
+      .filter(viaje => (viaje.fecha_inicio || viaje.fecha_fin))
+      .map(viaje => {
       const destinos = destinosViaje(viaje);
       return {
         id: `via-${viaje.id}`,
@@ -354,21 +399,24 @@ export default function Home() {
         unidad: viaje.vehicle_name || viaje.vehicle_id,
         tipo: 'Viaje',
         origen: viaje.origen || '',
-        destino: destinos.at(-1) || viaje.destino || '',
+        destino: destinoViajeActual(viaje) || destinos[0] || viaje.destino || '',
         cita_carga: viaje.fecha_inicio || '',
         cita_descarga: viaje.fecha_fin || '',
         remolque: viaje.remolque || '',
         estatus: normalizeStatus(viaje.estado),
       };
     });
-    const seguimientoSinViaje = seguimiento.filter(row => row.cita_carga || row.cita_descarga).filter(row => {
+    const viajeItems = viajesConFechas.filter(item => !['completado', 'cancelado'].includes(item.estatus));
+    const seguimientoSinViaje = seguimiento.filter(row => row.cita_carga || row.cita_descarga).filter(row => !['completado', 'cancelado'].includes(normalizeStatus(row.estatus))).filter(row => {
       const rowDate = parseCitaDate(row.cita_descarga || row.cita_carga)?.getTime();
-      return !viajeItems.some(item => {
+      return !viajesConFechas.some(item => {
         if (normalize(item.unidad) !== normalize(row.unidad)) return false;
         const itemDate = parseCitaDate(item.cita_descarga || item.cita_carga)?.getTime();
         const sameDate = rowDate && itemDate && Math.abs(rowDate - itemDate) < 60000;
+        if (sameDate) return true;
         const sameDestination = normalize(item.destino) && normalize(item.destino) === normalize(row.destino);
-        return sameDate || sameDestination;
+        const sameTrailer = normalize(item.remolque) && normalize(item.remolque) === normalize(row.remolque);
+        return sameDestination && sameTrailer;
       });
     }).map(row => ({
       id: `seg-${row.id}`,
@@ -389,6 +437,19 @@ export default function Home() {
       return aDate - bDate;
     });
   }, [viajes, seguimiento, vehiculos]);
+  const vehiculoDeCita = (item) => item ? findVehicleForUnit(item.unidad, item.vehicle_id) : null;
+  const estadoVehiculoCita = (item) => {
+    const vehicle = vehiculoDeCita(item);
+    if (!vehicle?.location) return { label: 'Sin GPS', color: '#6b7280' };
+    if (!vehicle.isOnline) return { label: 'Sin señal', color: '#6b7280' };
+    const geofenceDestino = findGeofence(item.destino);
+    if (geofenceDestino && pointInsideGeofence(vehicle.location.latitude, vehicle.location.longitude, geofenceDestino)) {
+      return { label: 'En destino', color: '#00ff41' };
+    }
+    return estaEnMovimiento(vehicle.location.speed)
+      ? { label: 'Circulando', color: '#10b981' }
+      : { label: 'Detenido', color: '#3b82f6' };
+  };
   const [formGeofence, setFormGeofence] = useState(GEOFENCE_DEFAULT);
   const [filtroAlertas, setFiltroAlertas] = useState('');
   const [busquedaUnidades, setBusquedaUnidades] = useState('');
@@ -402,6 +463,8 @@ export default function Home() {
   const [citasEta, setCitasEta] = useState({});
   const [citasEtaLoading, setCitasEtaLoading] = useState(false);
   const [citasEtaRefresh, setCitasEtaRefresh] = useState(0);
+  const [citaSeleccionada, setCitaSeleccionada] = useState(null);
+  const [citaLlegada, setCitaLlegada] = useState(null);
   const [mapas, setMapas] = useState([]);
   const [selectedMapa, setSelectedMapa] = useState(null);
   const [mapaEditando, setMapaEditando] = useState(null);
@@ -469,6 +532,7 @@ export default function Home() {
   const sseCooldownUntilRef = useRef(0);
   const pendientesVersionRef = useRef(0);
   const monitoreoRequestRef = useRef({ generation: 0, controller: null });
+  const monitoreoEtaDestinoRef = useRef('');
   const etaRequestRef = useRef({ generation: 0, controller: null });
   const viajeEtaRequestRef = useRef({ generation: 0, controller: null });
   const remolqueHistoryRequestRef = useRef({ generation: 0, controller: null });
@@ -478,6 +542,7 @@ export default function Home() {
   const reportRequestRef = useRef({ generation: 0, controller: null });
   const viajeWasDraggedRef = useRef(false);
   const citasEtaRequestRef = useRef({ generation: 0, controller: null });
+  const floatingAlertTimersRef = useRef(new Set());
 
   const statusKey = (value) => String(value || '')
     .normalize('NFD')
@@ -565,6 +630,8 @@ export default function Home() {
     routeDatesRequestRef.current.controller?.abort();
     reportRequestRef.current.controller?.abort();
     citasEtaRequestRef.current.controller?.abort();
+    floatingAlertTimersRef.current.forEach(timer => clearTimeout(timer));
+    floatingAlertTimersRef.current.clear();
   }, []);
 
   useEffect(() => {
@@ -584,10 +651,11 @@ export default function Home() {
       else if (selectedVehicle) setSelectedVehicle(null);
       else if (showUnidadModal) setShowUnidadModal(false);
       else if (showZoneModal) setShowZoneModal(false);
+      else if (citaSeleccionada) setCitaSeleccionada(null);
     };
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
-  }, [selectedVehicle, showClienteGeofenceModal, showClienteModal, showExistingGeofenceModal, showHistorialModal, showMensajeModal, showPendienteModal, showProgramarViajeModal, showRemolqueModal, showSeguimientoUpdateModal, showTurnoModal, showUnidadModal, showViajeModal, showZoneModal]);
+  }, [selectedVehicle, showClienteGeofenceModal, showClienteModal, showExistingGeofenceModal, showHistorialModal, showMensajeModal, showPendienteModal, showProgramarViajeModal, showRemolqueModal, showSeguimientoUpdateModal, showTurnoModal, showUnidadModal, showViajeModal, showZoneModal, citaSeleccionada]);
 
   useEffect(() => {
     if (!apiUrl) return;
@@ -629,12 +697,30 @@ export default function Home() {
       loadAllTimerRef.current = setTimeout(() => loadAll(), 750);
     };
     const noop = () => {};
+    const handleCustomerGeofenceAlert = event => {
+      try {
+        const payload = JSON.parse(event.data || '{}');
+        const alert = payload.detail?.alert;
+        if (!alert?.id) return;
+        setAlertas(current => [alert, ...current.filter(item => item.id !== alert.id)]);
+        setFloatingAlerts(current => [alert, ...current.filter(item => item.id !== alert.id)].slice(0, 3));
+        const timer = setTimeout(() => {
+          setFloatingAlerts(current => current.filter(item => item.id !== alert.id));
+          floatingAlertTimersRef.current.delete(timer);
+        }, 10000);
+        floatingAlertTimersRef.current.add(timer);
+      } catch {}
+    };
     source.addEventListener('reload', handleReload);
     source.addEventListener('vehicles', handleReload);
+    source.addEventListener('client-geofence-alert', handleCustomerGeofenceAlert);
+    source.addEventListener('new-alert', handleCustomerGeofenceAlert);
     source.addEventListener('connected', noop);
     return () => {
       source.removeEventListener('reload', handleReload);
       source.removeEventListener('vehicles', handleReload);
+      source.removeEventListener('client-geofence-alert', handleCustomerGeofenceAlert);
+      source.removeEventListener('new-alert', handleCustomerGeofenceAlert);
       source.removeEventListener('connected', noop);
       source.close();
       clearTimeout(loadAllTimerRef.current);
@@ -799,6 +885,12 @@ export default function Home() {
   }, [selectedVehicle?.id]);
 
   useEffect(() => {
+    if (!showViajeModal || viajeEditando || !viajeDetalle?.id) return;
+    const updated = viajes.find(viaje => String(viaje.id) === String(viajeDetalle.id));
+    if (updated) setViajeDetalle(updated);
+  }, [viajes, showViajeModal, viajeEditando, viajeDetalle?.id]);
+
+  useEffect(() => {
     setDestinoInput('');
     setEtaData(null);
     setEtaError('');
@@ -919,6 +1011,11 @@ export default function Home() {
   const refreshAlertas = async () => {
     const rows = await fetch(`${apiUrl}/alertas`).then(r => r.json()).catch(() => []);
     setAlertas(Array.isArray(rows) ? rows : []);
+  };
+
+  const refreshAlertasArchivadas = async () => {
+    const rows = await fetch(`${apiUrl}/alertas?archivadas=1`).then(r => r.json()).catch(() => []);
+    setAlertasArchivadas(Array.isArray(rows) ? rows : []);
   };
 
   const refreshRemolques = async () => {
@@ -1335,12 +1432,30 @@ export default function Home() {
         body: JSON.stringify({ estado: normalizarEstadoViaje(estado) }),
       });
       await refreshViajes();
+      await refreshRemolques();
       return true;
     } catch (err) {
       alert(err.message || 'No se pudo cambiar el estado del viaje');
       return false;
     } finally {
       setViajeSaving(false);
+    }
+  };
+
+  const actualizarParadaViaje = async (parada, estado) => {
+    if (!viajeDetalle?.id || !parada?.id) return;
+    try {
+      const data = await apiJson(`${apiUrl}/viajes/${viajeDetalle.id}/paradas/${parada.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estado }),
+      });
+      const applyStops = viaje => String(viaje.id) === String(viajeDetalle.id) ? { ...viaje, paradas: data.paradas || [] } : viaje;
+      setViajes(current => current.map(applyStops));
+      setViajesActivos(current => current.map(applyStops));
+      setViajeDetalle(current => current ? { ...current, paradas: data.paradas || [] } : current);
+    } catch (err) {
+      alert(err.message || 'No se pudo actualizar la parada');
     }
   };
 
@@ -1393,22 +1508,31 @@ export default function Home() {
     }
   };
 
-  const eliminarAlerta = async (id) => {
+  const archivarAlerta = async (id) => {
     try {
-      await apiJson(`${apiUrl}/alertas/${id}`, { method: 'DELETE' });
-      await refreshAlertas();
+      await apiJson(`${apiUrl}/alertas/${id}/archivar`, { method: 'PUT' });
+      await Promise.all([refreshAlertas(), refreshAlertasArchivadas()]);
     } catch (err) {
-      alert(err.message || 'No se pudo eliminar la alerta');
+      alert(err.message || 'No se pudo archivar la alerta');
     }
   };
 
-  const limpiarAlertas = async () => {
-    if (!confirm('¿Limpiar todas las alertas? Esta acción no se puede deshacer.')) return;
+  const archivarAlertas = async () => {
+    if (!confirm('¿Archivar todas las alertas activas? Podrás consultarlas y restaurarlas desde el historial.')) return;
     try {
-      await apiJson(`${apiUrl}/alertas`, { method: 'DELETE' });
-      await refreshAlertas();
+      await apiJson(`${apiUrl}/alertas/archivar-todas`, { method: 'PUT' });
+      await Promise.all([refreshAlertas(), refreshAlertasArchivadas()]);
     } catch (err) {
-      alert(err.message || 'No se pudieron limpiar las alertas');
+      alert(err.message || 'No se pudieron archivar las alertas');
+    }
+  };
+
+  const restaurarAlerta = async (id) => {
+    try {
+      await apiJson(`${apiUrl}/alertas/${id}/restaurar`, { method: 'PUT' });
+      await Promise.all([refreshAlertas(), refreshAlertasArchivadas()]);
+    } catch (err) {
+      alert(err.message || 'No se pudo restaurar la alerta');
     }
   };
 
@@ -1654,7 +1778,27 @@ export default function Home() {
           opciones.push({ key: r.id, value: r.numero, label: numeroRemolque(r.numero) });
         }
       });
-    return opciones;
+    return opciones.sort((a, b) => String(a.value).localeCompare(String(b.value), undefined, { numeric: true }));
+  };
+
+  const ubicacionRemolque = (r) => {
+    if (!r.vehicle_id_asignado && !r.unidad_asignada) return { libre: true };
+    const vehicle = vehiculos.find(v => String(v.id) === String(r.vehicle_id_asignado) || String(v.name || '').toLowerCase() === String(r.unidad_asignada || '').toLowerCase());
+    if (!vehicle) return { libre: false, sinUnidad: true, unidad: r.unidad_asignada || r.vehicle_id_asignado };
+    const location = vehicle.location || null;
+    const geofence = location ? geofenceAtLocation(location) : null;
+    const lastSeenMin = vehicle.lastSeen != null ? vehicle.lastSeen : 999;
+    return {
+      libre: false,
+      vehicle,
+      unidad: vehicle.name,
+      location,
+      geofence,
+      enMovimiento: estaEnMovimiento(location?.speed),
+      velocidad: location ? velocidadKmh(location.speed) : 0,
+      online: !!vehicle.isOnline,
+      lastSeenMin,
+    };
   };
 
   const aplicarSeguimientoDesdeUnidad = (vehicleId) => {
@@ -2057,7 +2201,7 @@ export default function Home() {
     if (v.isLocal) return;
     const fullVehicle = vehiculos.find(vh => String(vh.id) === String(v.id)) || v;
     const viaje = viajesActivos.find(vj => String(vj.vehicle_id) === String(v.id) || vj.vehicle_name === v.name || vj.vehicle_name === fullVehicle?.name);
-    const destino = viaje?.tipo_entrega === 'reparto' ? destinosViaje(viaje)[0] : (viaje?.destino || viaje?.seg_destino || '');
+    monitoreoEtaDestinoRef.current = destinoViajeActual(viaje);
     const historyPromise = (async () => {
       try {
         const params = new URLSearchParams({ vehicle_id: String(v.id), hours: '24', stops_minutes: '20', include_route: '1' });
@@ -2079,28 +2223,40 @@ export default function Home() {
         }
       }
     })();
-    const etaPromise = (async () => {
-      if (destino && fullVehicle?.location) {
-        setMonitoreoEtaLoading(true);
-        const origin = viaje?.origen || viaje?.seg_origen || '';
-        const [etaResult, totalResult] = await Promise.allSettled([
-          calcularRuta(destino, fullVehicle.location.latitude, fullVehicle.location.longitude, controller.signal),
-          origin ? calcularRuta(destino, null, null, controller.signal, origin) : Promise.resolve(null),
-        ]);
-        if (monitoreoRequestRef.current.generation === generation) {
-          const eta = etaResult.status === 'fulfilled' ? etaResult.value : null;
-          setMonitoreoEta(eta);
-          setMonitoreoRutaTotal(totalResult.status === 'fulfilled' ? totalResult.value : null);
-          setMonitoreoEtaLoading(false);
-          if (eta?.destLat && eta?.destLon) {
-            const match = geofenceAtLocation({ latitude: eta.destLat, longitude: eta.destLon });
-            setMonitoreoGeofenceMatch(match || null);
-          }
-        }
-      }
-    })();
+    const etaPromise = calcularMonitoreoEta(viaje, fullVehicle, generation, controller.signal);
     await Promise.allSettled([historyPromise, etaPromise]);
   };
+
+  const calcularMonitoreoEta = async (viaje, fullVehicle, generation, signal) => {
+    const destino = destinoViajeActual(viaje);
+    if (!destino || !fullVehicle?.location) return;
+    setMonitoreoEtaLoading(true);
+    const origin = viaje?.origen || viaje?.seg_origen || '';
+    const [etaResult, totalResult] = await Promise.allSettled([
+      calcularRuta(destino, fullVehicle.location.latitude, fullVehicle.location.longitude, signal),
+      origin ? calcularRuta(destino, null, null, signal, origin) : Promise.resolve(null),
+    ]);
+    if (monitoreoRequestRef.current.generation !== generation) return;
+    const eta = etaResult.status === 'fulfilled' ? etaResult.value : null;
+    setMonitoreoEta(eta);
+    setMonitoreoRutaTotal(totalResult.status === 'fulfilled' ? totalResult.value : null);
+    setMonitoreoEtaLoading(false);
+    if (eta?.destLat && eta?.destLon) {
+      const match = geofenceAtLocation({ latitude: eta.destLat, longitude: eta.destLon });
+      setMonitoreoGeofenceMatch(match || null);
+    }
+  };
+
+  useEffect(() => {
+    if (!monitoreoSelectedId) return;
+    const fullVehicle = vehiculos.find(vh => String(vh.id) === String(monitoreoSelectedId));
+    if (!fullVehicle || fullVehicle.isLocal) return;
+    const viaje = viajesActivos.find(vj => String(vj.vehicle_id) === String(monitoreoSelectedId) || vj.vehicle_name === fullVehicle?.name);
+    const destino = destinoViajeActual(viaje);
+    if (!viaje || !destino || destino === monitoreoEtaDestinoRef.current) return;
+    monitoreoEtaDestinoRef.current = destino;
+    calcularMonitoreoEta(viaje, fullVehicle, monitoreoRequestRef.current.generation, null);
+  }, [viajesActivos, monitoreoSelectedId, vehiculos]);
 
   const guardarComentarioRapido = async () => {
     if (!comentarioRapido.contenido.trim() || !selectedVehicle) return;
@@ -2517,13 +2673,22 @@ export default function Home() {
         continue;
       }
       const vehicle = findVehicleForUnit(item.unidad, item.vehicle_id);
-      if (!vehicle?.location || (vehicle.lastSeen != null && vehicle.lastSeen >= 15)) {
-        initial[item.id] = { status: 'unavailable', label: 'Sin GPS reciente' };
+      const geofenceDestino = findGeofence(item.destino);
+      const geofenceName = geofenceDestino?.nombre || geocercasCoincidentes(item.destino)[0];
+      if (!vehicle?.location) {
+        initial[item.id] = { status: 'unavailable', label: 'Sin GPS' };
         continue;
       }
-      const geofenceName = findGeofence(item.destino)?.nombre || geocercasCoincidentes(item.destino)[0];
       if (!geofenceName) {
         initial[item.id] = { status: 'unavailable', label: 'Destino sin geocerca' };
+        continue;
+      }
+      if (geofenceDestino && pointInsideGeofence(vehicle.location.latitude, vehicle.location.longitude, geofenceDestino)) {
+        initial[item.id] = { status: 'arrived', label: 'En destino', eta: { duracion: 'Llegada', distancia: '0 km' }, arrival: new Date() };
+        continue;
+      }
+      if (vehicle.lastSeen != null && vehicle.lastSeen >= CITAS_GPS_STALE_MIN) {
+        initial[item.id] = { status: 'unavailable', label: `Sin GPS reciente (${vehicle.lastSeen} min)` };
         continue;
       }
       candidates.push({ item, vehicle, geofenceName });
@@ -2570,6 +2735,27 @@ export default function Home() {
     });
     return () => controller.abort();
   }, [activeTab, citasEtaRefresh]);
+
+  useEffect(() => {
+    if (!citaSeleccionada) { setCitaLlegada(null); return; }
+    const vehicle = vehiculoDeCita(citaSeleccionada);
+    const geofenceDestino = findGeofence(citaSeleccionada.destino);
+    const geofenceName = geofenceDestino?.nombre || geocercasCoincidentes(citaSeleccionada.destino)[0];
+    if (!vehicle?.id || !geofenceName) { setCitaLlegada(null); return; }
+    let activo = true;
+    const controller = new AbortController();
+    fetch(`${apiUrl}/geofence-events?vehicle_id=${encodeURIComponent(vehicle.id)}&limit=200`, { signal: controller.signal })
+      .then(r => r.json())
+      .then(rows => {
+        if (!activo) return;
+        const eventos = Array.isArray(rows) ? rows : [];
+        const entrada = eventos.find(ev => ev.tipo === 'entrada' && normalizeGeofenceName(ev.geofence_nombre) === normalizeGeofenceName(geofenceName));
+        setCitaLlegada(entrada ? parseFecha(entrada.created_at) : null);
+      })
+      .catch(() => { if (activo) setCitaLlegada(null); });
+    return () => { activo = false; controller.abort(); };
+  }, [citaSeleccionada?.id, citaSeleccionada?.destino, citaSeleccionada?.unidad, apiUrl]);
+
 
   const calcularETA = async (destino, vehicle) => {
     if (!destino.trim() || !vehicle?.location) return;
@@ -2846,6 +3032,7 @@ export default function Home() {
   const vehiculosOnline = vehiculos.filter(v => v.isOnline);
   const vehiculosOffline = vehiculos.filter(v => !v.isOnline);
   const alertasNoLeidas = alertas.filter(a => !a.leida);
+  const alertasVisibles = (alertasView === 'archivadas' ? alertasArchivadas : alertas).filter(a => !filtroAlertas || a.tipo === filtroAlertas);
   const vehiculosEnMovimiento = useMemo(() => vehiculos.filter(v => estaEnMovimiento(v.location?.speed)), [vehiculos]);
 
   const todasLasUnidades = useMemo(() => {
@@ -3392,7 +3579,9 @@ export default function Home() {
         {activeTab === 'monitoreo' && (() => {
           const selVehicle = monitoreoSelectedId ? vehiculos.find(v => String(v.id) === String(monitoreoSelectedId)) : null;
           const selViaje = monitoreoSelectedId ? viajesActivos.find(vj => String(vj.vehicle_id) === String(monitoreoSelectedId) || vj.vehicle_name === selVehicle?.name) : null;
-          const selSeg = selViaje ? { destino: selViaje.tipo_entrega === 'reparto' ? destinosViaje(selViaje)[0] : (selViaje.destino || selViaje.seg_destino || ''), tipo_entrega: selViaje.tipo_entrega, destinos: destinosViaje(selViaje), remolque: selViaje.seg_remolque || '', origen: selViaje.origen || selViaje.seg_origen || '', estatus: selViaje.estado || selViaje.seg_estatus || '' } : {};
+          const selParadas = selViaje ? paradasViaje(selViaje) : [];
+          const selParadaActual = selViaje ? (paradaActualViaje(selViaje) || null) : null;
+          const selSeg = selViaje ? { destino: destinoViajeActual(selViaje), tipo_entrega: selViaje.tipo_entrega, destinos: destinosViaje(selViaje), remolque: selViaje.seg_remolque || '', origen: selViaje.origen || selViaje.seg_origen || '', estatus: selViaje.estado || selViaje.seg_estatus || '' } : {};
           const currentGeofence = geofenceAtLocation(selVehicle?.location);
           const currentLocationLabel = currentGeofence?.nombre || selVehicle?.location?.location || 'Sin ubicación';
           const routeLen = monitoreoStops.length;
@@ -3482,7 +3671,7 @@ export default function Home() {
                 </p>
               </div>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
-                {monitoreoSelectedId && <button onClick={() => { monitoreoRequestRef.current.controller?.abort(); monitoreoRequestRef.current.generation += 1; setMonitoreoSelectedId(null); setMonitoreoRouteHistory([]); setMonitoreoStops([]); setMonitoreoEta(null); setMonitoreoRutaTotal(null); setMonitoreoEtaLoading(false); setMonitoreoGeofenceMatch(null); }} style={{ ...s.button('#ef4444'), background: '#ef444420', border: '1px solid #ef4444', color: '#ef4444' }}>Limpiar Ruta</button>}
+                {monitoreoSelectedId && <button onClick={() => { monitoreoRequestRef.current.controller?.abort(); monitoreoRequestRef.current.generation += 1; setMonitoreoSelectedId(null); setMonitoreoRouteHistory([]); setMonitoreoStops([]); setMonitoreoEta(null); setMonitoreoRutaTotal(null); setMonitoreoEtaLoading(false); setMonitoreoGeofenceMatch(null); monitoreoEtaDestinoRef.current = ''; }} style={{ ...s.button('#ef4444'), background: '#ef444420', border: '1px solid #ef4444', color: '#ef4444' }}>Limpiar Ruta</button>}
                 <button onClick={loadAll} style={s.button()}>Actualizar</button>
               </div>
             </div>
@@ -3514,9 +3703,9 @@ export default function Home() {
                         <div style={{ fontSize: '0.65rem', color: '#4a8a4a', marginBottom: '0.2rem', textTransform: 'uppercase' }}>Origen Hoy</div>
                          <div style={{ fontSize: '0.8rem', color: '#e0e0e0', fontWeight: 600 }}>{selSeg.origen || '-'}</div>
                       </div>
-                      <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
-                         <div style={{ fontSize: '0.65rem', color: '#4a8a4a', marginBottom: '0.2rem', textTransform: 'uppercase' }}>{selSeg.tipo_entrega === 'reparto' ? 'Primera parada' : 'Destino'}</div>
-                         <div style={{ fontSize: '0.8rem', color: '#60a5fa', fontWeight: 600 }}>{selSeg.destino || '-'}</div>
+                       <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
+                          <div style={{ fontSize: '0.65rem', color: '#4a8a4a', marginBottom: '0.2rem', textTransform: 'uppercase' }}>{selSeg.tipo_entrega === 'reparto' ? (selParadaActual?.orden ? `Parada ${selParadaActual.orden} de ${selParadas.length}` : 'Siguiente parada') : 'Destino'}</div>
+                          <div style={{ fontSize: '0.8rem', color: '#60a5fa', fontWeight: 600 }}>{selSeg.destino || '-'}</div>
                         {monitoreoGeofenceMatch && (
                           <div style={{ fontSize: '0.65rem', color: monitoreoGeofenceMatch.color || '#10b981', marginTop: '0.2rem', fontWeight: 600 }}>
                             📍 {monitoreoGeofenceMatch.nombre}
@@ -3524,7 +3713,7 @@ export default function Home() {
                         )}
                       </div>
                       <div style={{ padding: '0.5rem', background: '#0d1a0d', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
-                         <div style={{ fontSize: '0.65rem', color: '#4a8a4a', marginBottom: '0.2rem', textTransform: 'uppercase' }}>{selSeg.tipo_entrega === 'reparto' ? 'ETA primera parada (+1h)' : 'ETA (+1h)'}</div>
+                         <div style={{ fontSize: '0.65rem', color: '#4a8a4a', marginBottom: '0.2rem', textTransform: 'uppercase' }}>{selSeg.tipo_entrega === 'reparto' ? (selParadaActual?.orden ? `ETA parada ${selParadaActual.orden} (+1h)` : 'ETA siguiente parada (+1h)') : 'ETA (+1h)'}</div>
                         <div style={{ fontSize: '0.8rem', color: '#00ff41', fontWeight: 700 }}>{etaText}</div>
                         {monitoreoEta ? (
                           <div style={{ fontSize: '0.65rem', color: '#f59e0b', marginTop: '0.15rem' }}>Llegada: {horaLlegada} · {monitoreoEta.distancia}</div>
@@ -3728,49 +3917,61 @@ export default function Home() {
 
         {activeTab === 'alertas' && (
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-              <h2 style={{ margin: 0 }}>Alertas</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
+              <div>
+                <h2 style={{ margin: 0 }}>Alertas</h2>
+                <div style={{ display: 'flex', gap: '0.45rem', marginTop: '0.6rem' }}>
+                  <button type="button" onClick={() => setAlertasView('activas')} style={s.button(alertasView === 'activas' ? '#00ff41' : '#6b7280')}>Activas ({alertas.length})</button>
+                  <button type="button" onClick={async () => { setAlertasView('archivadas'); await refreshAlertasArchivadas(); }} style={s.button(alertasView === 'archivadas' ? '#f59e0b' : '#6b7280')}>Historial ({alertasArchivadas.length})</button>
+                </div>
+              </div>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                 <select style={s.select} value={filtroAlertas} onChange={e => setFiltroAlertas(e.target.value)}>
                   <option value="">Todas</option>
                   <option value="geocerca">Geocercas</option>
+                  <option value="cliente_geocerca">Entradas a clientes</option>
                   <option value="combustible_bajo">Combustible Bajo</option>
                 </select>
                 <button onClick={async () => { try { await apiJson(`${apiUrl}/check-geofences`, { method: 'POST' }); await refreshAlertas(); } catch (err) { alert(err.message || 'No se pudo revisar geocercas'); } }} style={s.button('#8b5cf6')}>Revisar geocercas</button>
                 <button onClick={async () => { try { await apiJson(`${apiUrl}/check-fuel`, { method: 'POST' }); await refreshAlertas(); } catch (err) { alert(err.message || 'No se pudo revisar combustible'); } }} style={s.button('#f59e0b')}>Revisar combustible</button>
                 <button onClick={loadAll} style={s.button()}>Actualizar</button>
-                <button onClick={limpiarAlertas} style={s.button('#ef4444')}>Limpiar alertas</button>
+                {alertasView === 'activas' && <button onClick={archivarAlertas} disabled={alertas.length === 0} style={{ ...s.button('#f59e0b'), opacity: alertas.length === 0 ? 0.5 : 1 }}>Archivar activas</button>}
               </div>
             </div>
-            {alertas.filter(a => !filtroAlertas || a.tipo === filtroAlertas).length === 0 ? (
+            {alertasVisibles.length === 0 ? (
               <div style={{ ...s.card, textAlign: 'center', padding: '3rem' }}>
                 <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>🔔</div>
-                <p style={{ color: '#6a9b6a' }}>No hay alertas{filtroAlertas ? ' de este tipo' : ''} registradas</p>
+                <p style={{ color: '#6a9b6a' }}>No hay alertas {alertasView === 'archivadas' ? 'archivadas' : 'activas'}{filtroAlertas ? ' de este tipo' : ''}</p>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                {alertas
-                  .filter(a => !filtroAlertas || a.tipo === filtroAlertas)
-                  .map((a) => (
+                {alertasVisibles.map((a) => (
                     <div key={a.id} style={{
                       ...s.card,
                       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                      borderLeft: `4px solid ${a.severidad === 'critica' ? '#ef4444' : a.severidad === 'alta' ? '#f59e0b' : a.tipo === 'geocerca' ? '#8b5cf6' : '#3b82f6'}`,
+                      borderLeft: `4px solid ${a.tipo === 'cliente_geocerca' ? '#00ff41' : a.severidad === 'critica' ? '#ef4444' : a.severidad === 'alta' ? '#f59e0b' : a.tipo === 'geocerca' ? '#8b5cf6' : '#3b82f6'}`,
                       opacity: a.leida ? 0.5 : 1, padding: '1rem 1.5rem'
                     }}>
                       <div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-                          <span style={s.badge(a.tipo === 'geocerca' ? '#8b5cf6' : a.tipo === 'combustible_bajo' ? '#f59e0b' : '#3b82f6')}>
-                            {a.tipo === 'geocerca' ? '⭕ Geocerca' : a.tipo === 'combustible_bajo' ? '⛽ Combustible' : a.tipo}
+                          <span style={s.badge(a.tipo === 'cliente_geocerca' ? '#00ff41' : a.tipo === 'geocerca' ? '#8b5cf6' : a.tipo === 'combustible_bajo' ? '#f59e0b' : '#3b82f6')}>
+                            {a.tipo === 'cliente_geocerca' ? 'Cliente · Entrada' : a.tipo === 'geocerca' ? '⭕ Geocerca' : a.tipo === 'combustible_bajo' ? '⛽ Combustible' : a.tipo}
                           </span>
                           <strong>{a.vehicle_name || a.vehicle_id}</strong>
                         </div>
                         <div style={{ fontSize: '0.85rem', color: '#6a9b6a', marginTop: '0.25rem' }}>{a.mensaje}</div>
                         <div style={{ fontSize: '0.75rem', color: '#4a8a4a', marginTop: '0.25rem' }}>{parseFecha(a.timestamp)?.toLocaleString()}</div>
+                        {a.archived_at && <div style={{ fontSize: '0.7rem', color: '#f59e0b', marginTop: '0.2rem' }}>Archivada: {parseFecha(a.archived_at)?.toLocaleString()}</div>}
                       </div>
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
-                        {!a.leida && <button onClick={() => marcarAlertaLeida(a.id)} style={s.button('#10b981')}>Resuelta</button>}
-                        <button onClick={() => eliminarAlerta(a.id)} style={s.button('#ef4444')}>X</button>
+                        {alertasView === 'archivadas' ? (
+                          <button onClick={() => restaurarAlerta(a.id)} style={s.button('#3b82f6')}>Restaurar</button>
+                        ) : (
+                          <>
+                            {!a.leida && <button onClick={() => marcarAlertaLeida(a.id)} style={s.button('#10b981')}>Resuelta</button>}
+                            <button onClick={() => archivarAlerta(a.id)} style={s.button('#f59e0b')}>Archivar</button>
+                          </>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -4022,6 +4223,8 @@ export default function Home() {
                     const estado = normalizarEstadoViaje(viaje.estado);
                     const color = estadoColors[estado] || '#8b5cf6';
                     const destinos = viaje.tipo_entrega === 'reparto' ? destinosViaje(viaje) : [viaje.destino].filter(Boolean);
+                    const paradas = paradasViaje(viaje);
+                    const completadas = paradas.filter(parada => parada.estado === 'completada').length;
                     return (
                       <div key={viaje.id} role="button" tabIndex={0} onClick={() => abrirViajeUnidad(viaje)} onKeyDown={(e) => activarConTeclado(e, () => abrirViajeUnidad(viaje))}
                         style={{ padding: '0.7rem', background: '#111', border: `1px solid ${color}44`, borderRadius: '8px', cursor: 'pointer' }}>
@@ -4038,6 +4241,7 @@ export default function Home() {
                           <span>{viaje.conductor || 'Sin conductor'}</span>
                           {viaje.remolque && <span>· {viaje.remolque}</span>}
                         </div>
+                        {paradas.length > 0 && <div style={{ marginTop: '0.4rem', color: completadas === paradas.length ? '#00ff41' : '#f59e0b', fontSize: '0.7rem', fontWeight: 700 }}>{completadas} de {paradas.length} paradas completadas</div>}
                       </div>
                     );
                   };
@@ -4147,7 +4351,7 @@ export default function Home() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                       {items.length === 0 ? (
                         <div style={{ color: '#4a8a4a', fontSize: '0.8rem', textAlign: 'center', padding: '1rem 0' }}>Sin viajes</div>
-                      ) : items.sort((a, b) => new Date(a.fecha_inicio || a.created_at || 0) - new Date(b.fecha_inicio || b.created_at || 0)).map(v => (
+                      ) : items.sort(ordenarViajesPorUnidad).map(v => (
                         <div key={v.id} className="trip-card-compact" role="button" tabIndex={0} draggable aria-label={`Ver detalles del viaje de ${v.vehicle_name || v.vehicle_id}`}
                           onPointerDown={() => { viajeWasDraggedRef.current = false; }}
                           onDragStart={(e) => iniciarArrastreViaje(e, v)} onDragEnd={terminarArrastreViaje}
@@ -4174,8 +4378,13 @@ export default function Home() {
                                  <span className="trip-geofence-chip destination" title={v.destino || 'Sin destino'}>🏁 {geocercasCoincidentes(v.destino)[0] || v.destino || 'Sin destino'}</span>
                                )}
                              </div>
-                           </div>
-                        </div>
+                            </div>
+                           {v.tipo_entrega === 'reparto' && (() => {
+                             const paradas = paradasViaje(v);
+                             const completadas = paradas.filter(parada => parada.estado === 'completada').length;
+                             return <div style={{ color: completadas === paradas.length ? '#00ff41' : '#f59e0b', fontSize: '0.65rem', fontWeight: 700 }}>{completadas} de {paradas.length} paradas completadas</div>;
+                           })()}
+                         </div>
                       ))}
                     </div>
                   </div>
@@ -4383,7 +4592,7 @@ export default function Home() {
             </div>
 
             {remolqueCategorias.map(cat => {
-              const filas = remolques.filter(r => (r.categoria || 'Caja Seca') === cat);
+              const filas = remolques.filter(r => (r.categoria || 'Caja Seca') === cat).sort((a, b) => String(a.numero).localeCompare(String(b.numero), undefined, { numeric: true }));
               return (
                 <div key={cat} style={{ background: '#111', border: '1px solid #1a3d1a', borderRadius: '10px', padding: '1rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
@@ -4404,15 +4613,34 @@ export default function Home() {
                           </div>
                         </div>
                         <div style={{ fontSize: '0.75rem', color: '#f59e0b', textTransform: 'uppercase' }}>{r.categoria || 'Caja Seca'}</div>
-                        {(r.unidad_asignada || r.vehicle_id_asignado) ? (
-                          <div style={{ fontSize: '0.85rem', color: '#00ff41', background: '#002200', padding: '0.3rem 0.6rem', borderRadius: '6px', display: 'inline-block', alignSelf: 'flex-start' }}>
-                            {(String(r.tipo_asignacion || '').toLowerCase() === 'full' || r.grupo_full) && obtenerMiembrosFull(r).length > 1
-                              ? `FULL: ${obtenerMiembrosFull(r).map(m => numeroRemolque(m.numero)).join(' + ')} · ${r.unidad_asignada || r.vehicle_id_asignado}`
-                              : `🚛 ${r.unidad_asignada || r.vehicle_id_asignado}`}
-                          </div>
-                        ) : (
-                          <div style={{ fontSize: '0.85rem', color: '#888', fontStyle: 'italic' }}>Sin asignar</div>
-                        )}
+                        {(() => {
+                          const ubic = ubicacionRemolque(r);
+                          if (ubic.libre) {
+                            return (
+                              <div style={{ fontSize: '0.8rem', color: '#10b981', fontWeight: 700, background: '#0a2a1a', padding: '0.3rem 0.6rem', borderRadius: '6px', display: 'inline-block', alignSelf: 'flex-start' }}>
+                                ✓ Disponible
+                              </div>
+                            );
+                          }
+                          const unidadLabel = (String(r.tipo_asignacion || '').toLowerCase() === 'full' || r.grupo_full) && obtenerMiembrosFull(r).length > 1
+                            ? `FULL: ${obtenerMiembrosFull(r).map(m => numeroRemolque(m.numero)).join(' + ')} · ${ubic.unidad}`
+                            : `🚛 ${ubic.unidad}`;
+                          const estadoColor = !ubic.online ? '#ef4444' : ubic.enMovimiento ? '#f59e0b' : '#00ff41';
+                          const estadoLabel = !ubic.online ? 'Sin señal' : ubic.enMovimiento ? `En movimiento · ${ubic.velocidad} km/h` : 'Detenida';
+                          return (
+                            <>
+                              <div style={{ fontSize: '0.85rem', color: '#00ff41', background: '#002200', padding: '0.3rem 0.6rem', borderRadius: '6px', display: 'inline-block', alignSelf: 'flex-start' }}>
+                                {unidadLabel}
+                              </div>
+                              <div style={{ fontSize: '0.75rem', color: '#e0e0e0', lineHeight: 1.4 }}>
+                                📍 {ubic.geofence?.nombre || ubic.location?.location || 'Sin ubicación'}
+                              </div>
+                              <div style={{ fontSize: '0.7rem', color: estadoColor, fontWeight: 700 }}>
+                                {estadoLabel}{ubic.lastSeenMin < 999 ? ` · hace ${ubic.lastSeenMin} min` : ''}
+                              </div>
+                            </>
+                          );
+                        })()}
                         <button
                           type="button"
                           onClick={(e) => {
@@ -5227,7 +5455,7 @@ export default function Home() {
                           <thead>
                             <tr>
                               <th style={s.th}>Unidad</th>
-                              <th style={s.th}>Tipo</th>
+                              <th style={s.th}>Estado</th>
                               <th style={s.th}>Destino</th>
                               <th style={s.th}>Cita descarga</th>
                               <th style={s.th}>ETA GPS</th>
@@ -5239,12 +5467,13 @@ export default function Home() {
                           <tbody>
                             {rows.map(item => {
                               const etaInfo = citasEta[item.id];
-                              const etaColor = { delayed: '#ef4444', on_time: '#10b981', early: '#3b82f6', scheduled: '#8b5cf6', completado: '#10b981', cancelado: '#6b7280', unavailable: '#6b7280' }[etaInfo?.status] || '#f59e0b';
+                              const etaColor = { delayed: '#ef4444', on_time: '#10b981', early: '#3b82f6', scheduled: '#8b5cf6', arrived: '#10b981', completado: '#10b981', cancelado: '#6b7280', unavailable: '#6b7280' }[etaInfo?.status] || '#f59e0b';
                               const appointment = parseCitaDate(item.cita_descarga || item.cita_carga);
+                              const estadoVeh = estadoVehiculoCita(item);
                               return (
-                              <tr key={item.id} style={{ background: etaInfo?.status === 'delayed' ? '#2a1111' : etaInfo?.status === 'on_time' ? '#0d2418' : undefined }}>
+                              <tr key={item.id} onClick={() => setCitaSeleccionada(item)} style={{ background: etaInfo?.status === 'delayed' ? '#2a1111' : etaInfo?.status === 'on_time' ? '#0d2418' : undefined, cursor: 'pointer' }}>
                                 <td style={s.td}><strong style={{ color: '#00ff41' }}>{item.unidad || '-'}</strong></td>
-                                <td style={s.td}>{item.tipo}</td>
+                                <td style={s.td}><span style={s.badge(estadoVeh.color)}>{estadoVeh.label}</span></td>
                                 <td style={{ ...s.td, color: '#60a5fa' }}>📍 {findGeofence(item.destino)?.nombre || geocercasCoincidentes(item.destino)[0] || item.destino || '-'}</td>
                                 <td style={s.td}>{appointment ? appointment.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '-'}</td>
                                 <td style={s.td}>
@@ -5266,6 +5495,76 @@ export default function Home() {
                 </div>
               );
             })()}
+          </div>
+        )}
+
+        {citaSeleccionada && (
+          <div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2100 }}
+            onClick={() => setCitaSeleccionada(null)}>
+            <div className="modal-panel" role="dialog" aria-modal="true" aria-label={`Detalle de cita de ${citaSeleccionada.unidad}`} style={{ background: '#0d0d0d', borderRadius: '16px', width: '560px', maxHeight: '88vh', overflow: 'auto', boxShadow: '0 25px 50px rgba(0,0,0,0.5), 0 0 30px rgba(0,255,65,0.1)', border: '1px solid #1a3d1a' }}
+              onClick={e => e.stopPropagation()}>
+              <div style={{ padding: '1.5rem', borderBottom: '1px solid #1a3d1a', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#e0e0e0' }}>📍 Cita de {citaSeleccionada.unidad || 'unidad'}</h3>
+                  <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.85rem' }}>
+                    {findGeofence(citaSeleccionada.destino)?.nombre || geocercasCoincidentes(citaSeleccionada.destino)[0] || citaSeleccionada.destino || 'Sin destino'}
+                  </p>
+                </div>
+                <button onClick={() => setCitaSeleccionada(null)} style={{ background: 'none', border: 'none', color: '#6a9b6a', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
+              </div>
+              <div style={{ padding: '1.5rem' }}>
+                {(() => {
+                  const vehicle = vehiculoDeCita(citaSeleccionada);
+                  const estadoVeh = estadoVehiculoCita(citaSeleccionada);
+                  const appointment = parseCitaDate(citaSeleccionada.cita_descarga || citaSeleccionada.cita_carga);
+                  return (
+                    <>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                        <div style={{ background: '#1a1a1a', borderRadius: '10px', padding: '1rem' }}>
+                          <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Estado del vehículo</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <span style={s.badge(estadoVeh.color)}>{estadoVeh.label}</span>
+                            {vehicle?.location && <span style={{ fontSize: '0.85rem', color: '#e0e0e0' }}>{velocidadKmh(vehicle.location.speed)} km/h</span>}
+                          </div>
+                          {estadoVeh.label === 'En destino' && citaLlegada && (
+                            <div style={{ fontSize: '0.85rem', color: '#00ff41', marginTop: '0.5rem' }}>
+                              Llegó a destino: {citaLlegada.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })}
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ background: '#1a1a1a', borderRadius: '10px', padding: '1rem' }}>
+                          <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Cita de descarga</div>
+                          <div style={{ fontSize: '0.9rem', color: '#e0e0e0', fontWeight: '600' }}>
+                            {appointment ? appointment.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '-'}
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: '#4a8a4a', marginTop: '0.25rem' }}>{citaSeleccionada.remolque ? `Remolque: ${citaSeleccionada.remolque}` : 'Sin remolque'}</div>
+                        </div>
+                      </div>
+                      <div style={{ background: '#1a1a1a', borderRadius: '10px', padding: '1rem', marginBottom: '1rem' }}>
+                        <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Ubicación actual</div>
+                        {vehicle?.location ? (
+                          <>
+                            <div style={{ fontSize: '0.9rem', color: '#e0e0e0', fontWeight: '600' }}>{vehicle.location.location || 'Sin dirección'}</div>
+                            <div style={{ fontSize: '0.75rem', color: '#4a8a4a', marginTop: '0.25rem' }}>
+                              {Number(vehicle.location.latitude).toFixed(5)}, {Number(vehicle.location.longitude).toFixed(5)}
+                              {vehicle.lastSeen != null && vehicle.lastSeen < 999 ? ` · hace ${vehicle.lastSeen} min` : ''}
+                            </div>
+                          </>
+                        ) : (
+                          <div style={{ fontSize: '0.9rem', color: '#6a9b6a' }}>Sin GPS reciente para esta unidad</div>
+                        )}
+                      </div>
+                      {vehicle?.location && (
+                        <div style={{ height: '280px', borderRadius: '12px', overflow: 'hidden', border: '1px solid #1a3d1a' }}>
+                          <MapaUnidades vehiculos={[vehicle]} geofences={allGeofences} selectedVehicleId={vehicle.id} />
+                        </div>
+                      )}
+                      <button onClick={() => setCitaSeleccionada(null)} style={{ width: '100%', padding: '0.7rem', background: '#00ff41', color: '#000', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600, marginTop: '1rem' }}>Cerrar</button>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
           </div>
         )}
 
@@ -5412,6 +5711,24 @@ export default function Home() {
           </div>
         )}
       </main>
+
+      {floatingAlerts.length > 0 && (
+        <div aria-live="assertive" aria-atomic="false" style={{ position: 'fixed', top: '1rem', right: '1rem', zIndex: 5000, width: 'min(390px, calc(100vw - 2rem))', display: 'grid', gap: '0.65rem', pointerEvents: 'none' }}>
+          {floatingAlerts.map(alert => (
+            <div key={alert.id} role="alert" style={{ pointerEvents: 'auto', padding: '1rem', borderRadius: '12px', border: '1px solid #00ff4177', borderLeft: '4px solid #00ff41', background: 'linear-gradient(135deg, #071407f7, #102510f7)', boxShadow: '0 16px 42px rgba(0,0,0,0.55), 0 0 24px rgba(0,255,65,0.12)', backdropFilter: 'blur(10px)' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+                <div style={{ width: '34px', height: '34px', flex: '0 0 34px', display: 'grid', placeItems: 'center', borderRadius: '50%', background: '#00ff4118', color: '#00ff41', fontSize: '1rem' }}>●</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: '#00ff41', fontSize: '0.7rem', fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase' }}>{tituloAlerta(alert.tipo)}</div>
+                  <div style={{ color: '#f0fdf4', fontSize: '0.86rem', lineHeight: 1.45, marginTop: '0.25rem', overflowWrap: 'anywhere' }}>{alert.mensaje}</div>
+                  <button type="button" onClick={() => { setAlertasView('activas'); setActiveTab('alertas'); setFloatingAlerts(current => current.filter(item => item.id !== alert.id)); }} style={{ marginTop: '0.55rem', padding: 0, border: 0, background: 'none', color: '#72d98a', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer' }}>Ver en Alertas</button>
+                </div>
+                <button type="button" aria-label="Cerrar notificación" onClick={() => setFloatingAlerts(current => current.filter(item => item.id !== alert.id))} style={{ background: 'none', border: 0, color: '#6a9b6a', cursor: 'pointer', fontSize: '1rem' }}>✕</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {showZoneModal && (
         <div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}
@@ -5919,14 +6236,69 @@ export default function Home() {
                     </div>
                     <div style={{ fontSize: '1.5rem', color: '#00ff41' }}>→</div>
                     <div>
-                       <div style={{ fontSize: '0.75rem', color: '#6a9b6a', marginBottom: '0.2rem' }}>{viajeDetalle.tipo_entrega === 'reparto' ? 'Paradas' : 'Destino'}</div>
-                       {viajeDetalle.tipo_entrega === 'reparto' ? (
-                         <div className="trip-stops-display">
-                           {destinosViaje(viajeDetalle).map((destino, index) => (
-                             <div key={`${viajeDetalle.id}-detail-stop-${index}`}><span>{index + 1}</span><div>{destino}{geocercasCoincidentes(destino).map(name => <small key={name}>📍 {name}</small>)}</div></div>
-                           ))}
-                         </div>
-                       ) : <div style={{ fontSize: '0.9rem', fontWeight: '600', color: '#60a5fa' }}>{viajeDetalle.destino || '-'}</div>}
+                        <div style={{ fontSize: '0.75rem', color: '#6a9b6a', marginBottom: '0.2rem' }}>{viajeDetalle.tipo_entrega === 'reparto' ? 'Paradas' : 'Destino'}</div>
+                        {viajeDetalle.tipo_entrega === 'reparto' ? (
+                          (() => {
+                            const paradas = paradasViaje(viajeDetalle);
+                            const completadas = paradas.filter(parada => parada.estado === 'completada').length;
+                            const statusMeta = {
+                              pendiente: { label: 'Pendiente', color: '#6b7280' },
+                              en_camino: { label: 'En camino', color: '#3b82f6' },
+                              llego: { label: 'En geocerca', color: '#f59e0b' },
+                              completada: { label: 'Completada', color: '#10b981' },
+                              omitida: { label: 'Omitida', color: '#ef4444' },
+                            };
+                            return (
+                              <div style={{ display: 'grid', gap: '0.55rem' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', color: completadas === paradas.length ? '#00ff41' : '#f59e0b', fontSize: '0.72rem', fontWeight: 700 }}>
+                                  <span>{completadas} de {paradas.length} completadas</span>
+                                  <span>{paradas.length ? Math.round(completadas / paradas.length * 100) : 0}%</span>
+                                </div>
+                                <div style={{ height: '7px', borderRadius: '5px', background: '#202020', overflow: 'hidden' }}>
+                                  <div style={{ width: `${paradas.length ? completadas / paradas.length * 100 : 0}%`, height: '100%', background: '#10b981', transition: 'width 0.25s ease' }} />
+                                </div>
+                                {paradas.map(parada => {
+                                  const meta = statusMeta[parada.estado] || statusMeta.pendiente;
+                                  return (
+                                    <div key={parada.id || `${viajeDetalle.id}-${parada.orden}`} style={{ padding: '0.65rem', border: `1px solid ${meta.color}55`, borderRadius: '8px', background: `${meta.color}0d` }}>
+                                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+                                        <span style={{ display: 'inline-grid', placeItems: 'center', width: '23px', height: '23px', flex: '0 0 23px', borderRadius: '50%', background: `${meta.color}22`, color: meta.color, fontSize: '0.68rem', fontWeight: 800 }}>{parada.orden}</span>
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                            <strong style={{ color: '#e5e7eb', fontSize: '0.78rem', overflowWrap: 'anywhere' }}>{parada.destino}</strong>
+                                            <span style={s.badge(meta.color)}>{meta.label}</span>
+                                          </div>
+                                          {geocercasCoincidentes(parada.destino).map(name => <div key={name} style={{ color: '#6a9b6a', fontSize: '0.67rem', marginTop: '0.2rem' }}>📍 {name}</div>)}
+                                          {(parada.hora_llegada || parada.hora_salida) && (
+                                            <div style={{ marginTop: '0.35rem', color: '#94a3b8', fontSize: '0.65rem', lineHeight: 1.45 }}>
+                                              {parada.hora_llegada && <div>Primer contacto: {parseFecha(parada.hora_llegada)?.toLocaleString('es-MX')}</div>}
+                                              {parada.hora_salida && <div>Último contacto: {parseFecha(parada.hora_salida)?.toLocaleString('es-MX')}</div>}
+                                            </div>
+                                          )}
+                                          {parada.id && ['en_camino', 'llego'].includes(parada.estado) && (
+                                            <button type="button" onClick={() => actualizarParadaViaje(parada, parada.estado === 'llego' ? 'completada' : 'llego')} style={{ ...s.button(parada.estado === 'llego' ? '#10b981' : '#f59e0b'), marginTop: '0.45rem', padding: '0.3rem 0.55rem', fontSize: '0.68rem' }}>
+                                              {parada.estado === 'llego' ? 'Registrar salida' : 'Registrar llegada'}
+                                            </button>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })()
+                        ) : (
+                          <div>
+                            <div style={{ fontSize: '0.9rem', fontWeight: '600', color: '#60a5fa' }}>{viajeDetalle.destino || '-'}</div>
+                            {(viajeDetalle.hora_llegada || viajeDetalle.hora_salida) && (
+                              <div style={{ marginTop: '0.35rem', color: '#94a3b8', fontSize: '0.65rem', lineHeight: 1.45 }}>
+                                {viajeDetalle.hora_llegada && <div>Primer contacto: {parseFecha(viajeDetalle.hora_llegada)?.toLocaleString('es-MX')}</div>}
+                                {viajeDetalle.hora_salida && <div>Último contacto: {parseFecha(viajeDetalle.hora_salida)?.toLocaleString('es-MX')}</div>}
+                              </div>
+                            )}
+                          </div>
+                        )}
                     </div>
                   </div>
                 </div>
