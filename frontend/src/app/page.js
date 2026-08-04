@@ -85,6 +85,8 @@ const tituloAlerta = (tipo = '') => {
     velocidad: 'Velocidad',
     detencion: 'Detención',
     emergencia: 'Emergencia',
+    operador_samsara_ok: 'Operador en Samsara',
+    operador_samsara_err: 'Error de Samsara',
   };
   return map[tipo] || 'Alerta';
 };
@@ -2318,7 +2320,7 @@ export default function Home() {
   const guardarOperador = async (vehicleId, vehicleName, nombre, telefono) => {
     try {
       const driver = samsaraDrivers.find(d => d.name === nombre);
-      await apiJson(`${apiUrl}/vehicle-operators/${vehicleId}`, {
+      const res = await apiJson(`${apiUrl}/vehicle-operators/${vehicleId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ vehicle_name: vehicleName, operator_name: nombre, telefono, driver_id_samsara: driver ? driver.id : '' }),
@@ -2332,6 +2334,9 @@ export default function Home() {
           setOperadores(map);
         })
         .catch(() => {});
+      if (res?.samsara_sync) {
+        mostrarNotificacionSync(res.samsara_sync.ok, res.samsara_sync.message || '');
+      }
     } catch (err) {
       alert(err.message || 'No se pudo asignar el operador');
     }
@@ -2342,6 +2347,17 @@ export default function Home() {
     setTelefonoDraft(telefono);
     if (!nombre.trim()) return;
     await guardarOperador(vehicleId, vehicleName, nombre, telefono);
+  };
+
+  const mostrarNotificacionSync = (ok, mensaje) => {
+    const id = `sync-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const alerta = { id, tipo: ok ? 'operador_samsara_ok' : 'operador_samsara_err', mensaje, severidad: ok ? 'baja' : 'media', sync: true };
+    setFloatingAlerts(current => [alerta, ...current.filter(item => item.id !== alerta.id)].slice(0, 3));
+    const timer = setTimeout(() => {
+      setFloatingAlerts(current => current.filter(item => item.id !== alerta.id));
+      floatingAlertTimersRef.current.delete(timer);
+    }, 8000);
+    floatingAlertTimersRef.current.add(timer);
   };
 
   const guardarRemolqueSeleccionado = async () => {
@@ -5715,19 +5731,24 @@ export default function Home() {
 
       {floatingAlerts.length > 0 && (
         <div aria-live="assertive" aria-atomic="false" style={{ position: 'fixed', top: '1rem', right: '1rem', zIndex: 5000, width: 'min(390px, calc(100vw - 2rem))', display: 'grid', gap: '0.65rem', pointerEvents: 'none' }}>
-          {floatingAlerts.map(alert => (
-            <div key={alert.id} role="alert" style={{ pointerEvents: 'auto', padding: '1rem', borderRadius: '12px', border: '1px solid #00ff4177', borderLeft: '4px solid #00ff41', background: 'linear-gradient(135deg, #071407f7, #102510f7)', boxShadow: '0 16px 42px rgba(0,0,0,0.55), 0 0 24px rgba(0,255,65,0.12)', backdropFilter: 'blur(10px)' }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-                <div style={{ width: '34px', height: '34px', flex: '0 0 34px', display: 'grid', placeItems: 'center', borderRadius: '50%', background: '#00ff4118', color: '#00ff41', fontSize: '1rem' }}>●</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ color: '#00ff41', fontSize: '0.7rem', fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase' }}>{tituloAlerta(alert.tipo)}</div>
-                  <div style={{ color: '#f0fdf4', fontSize: '0.86rem', lineHeight: 1.45, marginTop: '0.25rem', overflowWrap: 'anywhere' }}>{alert.mensaje}</div>
-                  <button type="button" onClick={() => { setAlertasView('activas'); setActiveTab('alertas'); setFloatingAlerts(current => current.filter(item => item.id !== alert.id)); }} style={{ marginTop: '0.55rem', padding: 0, border: 0, background: 'none', color: '#72d98a', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer' }}>Ver en Alertas</button>
+          {floatingAlerts.map(alert => {
+            const esError = alert.sync && alert.tipo === 'operador_samsara_err';
+            return (
+              <div key={alert.id} role="alert" style={{ pointerEvents: 'auto', padding: '1rem', borderRadius: '12px', border: `1px solid ${esError ? '#ff4d4d77' : '#00ff4177'}`, borderLeft: `4px solid ${esError ? '#ff4d4d' : '#00ff41'}`, background: esError ? 'linear-gradient(135deg, #1a0707f7, #2a1010f7)' : 'linear-gradient(135deg, #071407f7, #102510f7)', boxShadow: esError ? '0 16px 42px rgba(0,0,0,0.55), 0 0 24px rgba(255,77,77,0.12)' : '0 16px 42px rgba(0,0,0,0.55), 0 0 24px rgba(0,255,65,0.12)', backdropFilter: 'blur(10px)' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+                  <div style={{ width: '34px', height: '34px', flex: '0 0 34px', display: 'grid', placeItems: 'center', borderRadius: '50%', background: esError ? '#ff4d4d18' : '#00ff4118', color: esError ? '#ff4d4d' : '#00ff41', fontSize: '1rem' }}>{esError ? '✕' : '✓'}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: esError ? '#ff6b6b' : '#00ff41', fontSize: '0.7rem', fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase' }}>{tituloAlerta(alert.tipo)}</div>
+                    <div style={{ color: '#f0fdf4', fontSize: '0.86rem', lineHeight: 1.45, marginTop: '0.25rem', overflowWrap: 'anywhere' }}>{alert.mensaje}</div>
+                    {!alert.sync && (
+                      <button type="button" onClick={() => { setAlertasView('activas'); setActiveTab('alertas'); setFloatingAlerts(current => current.filter(item => item.id !== alert.id)); }} style={{ marginTop: '0.55rem', padding: 0, border: 0, background: 'none', color: '#72d98a', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer' }}>Ver en Alertas</button>
+                    )}
+                  </div>
+                  <button type="button" aria-label="Cerrar notificación" onClick={() => setFloatingAlerts(current => current.filter(item => item.id !== alert.id))} style={{ background: 'none', border: 0, color: '#6a9b6a', cursor: 'pointer', fontSize: '1rem' }}>✕</button>
                 </div>
-                <button type="button" aria-label="Cerrar notificación" onClick={() => setFloatingAlerts(current => current.filter(item => item.id !== alert.id))} style={{ background: 'none', border: 0, color: '#6a9b6a', cursor: 'pointer', fontSize: '1rem' }}>✕</button>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

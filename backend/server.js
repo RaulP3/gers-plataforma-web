@@ -1239,12 +1239,14 @@ app.put('/api/vehicle-operators/:vehicleId', async (req, res) => {
       );
     }
 
-    res.json({ changes: result.changes, driver_id_samsara: next.driver_id_samsara });
+    const syncPromise = syncOperatorToSamsara(req.params.vehicleId, next.operator_name, next.driver_id_samsara);
+    const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ ok: false, message: 'Tiempo de espera agotado al sincronizar con Samsara' }), 20000));
+    const samsara_sync = await Promise.race([syncPromise, timeoutPromise]);
+    if (!samsara_sync.ok && !samsara_sync.skipped) {
+      console.error('Sync operador→Samsara falló:', samsara_sync.message);
+    }
 
-    syncOperatorToSamsara(req.params.vehicleId, next.operator_name, next.driver_id_samsara)
-      .catch(err => {
-        console.error('Sync operador→Samsara falló:', err.response?.data || err.message);
-      });
+    res.json({ changes: result.changes, driver_id_samsara: next.driver_id_samsara, samsara_sync });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1290,28 +1292,42 @@ async function endOngoingSamsaraAssignment(vehicleId) {
 }
 
 async function syncOperatorToSamsara(vehicleId, operatorName, driverIdSamsara) {
-  if (!process.env.SAMSARA_API_TOKEN) return;
+  if (!process.env.SAMSARA_API_TOKEN) {
+    return { ok: false, skipped: true, message: 'Token de Samsara no configurado' };
+  }
 
   let driverId = driverIdSamsara || '';
   if (!driverId && operatorName) {
-    const drivers = await fetchSamsaraDrivers();
-    const match = drivers.find(d => d.name && d.name.toLowerCase() === operatorName.trim().toLowerCase());
-    if (match) driverId = match.id;
+    try {
+      const drivers = await fetchSamsaraDrivers();
+      const match = drivers.find(d => d.name && d.name.toLowerCase() === operatorName.trim().toLowerCase());
+      if (match) driverId = match.id;
+    } catch (e) {
+      return { ok: false, message: `No se pudo buscar el operador en Samsara: ${e.response?.data?.message || e.message}` };
+    }
   }
 
   const headers = { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' };
   try {
     await endOngoingSamsaraAssignment(vehicleId);
   } catch (e) {
-    console.error('Samsara: no se pudo finalizar asignación vigente:', e.response?.data || e.message);
+    return { ok: false, message: `No se pudo actualizar la asignación vigente en Samsara: ${e.response?.data?.message || e.message}` };
   }
 
-  if (driverId) {
+  if (!driverId) {
+    if (!operatorName) return { ok: true, message: 'Operador retirado correctamente de Samsara' };
+    return { ok: false, message: `No se encontró al operador "${operatorName}" en Samsara` };
+  }
+
+  try {
     await axios.post('https://api.samsara.com/fleet/driver-vehicle-assignments', {
       driverId,
       vehicleId: String(vehicleId),
       startTime: new Date().toISOString(),
     }, { headers, timeout: 15000 });
+    return { ok: true, message: 'Operador asignado en Samsara correctamente' };
+  } catch (e) {
+    return { ok: false, message: `Samsara rechazó la asignación: ${e.response?.data?.message || e.message}` };
   }
 }
 
