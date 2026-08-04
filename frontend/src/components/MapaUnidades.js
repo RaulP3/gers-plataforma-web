@@ -40,6 +40,13 @@ const BASE_LAYERS = {
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     options: { attribution: 'Tiles &copy; Esri', maxZoom: 19 },
   },
+  satelliteStreets: {
+    label: 'Satélite + Calles',
+    layers: [
+      { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', options: { attribution: 'Tiles &copy; Esri', maxZoom: 19 } },
+      { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}', options: { attribution: 'Tiles &copy; Esri', maxZoom: 19, opacity: 0.9 } },
+    ],
+  },
   terrain: {
     label: 'Relieve',
     url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
@@ -255,7 +262,13 @@ export default function MapaUnidades({ vehiculos, geofences = [], customRiskZone
     if (!mapReady || !mapRef.current || !LRef.current) return;
     const definition = BASE_LAYERS[baseLayer] || BASE_LAYERS.dark;
     if (baseLayerRef.current) mapRef.current.removeLayer(baseLayerRef.current);
-    baseLayerRef.current = LRef.current.tileLayer(definition.url, definition.options).addTo(mapRef.current);
+    if (definition.layers) {
+      baseLayerRef.current = LRef.current.layerGroup(
+        definition.layers.map(tile => LRef.current.tileLayer(tile.url, tile.options))
+      ).addTo(mapRef.current);
+    } else {
+      baseLayerRef.current = LRef.current.tileLayer(definition.url, definition.options).addTo(mapRef.current);
+    }
     baseLayerRef.current.bringToBack();
   }, [baseLayer, mapReady]);
 

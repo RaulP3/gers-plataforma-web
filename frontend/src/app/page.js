@@ -116,6 +116,9 @@ export default function Home() {
   const [historialPendientes, setHistorialPendientes] = useState([]);
   const [nuevoComentarioPendiente, setNuevoComentarioPendiente] = useState('');
   const [viajes, setViajes] = useState([]);
+  const [viajesView, setViajesView] = useState('tablero');
+  const [viajesHistorialSearch, setViajesHistorialSearch] = useState('');
+  const [viajesProximosSearch, setViajesProximosSearch] = useState('');
   const [alertas, setAlertas] = useState([]);
   const [alertasArchivadas, setAlertasArchivadas] = useState([]);
   const [alertasView, setAlertasView] = useState('activas');
@@ -146,7 +149,7 @@ export default function Home() {
   const [clienteGeofenceSaving, setClienteGeofenceSaving] = useState(false);
   const [geofenceLinks, setGeofenceLinks] = useState([]);
   const [showExistingGeofenceModal, setShowExistingGeofenceModal] = useState(false);
-  const [existingGeofenceSelection, setExistingGeofenceSelection] = useState('');
+  const [existingGeofenceSelections, setExistingGeofenceSelections] = useState([]);
   const [existingGeofenceSearch, setExistingGeofenceSearch] = useState('');
   const [existingGeofenceSaving, setExistingGeofenceSaving] = useState(false);
   const [showRemolqueModal, setShowRemolqueModal] = useState(false);
@@ -240,25 +243,6 @@ export default function Home() {
 
   const gruposUnicos = [...new Set(seguimiento.map(row => row.grupo).filter(Boolean))];
   const seguimientoEstados = ['Disponible', 'En ruta cargado', 'En ruta vacio', 'En proceso de carga', 'En proceso de descarga', 'En resguardo', 'Programado', 'No disponible'];
-  const seguimientoFiltrado = useMemo(() => {
-    return seguimiento.filter(row => {
-      const busqueda = seguimientoFilter.trim().toLowerCase();
-      const matchesBusqueda = !busqueda || [row.unidad, row.operador, row.remolque, row.ruta, row.origen, row.destino, row.comentarios_cliente, row.comentarios_monitoreo, row.grupo, row.estatus]
-        .filter(Boolean)
-        .some(value => String(value).toLowerCase().includes(busqueda));
-      const matchesEstatus = !seguimientoEstatusFilter || String(row.estatus || '').toLowerCase() === seguimientoEstatusFilter.toLowerCase();
-      const matchesGrupo = !seguimientoGrupoFilter || String(row.grupo || '').toLowerCase() === seguimientoGrupoFilter.toLowerCase();
-      const unidadFilter = seguimientoUnidadFilter.trim().toLowerCase();
-      const matchesUnidad = !unidadFilter || String(row.unidad || '').toLowerCase().includes(unidadFilter);
-      return matchesBusqueda && matchesEstatus && matchesGrupo && matchesUnidad;
-    }).sort((a, b) => String(a.unidad || '').localeCompare(String(b.unidad || ''), 'es', { numeric: true, sensitivity: 'base' }));
-  }, [seguimiento, seguimientoFilter, seguimientoEstatusFilter, seguimientoGrupoFilter, seguimientoUnidadFilter]);
-  const seguimientoResumen = useMemo(() => {
-    const total = seguimiento.length;
-    const activos = seguimiento.filter(row => ['programado', 'en ruta cargado', 'en ruta vacio', 'en proceso de carga', 'en proceso de descarga'].includes(String(row.estatus || '').toLowerCase())).length;
-    const disponibles = seguimiento.filter(row => String(row.estatus || '').toLowerCase() === 'disponible').length;
-    return { total, activos, disponibles };
-  }, [seguimiento]);
   const remolqueCategorias = useMemo(() => {
     const base = ['Thermo Refrigerado', 'Caja Seca', 'Porta Contenedores', 'Tanque'];
     const extras = [...new Set(remolques.map(r => r.categoria || 'Caja Seca').filter(cat => !base.includes(cat)))];
@@ -1765,21 +1749,20 @@ export default function Home() {
     const opciones = [];
     const gruposIncluidos = new Set();
     const vehicleName = vehiculos.find(v => String(v.id) === String(vehicleId))?.name || '';
-    remolques
-      .filter(r => !r.vehicle_id_asignado || String(r.vehicle_id_asignado) === String(vehicleId) || (vehicleName && String(r.unidad_asignada || '').toLowerCase() === vehicleName.toLowerCase()))
-      .forEach(r => {
-        const miembros = obtenerMiembrosFull(r);
-        if (miembros.length > 1) {
-          const grupo = String(r.grupo_full);
-          if (!gruposIncluidos.has(grupo)) {
-            gruposIncluidos.add(grupo);
-            const display = miembros.map(m => numeroRemolque(m.numero)).join(' + ');
-            opciones.push({ key: `full-${grupo}`, value: display, label: `Full: ${display}` });
-          }
-        } else {
-          opciones.push({ key: r.id, value: r.numero, label: numeroRemolque(r.numero) });
+    remolques.forEach(r => {
+      const miembros = obtenerMiembrosFull(r);
+      if (miembros.length > 1) {
+        const grupo = String(r.grupo_full);
+        if (!gruposIncluidos.has(grupo)) {
+          gruposIncluidos.add(grupo);
+          const display = miembros.map(m => numeroRemolque(m.numero)).join(' + ');
+          opciones.push({ key: `full-${grupo}`, value: display, label: `Full: ${display}` });
         }
-      });
+      } else {
+        const asignadoAOtra = r.vehicle_id_asignado && String(r.vehicle_id_asignado) !== String(vehicleId) && !(vehicleName && String(r.unidad_asignada || '').toLowerCase() === vehicleName.toLowerCase());
+        opciones.push({ key: r.id, value: r.numero, label: asignadoAOtra ? `${numeroRemolque(r.numero)} (en ${r.unidad_asignada || r.vehicle_id_asignado})` : numeroRemolque(r.numero) });
+      }
+    });
     return opciones.sort((a, b) => String(a.value).localeCompare(String(b.value), undefined, { numeric: true }));
   };
 
@@ -1890,6 +1873,26 @@ export default function Home() {
     return ordenarViajesUnidad(
       viajes.filter(v => normalizarTexto(v.vehicle_name) === normalizarTexto(unidad) || String(v.vehicle_id) === String(vehicleId))
     );
+  };
+
+  const fechaInicioViaje = (v = {}) => new Date(v.fecha_inicio || v.fecha_fin || v.created_at || 0).getTime();
+
+  const soloPrimerViajeActivoPorUnidad = (rows = []) => {
+    const porUnidad = new Map();
+    for (const v of rows) {
+      if (['completado', 'cancelado'].includes(String(v.estado || '').toLowerCase())) continue;
+      const key = String(v.vehicle_id || '') || normalizarTexto(v.vehicle_name);
+      if (!key) continue;
+      const actual = porUnidad.get(key);
+      if (!actual || fechaInicioViaje(v) < fechaInicioViaje(actual)) porUnidad.set(key, v);
+    }
+    const visibles = new Set([...porUnidad.values()].map(v => v.id));
+    return rows.filter(v => visibles.has(v.id) || ['completado', 'cancelado'].includes(String(v.estado || '').toLowerCase()));
+  };
+
+  const viajesProximosOcultos = (rows = []) => {
+    const visibles = new Set(soloPrimerViajeActivoPorUnidad(rows).map(v => v.id));
+    return rows.filter(v => !['completado', 'cancelado'].includes(String(v.estado || '').toLowerCase()) && !visibles.has(v.id));
   };
 
   const abrirActualizarSeguimiento = () => {
@@ -2473,7 +2476,7 @@ export default function Home() {
 
   const abrirExistingGeofenceModal = () => {
     if (!selectedCliente) return;
-    setExistingGeofenceSelection('');
+    setExistingGeofenceSelections([]);
     setExistingGeofenceSearch('');
     setShowExistingGeofenceModal(true);
   };
@@ -2481,25 +2484,27 @@ export default function Home() {
   const cerrarExistingGeofenceModal = () => {
     if (existingGeofenceSaving) return;
     setShowExistingGeofenceModal(false);
-    setExistingGeofenceSelection('');
+    setExistingGeofenceSelections([]);
     setExistingGeofenceSearch('');
   };
 
   const vincularExistingGeofence = async (event) => {
     event.preventDefault();
-    if (!selectedCliente || !existingGeofenceSelection) return;
-    const separator = existingGeofenceSelection.indexOf('|');
-    const source = existingGeofenceSelection.slice(0, separator);
-    const geofenceId = existingGeofenceSelection.slice(separator + 1);
+    if (!selectedCliente || existingGeofenceSelections.length === 0) return;
     try {
       setExistingGeofenceSaving(true);
-      await apiJson(`${apiUrl}/clientes/${selectedCliente.id}/geofences/link`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source, geofence_id: geofenceId }),
-      });
+      for (const value of existingGeofenceSelections) {
+        const separator = value.indexOf('|');
+        const source = value.slice(0, separator);
+        const geofenceId = value.slice(separator + 1);
+        await apiJson(`${apiUrl}/clientes/${selectedCliente.id}/geofences/link`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source, geofence_id: geofenceId }),
+        });
+      }
       setShowExistingGeofenceModal(false);
-      setExistingGeofenceSelection('');
+      setExistingGeofenceSelections([]);
       setExistingGeofenceSearch('');
       await Promise.all([refreshGeofences(), refreshGeofenceLinks()]);
     } catch (err) {
@@ -3077,6 +3082,86 @@ export default function Home() {
     return [...samsaraMapped, ...localMapped];
   }, [vehiculos, unidadesLocales]);
 
+  const seguimientoCompleto = useMemo(() => {
+    const filas = [];
+    const manualPorUnidad = new Map();
+    seguimiento.forEach(row => {
+      const key = String(row.unidad || '').toLowerCase().trim();
+      if (!key) return;
+      if (!manualPorUnidad.has(key)) manualPorUnidad.set(key, []);
+      manualPorUnidad.get(key).push(row);
+    });
+    todasLasUnidades.forEach(unidad => {
+      const nombre = unidad.nombre || unidad.name || '';
+      if (!nombre) return;
+      const manuales = manualPorUnidad.get(String(nombre).toLowerCase().trim()) || [];
+      const manual = [...manuales].sort((a, b) => new Date(b.fecha_actualizacion || b.created_at || 0) - new Date(a.fecha_actualizacion || a.created_at || 0))[0] || null;
+      const viajesUnidad = obtenerViajesUnidad(nombre, unidad.id)
+        .filter(v => !['completado', 'cancelado'].includes(String(v.estado || '').toLowerCase()));
+      const viajeActual = viajesUnidad[0] || null;
+      const viajeSiguiente = viajesUnidad[1] || null;
+      const estatus = viajeActual ? normalizarEstatusSeguimiento(viajeActual.estado) : 'Disponible';
+      filas.push({
+        ...(manual || {}),
+        _origenSeguimiento: manual?.id,
+        _unidadObj: unidad,
+        unidad: nombre,
+        grupo: manual?.grupo || '',
+        remolque: viajeActual?.remolque || viajeActual?.seg_remolque || manual?.remolque || '',
+        operador: viajeActual?.conductor || manual?.operador || operadores[String(unidad.id)]?.nombre || '',
+        origen: viajeActual?.origen || manual?.origen || '',
+        destino: viajeActual?.destino || manual?.destino || '',
+        cita_carga: viajeActual?.fecha_inicio || manual?.cita_carga || '',
+        cita_descarga: viajeActual?.fecha_fin || manual?.cita_descarga || '',
+        hora_llegada: manual?.hora_llegada || '',
+        hora_liberacion: manual?.hora_liberacion || '',
+        estatus,
+        comentarios_cliente: manual?.comentarios_cliente || '',
+        comentarios_monitoreo: manual?.comentarios_monitoreo || '',
+        fecha_actualizacion: manual?.fecha_actualizacion || viajeActual?.updated_at || viajeActual?.created_at || '',
+        _viajeActual: viajeActual,
+        _viajeSiguiente: viajeSiguiente,
+        _auto: !manual,
+      });
+    });
+    const unidadesConocidas = new Set(todasLasUnidades.map(u => String(u.nombre || u.name || '').toLowerCase().trim()));
+    seguimiento.forEach(row => {
+      const key = String(row.unidad || '').toLowerCase().trim();
+      if (!key || unidadesConocidas.has(key)) return;
+      const viajesUnidad = obtenerViajesUnidad(row.unidad)
+        .filter(v => !['completado', 'cancelado'].includes(String(v.estado || '').toLowerCase()));
+      const viajeActual = viajesUnidad[0] || null;
+      filas.push({
+        ...row,
+        _unidadObj: null,
+        _viajeActual: viajeActual,
+        _viajeSiguiente: viajesUnidad[1] || null,
+        _auto: false,
+      });
+    });
+    return filas.sort((a, b) => String(a.unidad || '').localeCompare(String(b.unidad || ''), 'es', { numeric: true, sensitivity: 'base' }));
+  }, [todasLasUnidades, seguimiento, viajes, operadores]);
+
+  const seguimientoFiltrado = useMemo(() => {
+    return seguimientoCompleto.filter(row => {
+      const busqueda = seguimientoFilter.trim().toLowerCase();
+      const matchesBusqueda = !busqueda || [row.unidad, row.operador, row.remolque, row.ruta, row.origen, row.destino, row.comentarios_cliente, row.comentarios_monitoreo, row.grupo, row.estatus]
+        .filter(Boolean)
+        .some(value => String(value).toLowerCase().includes(busqueda));
+      const matchesEstatus = !seguimientoEstatusFilter || String(row.estatus || '').toLowerCase() === seguimientoEstatusFilter.toLowerCase();
+      const matchesGrupo = !seguimientoGrupoFilter || String(row.grupo || '').toLowerCase() === seguimientoGrupoFilter.toLowerCase();
+      const unidadFilter = seguimientoUnidadFilter.trim().toLowerCase();
+      const matchesUnidad = !unidadFilter || String(row.unidad || '').toLowerCase().includes(unidadFilter);
+      return matchesBusqueda && matchesEstatus && matchesGrupo && matchesUnidad;
+    });
+  }, [seguimientoCompleto, seguimientoFilter, seguimientoEstatusFilter, seguimientoGrupoFilter, seguimientoUnidadFilter]);
+  const seguimientoResumen = useMemo(() => {
+    const total = seguimientoCompleto.length;
+    const activos = seguimientoCompleto.filter(row => ['programado', 'en ruta cargado', 'en ruta vacio', 'en proceso de carga', 'en proceso de descarga'].includes(String(row.estatus || '').toLowerCase())).length;
+    const disponibles = seguimientoCompleto.filter(row => String(row.estatus || '').toLowerCase() === 'disponible').length;
+    return { total, activos, disponibles };
+  }, [seguimientoCompleto]);
+
   if (authLoading) {
     return (
       <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: '#0a0a0a', color: '#00ff41' }}>
@@ -3364,12 +3449,12 @@ export default function Home() {
 
                 {dashTab === 'viajes' && (
                   <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
-                    {ordenarViajesUnidad(viajes).filter(v => !['completado', 'cancelado'].includes(String(v.estado || '').toLowerCase())).length === 0 ? (
+                    {soloPrimerViajeActivoPorUnidad(ordenarViajesUnidad(viajes)).filter(v => !['completado', 'cancelado'].includes(String(v.estado || '').toLowerCase())).length === 0 ? (
                       <div style={{ textAlign: 'center', padding: '40px 20px', color: '#6a9b6a' }}>
                         <div style={{ fontSize: '2rem', marginBottom: '8px', opacity: 0.3 }}>🚚</div>
                         <p style={{ fontSize: '13px' }}>No hay viajes activos</p>
                       </div>
-                    ) : ordenarViajesUnidad(viajes).filter(v => !['completado', 'cancelado'].includes(String(v.estado || '').toLowerCase())).map((v, idx) => {
+                    ) : soloPrimerViajeActivoPorUnidad(ordenarViajesUnidad(viajes)).filter(v => !['completado', 'cancelado'].includes(String(v.estado || '').toLowerCase())).map((v, idx) => {
                       const viajeColor = estadoColors[String(v.estado || '').toLowerCase()] || '#6a9b6a';
                       const viajeLabel = String(v.estado || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
                       const seqLabel = idx === 0 ? 'Actual' : idx === 1 ? 'Siguiente' : `#${idx + 1}`;
@@ -4110,7 +4195,14 @@ export default function Home() {
                 <h2 style={{ margin: 0, fontSize: '1.5rem', color: '#e0e0e0' }}>Programación de Viajes</h2>
                   <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>{viajes.length} viajes registrados · {viajes.filter(v => !['completado', 'cancelado'].includes(String(v.estado || '').toLowerCase())).length} activos</p>
               </div>
-              <button type="button" onClick={() => setShowProgramarViajeModal(true)} style={s.button('#10b981')}>+ Programar viaje</button>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', border: '1px solid #1a3d1a', borderRadius: '10px', overflow: 'hidden' }}>
+                  <button type="button" onClick={() => setViajesView('tablero')} style={{ padding: '0.5rem 0.9rem', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem', background: viajesView === 'tablero' ? '#00ff41' : 'transparent', color: viajesView === 'tablero' ? '#061006' : '#6a9b6a' }}>Tablero</button>
+                  <button type="button" onClick={() => setViajesView('proximos')} style={{ padding: '0.5rem 0.9rem', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem', background: viajesView === 'proximos' ? '#f59e0b' : 'transparent', color: viajesView === 'proximos' ? '#061006' : '#6a9b6a' }}>Próximos ({viajesProximosOcultos(viajes).length})</button>
+                  <button type="button" onClick={() => setViajesView('historial')} style={{ padding: '0.5rem 0.9rem', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem', background: viajesView === 'historial' ? '#00ff41' : 'transparent', color: viajesView === 'historial' ? '#061006' : '#6a9b6a' }}>Historial</button>
+                </div>
+                <button type="button" onClick={() => setShowProgramarViajeModal(true)} style={s.button('#10b981')}>+ Programar viaje</button>
+              </div>
             </div>
             {showProgramarViajeModal && (
               <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, zIndex: 2100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', background: 'rgba(0,0,0,0.82)' }} onClick={() => setShowProgramarViajeModal(false)}>
@@ -4337,7 +4429,8 @@ export default function Home() {
                 </div>
               </div>
             )}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '0.65rem' }}>
+            {viajesView === 'tablero' && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '0.65rem' }}>
               {[
                 { key: 'programado', label: 'Programado', color: '#8b5cf6' },
                 { key: 'en_ruta_vacio', label: 'En Ruta Vacío', color: '#3b82f6' },
@@ -4347,11 +4440,8 @@ export default function Home() {
                 { key: 'proceso_liberacion', label: 'Proceso Liberación', color: '#22c55e' },
                 { key: 'espera_ingreso', label: 'Espera Ingreso', color: '#f97316' },
                 { key: 'en_resguardo', label: 'En Resguardo', color: '#14b8a6' },
-                { key: 'disponible', label: 'Disponible', color: '#6b7280' },
-                { key: 'completado', label: 'Completado', color: '#00ff41' },
-                { key: 'cancelado', label: 'Cancelado', color: '#ef4444' },
               ].map(col => {
-                const items = viajes.filter(v => String(v.estado || 'programado').toLowerCase() === col.key);
+                const items = soloPrimerViajeActivoPorUnidad(viajes).filter(v => String(v.estado || 'programado').toLowerCase() === col.key);
                 const isDragOver = dragOverViajeColumn === col.key;
                 return (
                   <div
@@ -4408,6 +4498,148 @@ export default function Home() {
                 );
               })}
             </div>
+            )}
+
+            {viajesView === 'proximos' && (
+              <div>
+                {viajesProximosOcultos(viajes).length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '3rem', color: '#4a8a4a' }}>
+                    <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>📅</div>
+                    <p>No hay viajes próximos ocultos</p>
+                    <p style={{ fontSize: '0.82rem', marginTop: '0.25rem' }}>Los viajes adicionales de cada unidad aparecerán aquí mientras el primer viaje esté activo</p>
+                  </div>
+                ) : (
+                  <div style={{ ...s.card, padding: 0, overflow: 'hidden' }}>
+                    <div style={{ padding: '0.9rem 1rem', borderBottom: '1px solid #1a3d1a', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                      <div style={{ color: '#e0e0e0', fontWeight: 700 }}>Viajes próximos ocultos</div>
+                      <input
+                        type="search"
+                        placeholder="Buscar por unidad, conductor, origen o destino..."
+                        value={viajesProximosSearch}
+                        onChange={event => setViajesProximosSearch(event.target.value)}
+                        style={{ ...s.input, width: 'min(100%, 320px)' }}
+                      />
+                    </div>
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ ...s.table, minWidth: '900px' }}>
+                        <thead>
+                          <tr>
+                            <th style={s.th}>Estado</th>
+                            <th style={s.th}>Unidad</th>
+                            <th style={s.th}>Conductor</th>
+                            <th style={s.th}>Ruta</th>
+                            <th style={s.th}>Remolque</th>
+                            <th style={s.th}>Inicio</th>
+                            <th style={s.th}>Fin</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {viajesProximosOcultos(viajes)
+                            .filter(v => {
+                              const q = viajesProximosSearch.trim().toLowerCase();
+                              if (!q) return true;
+                              return [v.vehicle_name, v.conductor, v.origen, v.destino, v.remolque, (v.destinos_json || '')]
+                                .some(value => String(value || '').toLowerCase().includes(q));
+                            })
+                            .sort((a, b) => new Date(a.fecha_inicio || a.created_at || 0) - new Date(b.fecha_inicio || b.created_at || 0))
+                            .map(v => {
+                              const estado = normalizarEstadoViaje(v.estado);
+                              const color = estadoColors[estado] || '#f59e0b';
+                              const destinos = v.tipo_entrega === 'reparto' ? destinosViaje(v) : [v.destino].filter(Boolean);
+                              return (
+                                <tr key={v.id} role="button" tabIndex={0} onClick={() => { setViajeDetalle(v); setViajeForm(v); setShowViajeModal(true); setViajeEditando(false); }} onKeyDown={(e) => activarConTeclado(e, () => { setViajeDetalle(v); setViajeForm(v); setShowViajeModal(true); setViajeEditando(false); })} style={{ cursor: 'pointer' }}>
+                                  <td style={s.td}><span style={s.badge(color)}>{estado.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</span></td>
+                                  <td style={{ ...s.td, color: '#00ff41', fontWeight: 700 }}>{v.vehicle_name || v.vehicle_id}</td>
+                                  <td style={s.td}>{v.conductor || <span style={{ color: '#4b6b4b' }}>Sin conductor</span>}</td>
+                                  <td style={s.td}>
+                                    <span style={{ color: '#10b981' }}>{v.origen || 'Sin origen'}</span>
+                                    <span style={{ color: '#4a8a4a' }}> → </span>
+                                    <span style={{ color: '#60a5fa' }}>{v.tipo_entrega === 'reparto' ? `${destinos.length} paradas` : (destinos[0] || 'Sin destino')}</span>
+                                  </td>
+                                  <td style={s.td}>{v.remolque || <span style={{ color: '#4b6b4b' }}>Sin remolque</span>}</td>
+                                  <td style={s.td}>{v.fecha_inicio ? formatFechaProgramada(v.fecha_inicio) : '-'}</td>
+                                  <td style={s.td}>{v.fecha_fin ? formatFechaProgramada(v.fecha_fin) : '-'}</td>
+                                </tr>
+                              );
+                            })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {viajesView === 'historial' && (
+              <div>
+                {viajes.filter(v => ['completado', 'cancelado'].includes(String(v.estado || '').toLowerCase())).length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '3rem', color: '#4a8a4a' }}>
+                    <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🗂️</div>
+                    <p>No hay viajes en el historial todavía</p>
+                    <p style={{ fontSize: '0.82rem', marginTop: '0.25rem' }}>Los viajes completados y cancelados aparecerán aquí</p>
+                  </div>
+                ) : (
+                  <div style={{ ...s.card, padding: 0, overflow: 'hidden' }}>
+                    <div style={{ padding: '0.9rem 1rem', borderBottom: '1px solid #1a3d1a', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                      <div style={{ color: '#e0e0e0', fontWeight: 700 }}>Historial de viajes</div>
+                      <input
+                        type="search"
+                        placeholder="Buscar por unidad, conductor, origen o destino..."
+                        value={viajesHistorialSearch}
+                        onChange={event => setViajesHistorialSearch(event.target.value)}
+                        style={{ ...s.input, width: 'min(100%, 320px)' }}
+                      />
+                    </div>
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ ...s.table, minWidth: '900px' }}>
+                        <thead>
+                          <tr>
+                            <th style={s.th}>Estado</th>
+                            <th style={s.th}>Unidad</th>
+                            <th style={s.th}>Conductor</th>
+                            <th style={s.th}>Ruta</th>
+                            <th style={s.th}>Remolque</th>
+                            <th style={s.th}>Inicio</th>
+                            <th style={s.th}>Fin</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {viajes
+                            .filter(v => ['completado', 'cancelado'].includes(String(v.estado || '').toLowerCase()))
+                            .filter(v => {
+                              const q = viajesHistorialSearch.trim().toLowerCase();
+                              if (!q) return true;
+                              return [v.vehicle_name, v.conductor, v.origen, v.destino, v.remolque, (v.destinos_json || '')]
+                                .some(value => String(value || '').toLowerCase().includes(q));
+                            })
+                            .sort((a, b) => new Date(b.fecha_inicio || b.created_at || 0) - new Date(a.fecha_inicio || a.created_at || 0))
+                            .map(v => {
+                              const estado = normalizarEstadoViaje(v.estado);
+                              const color = estadoColors[estado] || '#8b5cf6';
+                              const destinos = v.tipo_entrega === 'reparto' ? destinosViaje(v) : [v.destino].filter(Boolean);
+                              return (
+                                <tr key={v.id} role="button" tabIndex={0} onClick={() => { setViajeDetalle(v); setViajeForm(v); setShowViajeModal(true); setViajeEditando(false); }} onKeyDown={(e) => activarConTeclado(e, () => { setViajeDetalle(v); setViajeForm(v); setShowViajeModal(true); setViajeEditando(false); })} style={{ cursor: 'pointer' }}>
+                                  <td style={s.td}><span style={s.badge(color)}>{estado === 'completado' ? 'Completado' : 'Cancelado'}</span></td>
+                                  <td style={{ ...s.td, color: '#00ff41', fontWeight: 700 }}>{v.vehicle_name || v.vehicle_id}</td>
+                                  <td style={s.td}>{v.conductor || <span style={{ color: '#4b6b4b' }}>Sin conductor</span>}</td>
+                                  <td style={s.td}>
+                                    <span style={{ color: '#10b981' }}>{v.origen || 'Sin origen'}</span>
+                                    <span style={{ color: '#4a8a4a' }}> → </span>
+                                    <span style={{ color: '#60a5fa' }}>{v.tipo_entrega === 'reparto' ? `${destinos.length} paradas` : (destinos[0] || 'Sin destino')}</span>
+                                  </td>
+                                  <td style={s.td}>{v.remolque || <span style={{ color: '#4b6b4b' }}>Sin remolque</span>}</td>
+                                  <td style={s.td}>{v.fecha_inicio ? formatFechaProgramada(v.fecha_inicio) : '-'}</td>
+                                  <td style={s.td}>{v.fecha_fin ? formatFechaProgramada(v.fecha_fin) : '-'}</td>
+                                </tr>
+                              );
+                            })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -4922,25 +5154,27 @@ export default function Home() {
                         const estatusColor = estatus === 'Disponible' ? '#6b7280' : estatus === 'Programado' ? '#8b5cf6' : estatus.includes('carga') ? '#f59e0b' : estatus.includes('descarga') ? '#ec4899' : estatus === 'En resguardo' ? '#f97316' : '#10b981';
                         const rowBg = idx % 2 === 0 ? '#0d0d0d' : '#111111';
                         const observaciones = row.comentarios_cliente || row.comentarios_monitoreo || '-';
-                        const viajesUnidad = ordenarViajesUnidad(
-                          viajes.filter(v => String(v.vehicle_name || '').toLowerCase() === String(row.unidad || '').toLowerCase())
-                        ).filter(v => !['completado', 'cancelado'].includes(String(v.estado || '').toLowerCase()));
-                        const viajeActual = viajesUnidad[0] || null;
-                        const viajeSiguiente = viajesUnidad[1] || null;
+                        const viajeActual = row._viajeActual || null;
+                        const viajeSiguiente = row._viajeSiguiente || null;
+                        const esAuto = !!row._auto;
                         return (
-                          <tr key={row.id} style={{ background: selectedSeguimiento?.id === row.id ? '#102010' : rowBg, borderBottom: '1px solid #1a1a1a' }}>
+                          <tr key={esAuto ? `auto-${row._unidadObj?.id || row.unidad}` : row.id} style={{ background: selectedSeguimiento?.id === row.id ? '#102010' : rowBg, borderBottom: '1px solid #1a1a1a' }}>
                             <td style={{ ...tdStyle, textAlign: 'center', color: '#4a8a4a', fontSize: '0.7rem' }}>{idx + 1}</td>
                             <td style={{ ...tdStyle, fontWeight: 700, color: '#00ff41' }}>{row.unidad || '-'}</td>
                             <td style={tdStyle}>
-                              <select
-                                aria-label={`Grupo de ${row.unidad || 'unidad'}`}
-                                value={row.grupo || ''}
-                                onChange={(e) => actualizarGrupoSeguimiento(row, e.target.value)}
-                                style={{ ...s.select, width: '150px', padding: '3px 6px', fontSize: '0.72rem' }}
-                              >
-                                <option value="">Sin grupo</option>
-                                {gruposUnicos.map(grupo => <option key={grupo} value={grupo}>{grupo}</option>)}
-                              </select>
+                              {esAuto ? (
+                                <span style={{ color: '#6a9b6a', fontSize: '0.78rem' }}>{row.grupo || 'Sin registro'}</span>
+                              ) : (
+                                <select
+                                  aria-label={`Grupo de ${row.unidad || 'unidad'}`}
+                                  value={row.grupo || ''}
+                                  onChange={(e) => actualizarGrupoSeguimiento(row, e.target.value)}
+                                  style={{ ...s.select, width: '150px', padding: '3px 6px', fontSize: '0.72rem' }}
+                                >
+                                  <option value="">Sin grupo</option>
+                                  {gruposUnicos.map(grupo => <option key={grupo} value={grupo}>{grupo}</option>)}
+                                </select>
+                              )}
                             </td>
                             <td style={tdStyle}>{row.remolque || '-'}</td>
                             <td style={tdStyle}>{row.operador || '-'}</td>
@@ -4978,9 +5212,15 @@ export default function Home() {
                             <td style={{ ...tdStyle, whiteSpace: 'normal', maxWidth: '320px' }}>{observaciones}</td>
                             <td style={tdStyle}>{parseFecha(row.fecha_actualizacion)?.toLocaleString('es-MX') || '-'}</td>
                             <td style={{ ...tdStyle, textAlign: 'center', whiteSpace: 'nowrap' }}>
-                              <button onClick={() => cargarHistorialSeguimiento(row)} style={{ background: 'none', border: '1px solid #1a3d1a', color: '#00ff41', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem', padding: '2px 6px', marginRight: '0.35rem' }}>Historial</button>
-                              <button onClick={() => editarSeguimiento(row)} style={{ background: 'none', border: '1px solid #1a3d1a', color: '#60a5fa', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem', padding: '2px 6px', marginRight: '0.35rem' }}>Editar</button>
-                              <button onClick={() => eliminarSeguimiento(row.id)} style={{ background: 'none', border: '1px solid #3a1a1a', color: '#ef4444', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem', padding: '2px 6px' }}>✕</button>
+                              {esAuto ? (
+                                <button onClick={() => { setSeguimientoModalUnidadId(String(row._unidadObj?.id || '')); setSeguimientoModalError(''); setSeguimientoModalGrupo(''); setSeguimientoModalNota(''); setShowSeguimientoUpdateModal(true); }} style={{ background: 'none', border: '1px solid #1a3d1a', color: '#00ff41', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem', padding: '2px 6px' }}>Actualizar</button>
+                              ) : (
+                                <>
+                                  <button onClick={() => cargarHistorialSeguimiento(row)} style={{ background: 'none', border: '1px solid #1a3d1a', color: '#00ff41', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem', padding: '2px 6px', marginRight: '0.35rem' }}>Historial</button>
+                                  <button onClick={() => editarSeguimiento(row)} style={{ background: 'none', border: '1px solid #1a3d1a', color: '#60a5fa', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem', padding: '2px 6px', marginRight: '0.35rem' }}>Editar</button>
+                                  <button onClick={() => eliminarSeguimiento(row.id)} style={{ background: 'none', border: '1px solid #3a1a1a', color: '#ef4444', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem', padding: '2px 6px' }}>✕</button>
+                                </>
+                              )}
                             </td>
                           </tr>
                         );
@@ -5910,6 +6150,15 @@ export default function Home() {
                     style={{ padding: '0.55rem 0.75rem', background: '#10b981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600', whiteSpace: 'nowrap' }}>
                     Asignar
                   </button>
+                  <button
+                    onClick={() => {
+                      setOperadorDraft('');
+                      setTelefonoDraft('');
+                      guardarOperador(selectedVehicle.id, selectedVehicle.name, '', '');
+                    }}
+                    style={{ padding: '0.55rem 0.75rem', background: '#ef4444', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600', whiteSpace: 'nowrap' }}>
+                    Quitar operador
+                  </button>
                 </div>
               </div>
 
@@ -6291,8 +6540,9 @@ export default function Home() {
                                             <span style={s.badge(meta.color)}>{meta.label}</span>
                                           </div>
                                           {geocercasCoincidentes(parada.destino).map(name => <div key={name} style={{ color: '#6a9b6a', fontSize: '0.67rem', marginTop: '0.2rem' }}>📍 {name}</div>)}
-                                          {(parada.hora_llegada || parada.hora_salida) && (
+                                          {(parada.hora_programada || parada.hora_llegada || parada.hora_salida) && (
                                             <div style={{ marginTop: '0.35rem', color: '#94a3b8', fontSize: '0.65rem', lineHeight: 1.45 }}>
+                                              {parada.hora_programada && <div style={{ color: '#8b5cf6' }}>Programada: {parseFecha(parada.hora_programada)?.toLocaleString('es-MX')}</div>}
                                               {parada.hora_llegada && <div>Primer contacto: {parseFecha(parada.hora_llegada)?.toLocaleString('es-MX')}</div>}
                                               {parada.hora_salida && <div>Último contacto: {parseFecha(parada.hora_salida)?.toLocaleString('es-MX')}</div>}
                                             </div>
@@ -6334,9 +6584,12 @@ export default function Home() {
                     </div>
                   </div>
                   <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
-                    <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Fecha Fin</div>
+                    <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.3rem' }}>{viajeDetalle.tipo_entrega === 'reparto' ? 'Fin 1ra parada' : 'Fecha Fin'}</div>
                     <div style={{ fontSize: '0.9rem', fontWeight: '600' }}>
-                      {viajeDetalle.fecha_fin ? formatFechaProgramada(viajeDetalle.fecha_fin) : '-'}
+                      {viajeDetalle.tipo_entrega === 'reparto' ? (() => {
+                        const primera = paradasViaje(viajeDetalle)[0];
+                        return (primera?.hora_programada || viajeDetalle.fecha_fin) ? formatFechaProgramada(primera?.hora_programada || viajeDetalle.fecha_fin) : '-';
+                      })() : (viajeDetalle.fecha_fin ? formatFechaProgramada(viajeDetalle.fecha_fin) : '-')}
                     </div>
                   </div>
                 </div>
@@ -6682,7 +6935,7 @@ export default function Home() {
               <button type="button" disabled={existingGeofenceSaving} onClick={cerrarExistingGeofenceModal} aria-label="Cerrar" style={{ background: 'none', border: 0, color: '#ef4444', fontSize: '1.4rem', cursor: 'pointer' }}>✕</button>
             </div>
             <input type="search" autoFocus style={{ ...s.input, marginBottom: '0.75rem' }} value={existingGeofenceSearch} onChange={event => setExistingGeofenceSearch(event.target.value)} placeholder="Buscar por nombre, dirección o categoría..." />
-            <div role="radiogroup" aria-label="Geocercas disponibles" style={{ minHeight: '180px', maxHeight: '48vh', overflowY: 'auto', border: '1px solid #1a3d1a', borderRadius: '10px', background: '#080d08', padding: '0.4rem' }}>
+            <div role="group" aria-label="Geocercas disponibles" style={{ minHeight: '180px', maxHeight: '48vh', overflowY: 'auto', border: '1px solid #1a3d1a', borderRadius: '10px', background: '#080d08', padding: '0.4rem' }}>
               {allGeofences
                 .filter(geofence => geofence.activa !== 0)
                 .filter(geofence => String(geofenceOwnerId(geofence) || '') !== String(selectedCliente.id))
@@ -6697,9 +6950,10 @@ export default function Home() {
                   const ownerId = geofenceOwnerId(geofence);
                   const owner = clientes.find(cliente => String(cliente.id) === String(ownerId));
                   const disabled = !!ownerId;
+                  const checked = existingGeofenceSelections.includes(value);
                   return (
-                    <label key={value} style={{ display: 'grid', gridTemplateColumns: '22px minmax(0, 1fr) auto', gap: '0.55rem', alignItems: 'center', padding: '0.65rem 0.7rem', marginBottom: '0.3rem', border: `1px solid ${existingGeofenceSelection === value ? '#00ff41' : '#182718'}`, borderRadius: '8px', background: existingGeofenceSelection === value ? '#102510' : '#0d120d', cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.5 : 1 }}>
-                      <input type="radio" name="existing-geofence" disabled={disabled} checked={existingGeofenceSelection === value} onChange={() => setExistingGeofenceSelection(value)} />
+                    <label key={value} style={{ display: 'grid', gridTemplateColumns: '22px minmax(0, 1fr) auto', gap: '0.55rem', alignItems: 'center', padding: '0.65rem 0.7rem', marginBottom: '0.3rem', border: `1px solid ${checked ? '#00ff41' : '#182718'}`, borderRadius: '8px', background: checked ? '#102510' : '#0d120d', cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.5 : 1 }}>
+                      <input type="checkbox" disabled={disabled} checked={checked} onChange={() => setExistingGeofenceSelections(prev => checked ? prev.filter(item => item !== value) : [...prev, value])} />
                       <span style={{ minWidth: 0 }}>
                         <span style={{ display: 'block', color: '#e5ffe9', fontSize: '0.85rem', fontWeight: 700, overflowWrap: 'anywhere' }}>{geofence.nombre}</span>
                         <span style={{ display: 'block', color: '#5f8c65', fontSize: '0.7rem', marginTop: '0.15rem', overflowWrap: 'anywhere' }}>{geofence.direccion || geofence.descripcion || `${geofence.radio_metros || 0} m`}</span>
@@ -6709,9 +6963,12 @@ export default function Home() {
                   );
                 })}
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem', flexWrap: 'wrap' }}>
-              <button type="button" disabled={existingGeofenceSaving} onClick={cerrarExistingGeofenceModal} style={s.button('#6b7280')}>Cancelar</button>
-              <button type="submit" disabled={existingGeofenceSaving || !existingGeofenceSelection} style={{ ...s.button('#00ff41'), minWidth: '150px', opacity: existingGeofenceSaving || !existingGeofenceSelection ? 0.5 : 1 }}>{existingGeofenceSaving ? 'Asociando...' : 'Asociar geocerca'}</button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', marginTop: '1rem', flexWrap: 'wrap' }}>
+              <span style={{ color: '#6a9b6a', fontSize: '0.8rem' }}>{existingGeofenceSelections.length} geocerca{existingGeofenceSelections.length === 1 ? '' : 's'} seleccionada{existingGeofenceSelections.length === 1 ? '' : 's'}</span>
+              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <button type="button" disabled={existingGeofenceSaving} onClick={cerrarExistingGeofenceModal} style={s.button('#6b7280')}>Cancelar</button>
+                <button type="submit" disabled={existingGeofenceSaving || existingGeofenceSelections.length === 0} style={{ ...s.button('#00ff41'), minWidth: '150px', opacity: existingGeofenceSaving || existingGeofenceSelections.length === 0 ? 0.5 : 1 }}>{existingGeofenceSaving ? 'Asociando...' : 'Asociar geocercas'}</button>
+              </div>
             </div>
           </form>
         </div>

@@ -283,10 +283,12 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
     estado TEXT DEFAULT 'pendiente',
     hora_llegada DATETIME,
     hora_salida DATETIME,
+    hora_programada DATETIME,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(viaje_id, orden),
     FOREIGN KEY (viaje_id) REFERENCES viajes(id) ON DELETE CASCADE
   )`);
+  db.run("ALTER TABLE viaje_paradas ADD COLUMN hora_programada DATETIME", [], () => {});
   db.run('CREATE INDEX IF NOT EXISTS idx_viaje_paradas_viaje_estado ON viaje_paradas(viaje_id, estado)', [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS alertas (
@@ -1563,16 +1565,17 @@ app.delete('/api/geofence-events', requireAdmin, async (req, res) => {
 
 const TRIP_ROUTE_STATES = new Set(['programado', 'en_ruta_vacio', 'en_ruta_cargado']);
 
-async function updateTripStopFromGeofence(vehicle, geofenceName, type, eventTime = new Date().toISOString()) {
+async function updateTripStopFromGeofence(vehicle, geofenceName, type, eventTime = new Date().toISOString(), tripIdHint = null) {
   const normalizedGeofence = normalizeDestination(geofenceName);
   if (!normalizedGeofence || (!vehicle?.id && !vehicle?.name)) return null;
   const params = [String(vehicle.id || ''), String(vehicle.name || '')];
-  const activeTrips = await allQuery(
+  let activeTrips = await allQuery(
     `SELECT * FROM viajes
       WHERE (CAST(vehicle_id AS TEXT) = ? OR LOWER(COALESCE(vehicle_name, '')) = LOWER(?))
-        AND LOWER(COALESCE(estado, '')) NOT IN ('completado', 'cancelado')`,
+        AND LOWER(COALESCE(estado, '')) NOT IN ('cancelado')`,
     params
   );
+  if (tripIdHint) activeTrips = activeTrips.filter(trip => Number(trip.id) === Number(tripIdHint));
   for (const trip of activeTrips) {
     if (trip.tipo_entrega === 'reparto') await syncTripStops(trip);
   }
@@ -1580,11 +1583,13 @@ async function updateTripStopFromGeofence(vehicle, geofenceName, type, eventTime
        FROM viaje_paradas vp
        JOIN viajes v ON v.id = vp.viaje_id
       WHERE (CAST(v.vehicle_id AS TEXT) = ? OR LOWER(COALESCE(v.vehicle_name, '')) = LOWER(?))
-        AND LOWER(COALESCE(v.estado, '')) NOT IN ('completado', 'cancelado')
-      ORDER BY v.id DESC, vp.orden ASC`;
-  const candidates = await allQuery(candidatesQuery, params);
+        AND LOWER(COALESCE(v.estado, '')) NOT IN ('cancelado')
+      ORDER BY CASE WHEN LOWER(COALESCE(v.estado, '')) IN ('completado') THEN 1 ELSE 0 END ASC, v.id DESC, vp.orden ASC`;
+  let candidates = await allQuery(candidatesQuery, params);
+  if (tripIdHint) candidates = candidates.filter(candidate => Number(candidate.viaje_id) === Number(tripIdHint));
   const stop = candidates.find(candidate => normalizeDestination(candidate.destino) === normalizedGeofence);
-  const directTrip = activeTrips.find(trip => trip.tipo_entrega !== 'reparto' && normalizeDestination(trip.destino) === normalizedGeofence);
+  const directTrip = activeTrips.find(trip => trip.tipo_entrega !== 'reparto' && normalizeDestination(trip.destino) === normalizedGeofence && String(trip.estado || '').toLowerCase() !== 'completado')
+    || activeTrips.find(trip => trip.tipo_entrega !== 'reparto' && normalizeDestination(trip.destino) === normalizedGeofence);
 
   if (type === 'entrada') {
     if (stop) {
@@ -1615,7 +1620,7 @@ async function updateTripStopFromGeofence(vehicle, geofenceName, type, eventTime
       const trip = activeTrips.find(trip => trip.id === tripId);
       const estadoActual = String(trip?.estado || '').toLowerCase();
       if (estadoActual === 'completado') {
-        await runQuery("UPDATE viajes SET estado = 'espera_ingreso', fecha_fin = NULL, estado_previo = NULL, updated_at = datetime('now') WHERE id = ?", [tripId]);
+        await runQuery("UPDATE viajes SET estado = 'espera_ingreso', fecha_fin = NULL, estado_previo = NULL, hora_llegada = COALESCE(hora_llegada, ?), updated_at = datetime('now') WHERE id = ?", [eventTime, tripId]);
       } else if (TRIP_ROUTE_STATES.has(estadoActual)) {
         await runQuery("UPDATE viajes SET estado_previo = ?, estado = 'espera_ingreso', hora_llegada = COALESCE(hora_llegada, ?), updated_at = datetime('now') WHERE id = ?", [estadoActual, eventTime, tripId]);
       }
@@ -1647,6 +1652,57 @@ async function updateTripStopFromGeofence(vehicle, geofenceName, type, eventTime
     await runQuery("UPDATE viajes SET estado = 'completado', fecha_fin = ?, estado_previo = NULL, hora_salida = COALESCE(hora_salida, ?), updated_at = datetime('now') WHERE id = ?", [eventTime, eventTime, directTrip.id]);
   }
   return stop ? getQuery('SELECT * FROM viaje_paradas WHERE id = ?', [stop.id]) : null;
+}
+
+async function markInitialGeofenceContact(trip) {
+  const contacts = [];
+  const vehicleId = String(trip.vehicle_id || '');
+  const vehicleName = String(trip.vehicle_name || '');
+  if (!vehicleId && !vehicleName) return contacts;
+
+  let vehicle = null;
+  try {
+    const vehicles = await fetchSamsaraVehicleLocations();
+    vehicle = vehicles.find(v => String(v.id) === vehicleId || String(v.name || '') === vehicleName) || null;
+  } catch (error) {
+    console.error('Error obteniendo ubicación para contacto inicial:', error.message);
+  }
+  if (!vehicle?.location) return contacts;
+
+  const geofences = await loadAllGeofences();
+  const destinations = trip.tipo_entrega === 'reparto'
+    ? tripDestinations(trip)
+    : (trip.destino ? [trip.destino] : []);
+
+  for (const destination of destinations) {
+    const matching = geofences.filter(g => normalizeDestination(g.nombre) === normalizeDestination(destination));
+    const geofence = matching.find(g => pointInsideGeofence(vehicle.location.latitude, vehicle.location.longitude, g));
+    if (!geofence) continue;
+    const eventTime = new Date().toISOString();
+    await runQuery(
+      `INSERT INTO geofence_events (vehicle_id, vehicle_name, geofence_id, geofence_nombre, tipo, latitud, longitud, source) VALUES (?, ?, ?, ?, 'entrada', ?, ?, ?)`,
+      [vehicle.id, vehicle.name, geofence.eventId, geofence.nombre, vehicle.location.latitude, vehicle.location.longitude, geofence.source]
+    );
+    if (geofence.cliente_id) {
+      await createCustomerGeofenceAlert(vehicle, { id: geofence.cliente_id, nombre: geofence.cliente_nombre }, geofence.nombre);
+    } else {
+      await createAlertRecord({
+        vehicle_id: vehicle.id,
+        vehicle_name: vehicle.name,
+        tipo: 'geocerca',
+        mensaje: `${vehicle.name} entró a la geocerca "${geofence.nombre}"`,
+        severidad: 'info',
+      });
+    }
+    await updateTripStopFromGeofence(vehicle, geofence.nombre, 'entrada', eventTime, trip?.id);
+    await runQuery(
+      `INSERT OR REPLACE INTO vehicle_geofence_state (vehicle_id, geofence_id, inside, last_check)
+       VALUES (?, ?, 1, datetime('now'))`,
+      [vehicle.id, geofence.stateId]
+    );
+    contacts.push({ vehicle: vehicle.name, geofence: geofence.nombre, latitud: vehicle.location.latitude, longitud: vehicle.location.longitud });
+  }
+  return contacts;
 }
 
 async function findSamsaraGeofenceClient(geofenceId, geofenceName) {
@@ -1767,35 +1823,39 @@ app.post('/api/webhooks/samsara', (req, res) => {
   }
 });
 
-async function performGeofenceCheck() {
-    const localGeofences = await new Promise((resolve, reject) => {
-      db.all(`SELECT g.*, c.nombre AS cliente_nombre
-              FROM geofences g LEFT JOIN clientes c ON c.id = g.cliente_id
-              WHERE g.activa = 1`, [], (err, rows) => {
-        if (err) reject(err); else resolve(rows || []);
-      });
+async function loadAllGeofences() {
+  const localGeofences = await new Promise((resolve, reject) => {
+    db.all(`SELECT g.*, c.nombre AS cliente_nombre
+            FROM geofences g LEFT JOIN clientes c ON c.id = g.cliente_id
+            WHERE g.activa = 1`, [], (err, rows) => {
+      if (err) reject(err); else resolve(rows || []);
     });
-    let samsaraGeofences = [];
-    try {
-      samsaraGeofences = await fetchSamsaraAddresses();
-    } catch (error) {
-      console.error('Error fetching Samsara geofences:', error.message);
-    }
-    const samsaraClientLinks = await allQuery(
-      `SELECT link.geofence_ref, c.id AS cliente_id, c.nombre AS cliente_nombre
-       FROM cliente_geofence_links link JOIN clientes c ON c.id = link.cliente_id
-       WHERE link.source = 'samsara'`
-    );
-    const geofences = [
-      ...localGeofences.map(g => ({ ...g, stateId: String(g.id), eventId: g.id, source: 'local' })),
-      ...samsaraGeofences.map(g => ({
-        ...g,
-        stateId: `samsara:${g.id || `${g.nombre}:${g.latitud}:${g.longitud}`}`,
-        eventId: `samsara:${g.id || `${g.nombre}:${g.latitud}:${g.longitud}`}`,
-        source: 'samsara',
-        ...(samsaraClientLinks.find(link => String(link.geofence_ref) === String(g.id)) || {}),
-      })),
-    ];
+  });
+  let samsaraGeofences = [];
+  try {
+    samsaraGeofences = await fetchSamsaraAddresses();
+  } catch (error) {
+    console.error('Error fetching Samsara geofences:', error.message);
+  }
+  const samsaraClientLinks = await allQuery(
+    `SELECT link.geofence_ref, c.id AS cliente_id, c.nombre AS cliente_nombre
+     FROM cliente_geofence_links link JOIN clientes c ON c.id = link.cliente_id
+     WHERE link.source = 'samsara'`
+  );
+  return [
+    ...localGeofences.map(g => ({ ...g, stateId: String(g.id), eventId: g.id, source: 'local' })),
+    ...samsaraGeofences.map(g => ({
+      ...g,
+      stateId: `samsara:${g.id || `${g.nombre}:${g.latitud}:${g.longitud}`}`,
+      eventId: `samsara:${g.id || `${g.nombre}:${g.latitud}:${g.longitud}`}`,
+      source: 'samsara',
+      ...(samsaraClientLinks.find(link => String(link.geofence_ref) === String(g.id)) || {}),
+    })),
+  ];
+}
+
+async function performGeofenceCheck() {
+    const geofences = await loadAllGeofences();
 
     const prevStates = await new Promise((resolve, reject) => {
       db.all('SELECT * FROM vehicle_geofence_state', [], (err, rows) => {
@@ -2007,10 +2067,11 @@ async function syncTripStops(trip, force = false) {
     const preserved = existing.find(stop => !usedIds.has(stop.id) && normalizeDestination(stop.destino) === normalizeDestination(destination));
     if (preserved) usedIds.add(preserved.id);
     const estado = preserved?.estado || (index === 0 ? 'en_camino' : 'pendiente');
+    const horaProgramada = index === 0 ? (trip.fecha_fin || preserved?.hora_programada || null) : (preserved?.hora_programada || null);
     await runQuery(
-      `INSERT INTO viaje_paradas (viaje_id, orden, destino, estado, hora_llegada, hora_salida, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
-      [trip.id, index + 1, destination, estado, preserved?.hora_llegada || null, preserved?.hora_salida || null]
+      `INSERT INTO viaje_paradas (viaje_id, orden, destino, estado, hora_llegada, hora_salida, hora_programada, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+      [trip.id, index + 1, destination, estado, preserved?.hora_llegada || null, preserved?.hora_salida || null, horaProgramada]
     );
   }
   return allQuery('SELECT * FROM viaje_paradas WHERE viaje_id = ? ORDER BY orden ASC', [trip.id]);
@@ -2126,7 +2187,11 @@ app.post('/api/viajes', async (req, res) => {
     );
     const trip = await getQuery('SELECT * FROM viajes WHERE id = ?', [result.lastID]);
     const paradas = await syncTripStops(trip);
-    res.json({ id: result.lastID, paradas });
+    const contactoInicial = await markInitialGeofenceContact(trip).catch(error => {
+      console.error('Error marcando contacto inicial de geocerca:', error.message);
+      return [];
+    });
+    res.json({ id: result.lastID, paradas, contactoInicial });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
