@@ -2317,10 +2317,11 @@ export default function Home() {
 
   const guardarOperador = async (vehicleId, vehicleName, nombre, telefono) => {
     try {
+      const driver = samsaraDrivers.find(d => d.name === nombre);
       await apiJson(`${apiUrl}/vehicle-operators/${vehicleId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vehicle_name: vehicleName, operator_name: nombre, telefono }),
+        body: JSON.stringify({ vehicle_name: vehicleName, operator_name: nombre, telefono, driver_id_samsara: driver ? driver.id : '' }),
       });
       setOperadores(prev => ({ ...prev, [idStr(vehicleId)]: { nombre, telefono } }));
       fetch(`${apiUrl}/vehicle-operators`)
@@ -6291,6 +6292,7 @@ export default function Home() {
                         ) : (
                           <div>
                             <div style={{ fontSize: '0.9rem', fontWeight: '600', color: '#60a5fa' }}>{viajeDetalle.destino || '-'}</div>
+                            {geocercasCoincidentes(viajeDetalle.destino).map(name => <div key={name} style={{ color: '#6a9b6a', fontSize: '0.67rem', marginTop: '0.2rem' }}>📍 {name}</div>)}
                             {(viajeDetalle.hora_llegada || viajeDetalle.hora_salida) && (
                               <div style={{ marginTop: '0.35rem', color: '#94a3b8', fontSize: '0.65rem', lineHeight: 1.45 }}>
                                 {viajeDetalle.hora_llegada && <div>Primer contacto: {parseFecha(viajeDetalle.hora_llegada)?.toLocaleString('es-MX')}</div>}

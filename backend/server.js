@@ -389,9 +389,11 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
     vehicle_name TEXT,
     operator_name TEXT,
     telefono TEXT,
+    driver_id_samsara TEXT,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
   db.run("ALTER TABLE vehicle_operators ADD COLUMN telefono TEXT", [], () => {});
+  db.run("ALTER TABLE vehicle_operators ADD COLUMN driver_id_samsara TEXT", [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS geofences (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1214,56 +1216,108 @@ app.get('/api/vehicle-operators', (req, res) => {
   });
 });
 
-app.put('/api/vehicle-operators/:vehicleId', (req, res) => {
-  db.get('SELECT * FROM vehicle_operators WHERE vehicle_id = ?', [req.params.vehicleId], (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
+app.put('/api/vehicle-operators/:vehicleId', async (req, res) => {
+  try {
+    const row = await getQuery('SELECT * FROM vehicle_operators WHERE vehicle_id = ?', [req.params.vehicleId]);
     const has = (key) => Object.prototype.hasOwnProperty.call(req.body || {}, key);
     const next = {
       vehicle_name: has('vehicle_name') ? req.body.vehicle_name : (row?.vehicle_name || null),
       operator_name: has('operator_name') ? req.body.operator_name : (row?.operator_name || ''),
       telefono: has('telefono') ? req.body.telefono : (row?.telefono || ''),
+      driver_id_samsara: has('driver_id_samsara') ? req.body.driver_id_samsara : (row?.driver_id_samsara || ''),
     };
+    let result;
     if (row) {
-      db.run(
-        'UPDATE vehicle_operators SET vehicle_name = ?, operator_name = ?, telefono = ?, updated_at = datetime(\'now\') WHERE vehicle_id = ?',
-        [next.vehicle_name, next.operator_name, next.telefono, req.params.vehicleId],
-        function (runErr) {
-          if (runErr) return res.status(500).json({ error: runErr.message });
-          res.json({ changes: this.changes });
-        }
+      result = await runQuery(
+        'UPDATE vehicle_operators SET vehicle_name = ?, operator_name = ?, telefono = ?, driver_id_samsara = ?, updated_at = datetime(\'now\') WHERE vehicle_id = ?',
+        [next.vehicle_name, next.operator_name, next.telefono, next.driver_id_samsara, req.params.vehicleId]
       );
     } else {
-      db.run(
-        'INSERT INTO vehicle_operators (vehicle_id, vehicle_name, operator_name, telefono, updated_at) VALUES (?, ?, ?, ?, datetime(\'now\'))',
-        [req.params.vehicleId, next.vehicle_name, next.operator_name, next.telefono],
-        function (runErr) {
-          if (runErr) return res.status(500).json({ error: runErr.message });
-          res.json({ changes: this.changes });
-        }
+      result = await runQuery(
+        'INSERT INTO vehicle_operators (vehicle_id, vehicle_name, operator_name, telefono, driver_id_samsara, updated_at) VALUES (?, ?, ?, ?, ?, datetime(\'now\'))',
+        [req.params.vehicleId, next.vehicle_name, next.operator_name, next.telefono, next.driver_id_samsara]
       );
     }
-  });
+
+    res.json({ changes: result.changes, driver_id_samsara: next.driver_id_samsara });
+
+    syncOperatorToSamsara(req.params.vehicleId, next.operator_name, next.driver_id_samsara)
+      .catch(err => {
+        console.error('Sync operador→Samsara falló:', err.response?.data || err.message);
+      });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ============ SAMSARA DRIVERS ============
 
+async function fetchSamsaraDrivers() {
+  let allDrivers = [];
+  let after = null;
+
+  do {
+    const params = after ? { after } : {};
+    const driversRes = await axios.get(`${SAMSARA_API_BASE_URL}/fleet/drivers`, {
+      headers: { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' },
+      params,
+      timeout: 15000,
+    });
+    const batch = driversRes.data.data || [];
+    allDrivers = allDrivers.concat(batch);
+    after = driversRes.data.pagination?.endCursor || null;
+  } while (after);
+
+  return allDrivers;
+}
+
+async function endOngoingSamsaraAssignment(vehicleId) {
+  const headers = { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' };
+  const res = await axios.get('https://api.samsara.com/fleet/driver-vehicle-assignments', {
+    headers,
+    params: { filterBy: 'vehicles', vehicleIds: String(vehicleId), startTime: '1970-01-01T00:00:00Z', assignmentType: 'external' },
+    timeout: 15000,
+  });
+  const ongoing = (res.data.data || []).filter(a => !a.endTime);
+  for (const a of ongoing) {
+    await axios.patch('https://api.samsara.com/fleet/driver-vehicle-assignments', {
+      driverId: a.driver.id,
+      vehicleId: a.vehicle.id,
+      startTime: a.startTime,
+      endTime: new Date().toISOString(),
+    }, { headers, timeout: 15000 });
+  }
+}
+
+async function syncOperatorToSamsara(vehicleId, operatorName, driverIdSamsara) {
+  if (!process.env.SAMSARA_API_TOKEN) return;
+
+  let driverId = driverIdSamsara || '';
+  if (!driverId && operatorName) {
+    const drivers = await fetchSamsaraDrivers();
+    const match = drivers.find(d => d.name && d.name.toLowerCase() === operatorName.trim().toLowerCase());
+    if (match) driverId = match.id;
+  }
+
+  const headers = { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' };
+  try {
+    await endOngoingSamsaraAssignment(vehicleId);
+  } catch (e) {
+    console.error('Samsara: no se pudo finalizar asignación vigente:', e.response?.data || e.message);
+  }
+
+  if (driverId) {
+    await axios.post('https://api.samsara.com/fleet/driver-vehicle-assignments', {
+      driverId,
+      vehicleId: String(vehicleId),
+      startTime: new Date().toISOString(),
+    }, { headers, timeout: 15000 });
+  }
+}
+
 app.get('/api/samsara/drivers', async (req, res) => {
   try {
-    let allDrivers = [];
-    let after = null;
-
-    do {
-      const params = after ? { after } : {};
-      const driversRes = await axios.get('https://api.samsara.com/fleet/drivers', {
-        headers: { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' },
-        params,
-        timeout: 15000,
-      });
-      const batch = driversRes.data.data || [];
-      allDrivers = allDrivers.concat(batch);
-      after = driversRes.data.pagination?.endCursor || null;
-    } while (after);
-
+    const allDrivers = await fetchSamsaraDrivers();
     res.json(allDrivers.map(d => ({
       id: d.id,
       name: d.name,
