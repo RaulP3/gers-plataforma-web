@@ -544,8 +544,6 @@ export default function Home() {
   const [formMapa, setFormMapa] = useState({ nombre: '', origen: '', destino: '', descripcion: '', url: '' });
   const [mapaSaving, setMapaSaving] = useState(false);
   const [mapasError, setMapasError] = useState('');
-  const [dashTab, setDashTab] = useState('unidades');
-  const [dashSearch, setDashSearch] = useState('');
   const [customRiskZones, setCustomRiskZones] = useState([]);
   const [placingZone, setPlacingZone] = useState(false);
   const [showZoneModal, setShowZoneModal] = useState(false);
@@ -3431,8 +3429,8 @@ export default function Home() {
                 <span style={{ fontWeight: 700, fontSize: '16px', color: '#e0e0e0' }}>{customRiskZones.length}</span>
                 <span style={{ color: '#6a9b6a', fontSize: '11px' }}>Zonas</span>
               </span>
-              <button onClick={() => { setPlacingZone(true); }} style={{ padding: '6px 14px', background: placingZone ? '#ef4444' : 'transparent', color: placingZone ? '#fff' : '#f87171', border: `1px solid #f87171`, borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>
-                {placingZone ? '✕ Cancelar' : '➕ Zona'}
+              <button onClick={() => { setPlacingZone(false); setActiveTab('geocercas'); }} style={{ padding: '6px 14px', background: 'transparent', color: '#f87171', border: '1px solid #f87171', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>
+                ⚠️ Zonas
               </button>
               <button onClick={loadAll} style={{ padding: '6px 14px', background: '#00ff41', color: '#0d0d0d', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>Actualizar</button>
               <button onClick={() => { setTurnoSummary(null); setShowTurnoModal(true); }} style={{ padding: '6px 14px', background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>Entregar turno</button>
@@ -3484,158 +3482,187 @@ export default function Home() {
               })()}
             </div>
 
-            <div className="dashboard-content" style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-              <div className="dashboard-sidebar" style={{ width: '320px', background: '#111111', borderRight: '1px solid #1a3d1a', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-                <div style={{ display: 'flex', borderBottom: '1px solid #1a3d1a' }}>
-                  {[
-                    { key: 'unidades', label: 'Unidades', icon: '🚛' },
-                    { key: 'alertas', label: 'Alertas', icon: '🔔' },
-                    { key: 'viajes', label: 'Viajes', icon: '🚚' },
-                    { key: 'zonas', label: 'Zonas', icon: '⚠️' },
-                  ].map(tab => (
-                    <button key={tab.key} onClick={() => setDashTab(tab.key)} style={{
-                      flex: 1, padding: '10px', background: 'none', border: 'none', color: dashTab === tab.key ? '#00ff41' : '#6a9b6a',
-                      cursor: 'pointer', fontSize: '12px', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
-                      borderBottom: dashTab === tab.key ? '2px solid #00ff41' : '2px solid transparent', transition: 'all 0.2s'
-                    }}>
-                      <span>{tab.icon}</span> {tab.label}
-                    </button>
-                  ))}
-                </div>
+            <div className="dashboard-content" style={{ flex: 1, overflowY: 'auto', padding: '1.25rem 1.5rem' }}>
+              {(() => {
+                const enMovimiento = vehiculosOnline.filter(v => estaEnMovimiento(v.location?.speed)).length;
+                const detenidas = vehiculosOnline.length - enMovimiento;
+                const dieselBajo = vehiculos.filter(v => v.fuelLevelPercent !== null && v.fuelLevelPercent < 0.25).length;
+                const onlinePct = vehiculos.length ? Math.round((vehiculosOnline.length / vehiculos.length) * 100) : 0;
+                const viajesEnCurso = viajesActivos.filter(v => !['completado', 'cancelado'].includes(String(v.estado || '').toLowerCase()));
+                const viajesPorEstado = viajesEnCurso.reduce((acc, v) => {
+                  const key = String(v.estado || 'programado').toLowerCase();
+                  acc[key] = (acc[key] || 0) + 1;
+                  return acc;
+                }, {});
+                const etiquetaEstado = (value) => String(value || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                const tipoAlerta = { geocerca: '⭕ Geocerca', combustible_bajo: '⛽ Combustible', velocidad: '🚀 Velocidad', mantenimiento: '🔧 Mantenimiento' };
+                const alertasPorTipo = alertasNoLeidas.reduce((acc, a) => {
+                  const key = String(a.tipo || 'otra');
+                  acc[key] = (acc[key] || 0) + 1;
+                  return acc;
+                }, {});
+                const mVen = mantenimientos.filter(m => m.status === 'vencido').length;
+                const mProx = mantenimientos.filter(m => m.status === 'proximo').length;
+                const mProg = mantenimientos.filter(m => m.status === 'programado').length;
+                const mCompletados = mantenimientos.filter(m => m.status === 'completado').length;
+                const rem = kpis?.remolques;
+                const semanas = kpis?.viajesPorSemana || [];
+                const maxSemana = Math.max(1, ...semanas.map(s => s.total));
+                const citasProximas = citasOperativas.slice(0, 3);
+                const zc = customRiskZones.reduce((acc, z) => { acc[z.severity] = (acc[z.severity] || 0) + 1; return acc; }, {});
 
-                {dashTab === 'unidades' && (
-                  <>
-                    <div style={{ padding: '12px', position: 'relative' }}>
-                      <input value={dashSearch} onChange={e => setDashSearch(e.target.value)} placeholder="Buscar unidad..."
-                        style={{ width: '100%', padding: '10px 12px 10px 36px', background: '#1a1a1a', border: '1px solid #1a3d1a', borderRadius: '8px', color: '#e0e0e0', fontSize: '13px', outline: 'none' }} />
-                      <span style={{ position: 'absolute', left: 24, top: '50%', transform: 'translateY(-50%)', color: '#6a9b6a', fontSize: '13px' }}>🔍</span>
-                    </div>
-                    <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 12px' }}>
-                      {vehiculos.filter(v => !dashSearch || v.name.toLowerCase().includes(dashSearch.toLowerCase()) || (operadores[String(v.id)]?.nombre || '').toLowerCase().includes(dashSearch.toLowerCase())).map(v => {
-                        const isMoving = estaEnMovimiento(v.location?.speed);
-                        const statusColor = v.isOnline ? (isMoving ? '#4ade80' : '#60a5fa') : '#facc15';
-                        const statusLabel = v.isOnline ? (isMoving ? 'Movimiento' : 'Detenida') : 'Sin señal';
+                const panel = (titulo, icono, children, borde = '#1a3d1a') => (
+                  <div style={{ background: '#161616', border: `1px solid ${borde}`, borderRadius: '12px', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ fontSize: '10px', color: '#6a9b6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{icono} {titulo}</div>
+                    {children}
+                  </div>
+                );
 
-  return (
-                          <div key={v.id} role="button" tabIndex={0} aria-label={`Abrir unidad ${v.name}`} onKeyDown={(e) => activarConTeclado(e, () => setSelectedVehicle(v))} onClick={() => setSelectedVehicle(v)} style={{ background: '#1a1a1a', borderRadius: '8px', padding: '12px', marginBottom: '8px', cursor: 'pointer', border: '1px solid transparent', transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: '10px' }}
-                            onMouseEnter={e => { e.currentTarget.style.borderColor = '#00ff41'; e.currentTarget.style.transform = 'translateX(2px)'; }}
-                            onMouseLeave={e => { e.currentTarget.style.borderColor = 'transparent'; e.currentTarget.style.transform = 'none'; }}>
-                            <div style={{ width: 36, height: 36, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0, background: `${statusColor}15`, color: statusColor }}>🚛</div>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontWeight: 600, fontSize: '13px', color: '#e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{v.name}</div>
-                              <div style={{ fontSize: '11px', color: '#6a9b6a', display: 'flex', gap: '8px', marginTop: 2 }}>
-                                <span>👤 {operadores[String(v.id)]?.nombre || 'Sin op.'}</span>
-                                {v.location && <span>🏎 {velocidadKmh(v.location.speed)} km/h</span>}
-                              </div>
-                            </div>
-                            <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', flexShrink: 0, background: `${statusColor}15`, color: statusColor }}>{statusLabel}</span>
-                          </div>
-                        );
-                    })}
-                    </div>
-                  </>
-                )}
+                const fila = (label, value, color = '#e0e0e0') => (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', gap: '8px' }}>
+                    <span style={{ color: '#9ca3af', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
+                    <span style={{ fontWeight: 700, color, flexShrink: 0 }}>{value}</span>
+                  </div>
+                );
 
-                {dashTab === 'zonas' && (
-                  <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
-                    <div style={{ marginBottom: '12px' }}>
-                      <button onClick={() => { setPlacingZone(true); }} style={{ width: '100%', padding: '10px', background: placingZone ? '#7f1d1d' : 'transparent', color: '#f87171', border: '1px dashed #f87171', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>
-                        {placingZone ? '✕ Cancelar' : '➕ Agregar zona (clic en mapa)'}
-                      </button>
-                    </div>
-                    <div style={{ fontSize: '11px', color: '#6a9b6a', marginBottom: '8px' }}>Zonas de riesgo de México (predefinidas): {defaultZonesList.length}</div>
-                    {defaultZonesList.map((z, i) => {
-                      const zColor = { critical: '#f87171', high: '#fb923c', medium: '#facc15' }[z.severity] || '#fb923c';
-                      const zLabel = { critical: 'Crítica', high: 'Alta', medium: 'Media' }[z.severity];
-                      return (
-                        <div key={i} style={{ background: '#1a1a1a', borderRadius: '8px', padding: '10px', marginBottom: '6px', borderLeft: `3px solid ${zColor}` }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontWeight: 600, fontSize: '12px', color: '#e0e0e0' }}>{z.name}</span>
-                            <span style={{ padding: '2px 6px', borderRadius: 10, fontSize: 9, fontWeight: 700, textTransform: 'uppercase', background: `${zColor}15`, color: zColor }}>{zLabel}</span>
+                return (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(270px, 1fr))', gap: '14px' }}>
+                    {panel('Flota', '🚛', (
+                      <>
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#6a9b6a', marginBottom: '4px' }}><span>En línea</span><span>{vehiculosOnline.length} / {vehiculos.length}</span></div>
+                          <div style={{ height: 6, background: '#0d1a0d', borderRadius: 3, overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: `${onlinePct}%`, background: onlinePct >= 60 ? '#4ade80' : onlinePct >= 30 ? '#facc15' : '#f87171', borderRadius: 3, transition: 'width 0.4s' }} />
                           </div>
                         </div>
-                      );
-                    })}
-                    {customRiskZones.length > 0 && (
-                      <>
-                        <div style={{ fontSize: '11px', color: '#6a9b6a', marginTop: '12px', marginBottom: '8px' }}>Zonas propias: {customRiskZones.length}</div>
-                        {customRiskZones.map(z => {
-                          const zColor = { critical: '#f87171', high: '#fb923c', medium: '#facc15' }[z.severity] || '#fb923c';
-                           const zLabel = { critical: 'Crítica', high: 'Alta', medium: 'Media' }[z.severity];
-                          return (
-                            <div key={z.id} style={{ background: '#1a1a1a', borderRadius: '8px', padding: '10px', marginBottom: '6px', borderLeft: `3px solid ${zColor}` }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <span style={{ fontWeight: 600, fontSize: '12px', color: '#e0e0e0' }}>{z.name}</span>
-                                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                                  <span style={{ padding: '2px 6px', borderRadius: 10, fontSize: 9, fontWeight: 700, textTransform: 'uppercase', background: `${zColor}15`, color: zColor }}>{zLabel}</span>
-                                  <button onClick={() => eliminarZonaRiesgo(z.id)} style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '11px', opacity: 0.7 }} onMouseEnter={e => e.target.style.opacity = 1} onMouseLeave={e => e.target.style.opacity = 0.7}>✕</button>
-                                </div>
-                              </div>
-                              <div style={{ fontSize: '10px', color: '#4a8a4a', marginTop: 2 }}>{z.description || 'Sin descripción'}</div>
-                            </div>
-                          );
-                        })}
+                        {fila('🟢 En movimiento', enMovimiento, '#4ade80')}
+                        {fila('🔵 Detenidas', detenidas, '#60a5fa')}
+                        {fila('🟡 Sin señal', vehiculosOffline.length, '#facc15')}
+                        {fila('⛽ Diesel bajo', dieselBajo, dieselBajo > 0 ? '#f59e0b' : '#e0e0e0')}
                       </>
+                    ), '#1a3d1a')}
+
+                    {panel('Alertas sin leer', '🔔', (
+                      <>
+                        <div style={{ fontSize: '30px', fontWeight: 800, color: alertasNoLeidas.length > 0 ? '#f87171' : '#4ade80', lineHeight: 1 }}>{alertasNoLeidas.length}</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto' }}>
+                          {Object.entries(alertasPorTipo).map(([tipo, count]) => (
+                            <div key={tipo} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                              <span style={{ color: '#9ca3af' }}>{tipoAlerta[tipo] || '⚠️ Otra'}</span>
+                              <span style={{ fontWeight: 700, color: '#f87171' }}>{count}</span>
+                            </div>
+                          ))}
+                          {alertasNoLeidas.length === 0 && <span style={{ fontSize: '12px', color: '#6a9b6a' }}>Sin alertas pendientes ✨</span>}
+                        </div>
+                      </>
+                    ), '#1a3d1a')}
+
+                    {panel('Viajes activos', '🚚', (
+                      <>
+                        <div style={{ fontSize: '30px', fontWeight: 800, color: viajesEnCurso.length > 0 ? '#00ff41' : '#6a9b6a', lineHeight: 1 }}>{viajesEnCurso.length}</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto' }}>
+                          {Object.entries(viajesPorEstado).map(([estado, count]) => (
+                            <div key={estado} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                              <span style={{ color: '#9ca3af' }}>{etiquetaEstado(estado)}</span>
+                              <span style={{ fontWeight: 700, color: estadoColors[estado] || '#e0e0e0' }}>{count}</span>
+                            </div>
+                          ))}
+                          {viajesEnCurso.length === 0 && <span style={{ fontSize: '12px', color: '#6a9b6a' }}>Sin viajes en curso</span>}
+                        </div>
+                      </>
+                    ), '#1a3d1a')}
+
+                    {panel('Citas operativas', '📅', (
+                      <>
+                        <div style={{ fontSize: '30px', fontWeight: 800, color: citasOperativas.length > 0 ? '#60a5fa' : '#6a9b6a', lineHeight: 1 }}>{citasOperativas.length}</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto' }}>
+                          {citasProximas.map((c, i) => {
+                            const d = parseCitaDate(c.cita_descarga || c.cita_carga);
+                            return (
+                              <div key={i} style={{ fontSize: '12px', color: '#9ca3af', display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.unidad} → {c.destino}</span>
+                                <span style={{ color: '#e0e0e0', flexShrink: 0 }}>{d ? d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short' }) : '—'}</span>
+                              </div>
+                            );
+                          })}
+                          {citasOperativas.length === 0 && <span style={{ fontSize: '12px', color: '#6a9b6a' }}>Sin citas agendadas</span>}
+                        </div>
+                      </>
+                    ), '#1a3d1a')}
+
+                    {panel('Remolques', '🍆', (
+                      <>
+                        <div style={{ fontSize: '30px', fontWeight: 800, color: '#3b82f6', lineHeight: 1 }}>{rem ? `${rem.disponibles}/${rem.total}` : remolques.length}</div>
+                        {fila('Refrigerados', rem ? rem.refrigerados : '—', '#3b82f6')}
+                        {fila('Con GPS', rem ? rem.conGps : '—', '#3b82f6')}
+                      </>
+                    ), '#1a3d1a')}
+
+                    {panel('Mantenimiento', '🔧', (
+                      <>
+                        <div style={{ fontSize: '30px', fontWeight: 800, color: mVen > 0 ? '#f87171' : mProx > 0 ? '#facc15' : '#4ade80', lineHeight: 1 }}>{mVen + mProx}</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          {fila('⚠️ Vencidos', mVen, mVen > 0 ? '#f87171' : '#e0e0e0')}
+                          {fila('🟡 Próximos', mProx, mProx > 0 ? '#facc15' : '#e0e0e0')}
+                          {fila('🔵 Programados', mProg, '#60a5fa')}
+                          {fila('✅ Completados', mCompletados, '#4ade80')}
+                        </div>
+                      </>
+                    ), '#1a3d1a')}
+
+                    {panel('Pendientes', '📌', (
+                      <>
+                        <div style={{ fontSize: '30px', fontWeight: 800, color: pendientes.length > 0 ? '#f59e0b' : '#4ade80', lineHeight: 1 }}>{pendientes.length}</div>
+                        <div style={{ fontSize: '12px', color: '#6a9b6a' }}>{pendientes.length > 0 ? 'Tareas por resolver' : 'Todo al día ✨'}</div>
+                      </>
+                    ), '#1a3d1a')}
+
+                    {panel('Zonas de peligro', '⚠️', (
+                      <>
+                        <div style={{ fontSize: '30px', fontWeight: 800, color: zc.critical ? '#f87171' : '#fb923c', lineHeight: 1 }}>{customRiskZones.length}</div>
+                        {fila('Propias agregadas', customRiskZones.length, '#f87171')}
+                        {fila('Predefinidas (México)', defaultZonesList.length, '#fb923c')}
+                        <button onClick={() => { setActiveTab('geocercas'); }} style={{ marginTop: 'auto', padding: '8px', background: '#7f1d1d', color: '#fca5a5', border: '1px dashed #f87171', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>
+                          Gestionar en Geocercas →
+                        </button>
+                      </>
+                    ), '#1a3d1a')}
+
+                    {semanas.length > 0 && (
+                      <div style={{ gridColumn: '1 / -1', background: '#161616', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '14px 16px' }}>
+                        <div style={{ fontSize: '10px', color: '#6a9b6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '10px' }}>📊 Viajes por semana</div>
+                        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', height: '70px' }}>
+                          {semanas.map((s, i) => (
+                            <div key={i} title={`${s.inicio} — ${s.fin}: ${s.total} viajes`} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', gap: '4px', height: '100%' }}>
+                              <div style={{ fontSize: '11px', fontWeight: 700, color: '#e0e0e0' }}>{s.total}</div>
+                              <div style={{ width: '100%', maxWidth: '34px', background: i === semanas.length - 1 ? '#00ff41' : '#1d4ed8', borderRadius: '4px 4px 0 0', height: `${Math.max(4, Math.round((s.total / maxSemana) * 100))}%`, opacity: 0.9, transition: 'height 0.4s' }} />
+                              <div style={{ fontSize: '9px', color: '#6a9b6a' }}>{s.inicio}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {alertasNoLeidas.length > 0 && (
+                      <div style={{ gridColumn: '1 / -1', background: '#161616', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '14px 16px' }}>
+                        <div style={{ fontSize: '10px', color: '#6a9b6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '10px' }}>🕑 Últimas alertas</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '8px' }}>
+                          {alertasNoLeidas.slice(0, 6).map(a => {
+                            const borderColor = a.tipo === 'geocerca' ? '#8b5cf6' : a.tipo === 'combustible_bajo' ? '#f59e0b' : a.tipo === 'mantenimiento' ? '#f87171' : '#3b82f6';
+                            return (
+                              <div key={a.id} style={{ background: '#1a1a1a', borderRadius: '8px', padding: '10px', borderLeft: `3px solid ${borderColor}` }}>
+                                <div style={{ fontSize: '12px', fontWeight: 600, color: '#e0e0e0' }}>{a.vehicle_name || a.vehicle_id}</div>
+                                <div style={{ fontSize: '11px', color: '#6a9b6a', marginTop: 2 }}>{a.mensaje}</div>
+                                <div style={{ fontSize: '10px', color: '#4a8a4a', marginTop: 2 }}>{parseFecha(a.timestamp)?.toLocaleTimeString()}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
                     )}
                   </div>
-                )}
-
-                {dashTab === 'alertas' && (
-                  <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
-                    {alertasNoLeidas.length === 0 ? (
-                      <div style={{ textAlign: 'center', padding: '40px 20px', color: '#6a9b6a' }}>
-                        <div style={{ fontSize: '2rem', marginBottom: '8px', opacity: 0.3 }}>🔔</div>
-                        <p style={{ fontSize: '13px' }}>No hay alertas sin leer</p>
-                      </div>
-                    ) : alertasNoLeidas.slice(0, 50).map(a => {
-                      const borderColor = a.tipo === 'geocerca' ? '#8b5cf6' : a.tipo === 'combustible_bajo' ? '#f59e0b' : '#3b82f6';
-                      return (
-                        <div key={a.id} style={{ background: '#1a1a1a', borderRadius: '8px', padding: '12px', marginBottom: '8px', borderLeft: `3px solid ${borderColor}` }}>
-                          <div style={{ fontSize: '12px', fontWeight: 500, color: '#e0e0e0' }}>
-                            <span style={{ marginRight: '6px' }}>{a.tipo === 'geocerca' ? '⭕' : a.tipo === 'combustible_bajo' ? '⛽' : '⚠️'}</span>
-                            {a.vehicle_name || a.vehicle_id}
-                          </div>
-                          <div style={{ fontSize: '11px', color: '#6a9b6a', marginTop: 4 }}>{a.mensaje}</div>
-                          <div style={{ fontSize: '10px', color: '#4a8a4a', marginTop: 4 }}>{parseFecha(a.timestamp)?.toLocaleTimeString()}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {dashTab === 'viajes' && (
-                  <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
-                    {soloPrimerViajeActivoPorUnidad(ordenarViajesUnidad(viajes)).filter(v => !['completado', 'cancelado'].includes(String(v.estado || '').toLowerCase())).length === 0 ? (
-                      <div style={{ textAlign: 'center', padding: '40px 20px', color: '#6a9b6a' }}>
-                        <div style={{ fontSize: '2rem', marginBottom: '8px', opacity: 0.3 }}>🚚</div>
-                        <p style={{ fontSize: '13px' }}>No hay viajes activos</p>
-                      </div>
-                    ) : soloPrimerViajeActivoPorUnidad(ordenarViajesUnidad(viajes)).filter(v => !['completado', 'cancelado'].includes(String(v.estado || '').toLowerCase())).map((v, idx) => {
-                      const viajeColor = estadoColors[String(v.estado || '').toLowerCase()] || '#6a9b6a';
-                      const viajeLabel = String(v.estado || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-                      const seqLabel = idx === 0 ? 'Actual' : idx === 1 ? 'Siguiente' : `#${idx + 1}`;
-                      return (
-                        <div key={v.id} style={{ background: '#1a1a1a', borderRadius: '8px', padding: '12px', marginBottom: '8px', borderLeft: `3px solid ${viajeColor}` }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                            <span style={{ fontWeight: 600, fontSize: '13px', color: '#e0e0e0' }}>{seqLabel} · {v.vehicle_name || v.vehicle_id}</span>
-                            <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', background: `${viajeColor}15`, color: viajeColor }}>{viajeLabel}</span>
-                          </div>
-                           <div style={{ fontSize: '11px', color: '#6a9b6a' }}>📍 {v.origen || '?'} → {v.tipo_entrega === 'reparto' ? destinosViaje(v).map((destino, index) => `${index + 1}. ${destino}`).join(' · ') : (v.destino || '?')}</div>
-                           {v.tipo_entrega === 'reparto' && <span className="trip-reparto-badge">Reparto</span>}
-                          <div style={{ fontSize: '11px', color: '#4a8a4a', marginTop: 2 }}>👤 {v.conductor || 'Sin asignar'}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              <div className="dashboard-map" style={{ flex: 1, position: 'relative' }}>
-                {placingZone && <div style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', background: 'rgba(15,23,42,0.9)', backdropFilter: 'blur(10px)', padding: '10px 20px', borderRadius: '8px', fontSize: '13px', color: '#e0e0e0', zIndex: 1000, border: '1px solid #f87171', pointerEvents: 'none' }}>
-                  🎯 Haz clic en el mapa para colocar la zona de riesgo
-                </div>}
-                <MapaUnidades vehiculos={vehiculos} geofences={geofences} customRiskZones={customRiskZones} placingZone={placingZone} onZonePlaced={handleZonePlaced} />
-              </div>
+                );
+              })()}
             </div>
           </div>
         )}
@@ -5615,6 +5642,53 @@ export default function Home() {
                     </div>
                   ))}
                 </div>
+              </div>
+            </div>
+
+            <div style={{ ...s.card, marginTop: '1.5rem', padding: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1rem' }}>⚠️ Zonas de peligro</h3>
+                  <div style={{ color: '#6a9b6a', fontSize: '0.8rem', marginTop: '0.25rem' }}>{customRiskZones.length} propias · {defaultZonesList.length} predefinidas de México</div>
+                </div>
+                <button onClick={() => setPlacingZone(prev => !prev)}
+                  style={{ padding: '0.5rem 1rem', borderRadius: '8px', border: placingZone ? '1px solid #ef4444' : '1px dashed #f87171', background: placingZone ? '#7f1d1d' : 'transparent', color: '#f87171', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}>
+                  {placingZone ? '✕ Cancelar colocación' : '➕ Agregar zona (clic en el mapa)'}
+                </button>
+              </div>
+              <div style={{ position: 'relative' }}>
+                {placingZone && (
+                  <div style={{ position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', background: 'rgba(15,23,42,0.92)', backdropFilter: 'blur(10px)', padding: '8px 16px', borderRadius: '8px', fontSize: '13px', color: '#e0e0e0', zIndex: 1000, border: '1px solid #f87171', pointerEvents: 'none' }}>
+                    🎯 Haz clic en el mapa para colocar la zona de riesgo
+                  </div>
+                )}
+                <div style={{ height: '420px', borderRadius: '10px', overflow: 'hidden', border: '1px solid #1a3d1a' }}>
+                  <MapaUnidades vehiculos={vehiculos} geofences={allGeofences} customRiskZones={customRiskZones} placingZone={placingZone} onZonePlaced={handleZonePlaced} />
+                </div>
+              </div>
+              <div style={{ marginTop: '1rem' }}>
+                {customRiskZones.length > 0 ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.6rem' }}>
+                    {customRiskZones.map(z => {
+                      const zColor = { critical: '#f87171', high: '#fb923c', medium: '#facc15' }[z.severity] || '#fb923c';
+                      const zLabel = { critical: 'Crítica', high: 'Alta', medium: 'Media' }[z.severity];
+                      return (
+                        <div key={z.id} style={{ background: '#1a1a1a', borderRadius: '8px', padding: '10px', borderLeft: `3px solid ${zColor}` }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontWeight: 600, fontSize: '12px', color: '#e0e0e0' }}>{z.name}</span>
+                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                              <span style={{ padding: '2px 6px', borderRadius: 10, fontSize: 9, fontWeight: 700, textTransform: 'uppercase', background: `${zColor}15`, color: zColor }}>{zLabel}</span>
+                              <button onClick={() => eliminarZonaRiesgo(z.id)} style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '11px' }}>✕</button>
+                            </div>
+                          </div>
+                          <div style={{ fontSize: '10px', color: '#4a8a4a', marginTop: 2 }}>{z.description || 'Sin descripción'}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '0.85rem', color: '#6a9b6a' }}>Aún no hay zonas propias. Presiona "Agregar zona" y haz clic en el mapa para crear una.</div>
+                )}
               </div>
             </div>
 
