@@ -3510,6 +3510,15 @@ export default function Home() {
                 const maxSemana = Math.max(1, ...semanas.map(s => s.total));
                 const citasProximas = citasOperativas.slice(0, 3);
                 const zc = customRiskZones.reduce((acc, z) => { acc[z.severity] = (acc[z.severity] || 0) + 1; return acc; }, {});
+                const conCombustible = vehiculos.filter(v => v.fuelLevelPercent !== null);
+                const avgFuel = conCombustible.length ? Math.round(conCombustible.reduce((s, v) => s + v.fuelLevelPercent, 0) / conCombustible.length) : 0;
+                const dieselCritico = vehiculos.filter(v => v.fuelLevelPercent !== null && v.fuelLevelPercent < 0.10).length;
+                const operadoresAsignados = Object.values(operadores).filter(o => o && o.nombre).length;
+                const unidadesSinOperador = vehiculos.filter(v => !(operadores[String(v.id)]?.nombre)).length;
+                const velocidadMaxima = vehiculos.reduce((m, v) => Math.max(m, Number(v.location?.speed || 0)), 0);
+                const excesoVelocidad = vehiculos.filter(v => Number(v.location?.speed || 0) > 80);
+                const seguimientoActivo = seguimiento.filter(s => !['completado', 'cancelado'].includes(String(s.estatus || '').toLowerCase()));
+                const seguimientoPorEstatus = seguimientoActivo.reduce((acc, s) => { const key = String(s.estatus || 'Disponible'); acc[key] = (acc[key] || 0) + 1; return acc; }, {});
 
                 const panel = (titulo, icono, children, borde = '#1a3d1a') => (
                   <div style={{ background: '#161616', border: `1px solid ${borde}`, borderRadius: '12px', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -3625,6 +3634,73 @@ export default function Home() {
                         <button onClick={() => { setActiveTab('geocercas'); }} style={{ marginTop: 'auto', padding: '8px', background: '#7f1d1d', color: '#fca5a5', border: '1px dashed #f87171', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>
                           Gestionar en Geocercas →
                         </button>
+                      </>
+                    ), '#1a3d1a')}
+
+                    {panel('Combustible', '⛽', (
+                      <>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#6a9b6a', marginBottom: '4px' }}><span>Promedio de tanque</span><span>{avgFuel}%</span></div>
+                        <div style={{ height: 6, background: '#0d1a0d', borderRadius: 3, overflow: 'hidden', marginBottom: '10px' }}>
+                          <div style={{ height: '100%', width: `${avgFuel}%`, background: avgFuel >= 50 ? '#4ade80' : avgFuel >= 25 ? '#facc15' : '#f87171', borderRadius: 3, transition: 'width 0.4s' }} />
+                        </div>
+                        {fila('🟢 Tanque > 50%', conCombustible.filter(v => v.fuelLevelPercent >= 0.5).length, '#4ade80')}
+                        {fila('🟡 Diesel bajo (< 25%)', dieselBajo, dieselBajo > 0 ? '#f59e0b' : '#e0e0e0')}
+                        {fila('🔴 Crítico (< 10%)', dieselCritico, dieselCritico > 0 ? '#f87171' : '#e0e0e0')}
+                        {fila('📊 Con dato de combustible', conCombustible.length, '#60a5fa')}
+                      </>
+                    ), '#1a3d1a')}
+
+                    {panel('Operadores', '👤', (
+                      <>
+                        <div style={{ fontSize: '30px', fontWeight: 800, color: '#8b5cf6', lineHeight: 1 }}>{operadoresAsignados}</div>
+                        <div style={{ fontSize: '12px', color: '#6a9b6a', marginTop: '-6px' }}>Operadores asignados</div>
+                        {fila('Conductores Samsara', samsaraDrivers.length, '#3b82f6')}
+                        {fila('Unidades sin operador', unidadesSinOperador, unidadesSinOperador > 0 ? '#f59e0b' : '#4ade80')}
+                      </>
+                    ), '#1a3d1a')}
+
+                    {panel('Velocidad', '🚀', (
+                      <>
+                        <div style={{ fontSize: '30px', fontWeight: 800, color: velocidadMaxima > 80 ? '#f87171' : '#00ff41', lineHeight: 1 }}>
+                          {Math.round(velocidadMaxima)} <span style={{ fontSize: '14px', fontWeight: 600, color: '#6a9b6a' }}>mph</span>
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#6a9b6a', marginTop: '-6px' }}>Velocidad máxima actual</div>
+                        {fila('Excediendo 80 mph', excesoVelocidad.length, excesoVelocidad.length > 0 ? '#f87171' : '#4ade80')}
+                        {excesoVelocidad.length > 0 && (
+                          <div style={{ fontSize: '11px', color: '#f87171', maxHeight: '60px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            {excesoVelocidad.slice(0, 5).map(v => (
+                              <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                <span>{v.name}</span>
+                                <span style={{ fontWeight: 700 }}>{Math.round(v.location?.speed || 0)} mph</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    ), '#1a3d1a')}
+
+                    {panel('Seguimiento', '📋', (
+                      <>
+                        <div style={{ fontSize: '30px', fontWeight: 800, color: seguimientoActivo.length > 0 ? '#00ff41' : '#6a9b6a', lineHeight: 1 }}>{seguimientoActivo.length}</div>
+                        <div style={{ fontSize: '12px', color: '#6a9b6a', marginTop: '-6px' }}>Filas activas</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto' }}>
+                          {Object.entries(seguimientoPorEstatus).map(([estado, count]) => (
+                            <div key={estado} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                              <span style={{ color: '#9ca3af' }}>{estado}</span>
+                              <span style={{ fontWeight: 700, color: '#e0e0e0' }}>{count}</span>
+                            </div>
+                          ))}
+                          {seguimientoActivo.length === 0 && <span style={{ fontSize: '12px', color: '#6a9b6a' }}>Sin filas activas</span>}
+                        </div>
+                      </>
+                    ), '#1a3d1a')}
+
+                    {panel('Clientes', '🏢', (
+                      <>
+                        <div style={{ fontSize: '30px', fontWeight: 800, color: '#60a5fa', lineHeight: 1 }}>{clientes.length}</div>
+                        <div style={{ fontSize: '12px', color: '#6a9b6a', marginTop: '-6px' }}>Clientes registrados</div>
+                        {fila('🔗 Geocercas vinculadas', geofenceLinks.length, '#8b5cf6')}
+                        {fila('📍 Total geocercas', allGeofences.length, '#3b82f6')}
                       </>
                     ), '#1a3d1a')}
 
