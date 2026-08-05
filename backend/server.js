@@ -1632,6 +1632,59 @@ async function fetchSamsaraTrailerLocations() {
   return trailers;
 }
 
+async function fetchSamsaraTrailerTemps() {
+  const types = 'reeferReturnAirTemperatureMilliCZone1,reeferSetPointTemperatureMilliCZone1,reeferStateZone1';
+  const temps = [];
+  let after = null;
+  do {
+    const tempRes = await axios.get(`${SAMSARA_API_BASE_URL}/fleet/trailers/stats`, {
+      headers: { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' },
+      params: { types, ...(after ? { after } : {}) },
+      timeout: 15000,
+    });
+    const data = tempRes.data || {};
+    temps.push(...(Array.isArray(data.data) ? data.data : []));
+    after = data.pagination?.hasNextPage ? data.pagination.endCursor : null;
+  } while (after);
+  return temps.map(t => {
+    const ret = t.reeferReturnAirTemperatureMilliCZone1;
+    const set = t.reeferSetPointTemperatureMilliCZone1;
+    const st = t.reeferStateZone1;
+    if (!ret && !set && !st) return null;
+    return {
+      id: t.id,
+      name: t.name || '',
+      returnC: ret?.value != null ? Math.round(ret.value / 100) / 10 : null,
+      setPointC: set?.value != null ? Math.round(set.value / 100) / 10 : null,
+      state: st?.value ?? null,
+      timeMs: ret?.time ? new Date(ret.time).getTime() : null,
+    };
+  }).filter(Boolean);
+}
+
+let trailerTempsCache = [];
+let trailerTempsFetchedAt = 0;
+const TRAILER_TEMP_TTL_MS = 60000;
+
+async function getTrailerTempsCached(force = false) {
+  if (!force && trailerTempsFetchedAt && Date.now() - trailerTempsFetchedAt < TRAILER_TEMP_TTL_MS) {
+    return trailerTempsCache;
+  }
+  try {
+    trailerTempsCache = await fetchSamsaraTrailerTemps();
+  } catch (err) {
+    console.error('Error al obtener temperatura de trailers Samsara:', err.message);
+  }
+  trailerTempsFetchedAt = Date.now();
+  return trailerTempsCache;
+}
+
+function mapTrailerTemp(numero) {
+  const num = normalizeTrailerNumber(numero);
+  if (!num) return null;
+  return trailerTempsCache.find(t => normalizeTrailerNumber(t.name) === num) || null;
+}
+
 async function performSamsaraTrailerRefresh() {
   const trailers = await fetchSamsaraTrailerLocations();
   for (const t of trailers) {
@@ -1647,6 +1700,7 @@ async function performSamsaraTrailerRefresh() {
     );
   }
   await loadTrailerLocationsCache();
+  await getTrailerTempsCached(true);
   return trailers;
 }
 
@@ -3432,7 +3486,8 @@ app.delete('/api/clientes/:id', (req, res) => {
 
 // ============ REMOLQUES ============
 
-app.get('/api/remolques', (req, res) => {
+app.get('/api/remolques', async (req, res) => {
+  await getTrailerTempsCached().catch(() => {});
   db.all(`SELECT r.*,
     (SELECT ra.vehicle_name FROM remolque_asignaciones ra WHERE ra.remolque_id = r.id AND ra.activa = 1 LIMIT 1) as unidad_asignada,
     (SELECT ra.vehicle_id FROM remolque_asignaciones ra WHERE ra.remolque_id = r.id AND ra.activa = 1 LIMIT 1) as vehicle_id_asignado,
@@ -3443,6 +3498,7 @@ app.get('/api/remolques', (req, res) => {
     const enriched = (rows || []).map(r => ({
       ...r,
       trailer_gps: mapTrailerLocation(r.numero),
+      temperatura: mapTrailerTemp(r.numero),
     }));
     res.json(enriched);
   });

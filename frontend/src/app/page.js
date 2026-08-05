@@ -1817,6 +1817,12 @@ export default function Home() {
   };
 
   const numeroRemolque = (numero) => `#${String(numero || '').replace(/^#+/, '')}`;
+  const tempColor = (temp) => {
+    if (!temp || temp.returnC == null) return '#6a9b6a';
+    if (String(temp.state || '').toLowerCase() === 'off') return '#facc15';
+    if (temp.setPointC == null) return '#60a5fa';
+    return Math.abs(temp.returnC - temp.setPointC) > 2 ? '#f87171' : '#4ade80';
+  };
 
   const obtenerMiembrosFull = (remolque) => {
     if (!remolque || (!remolque.grupo_full && String(remolque.tipo_asignacion || '').toLowerCase() !== 'full')) return [];
@@ -3482,6 +3488,7 @@ export default function Home() {
                 const excesoVelocidad = vehiculos.filter(v => velocidadKmh(v.location?.speed) > 120);
                 const seguimientoActivo = seguimiento.filter(s => !['completado', 'cancelado'].includes(String(s.estatus || '').toLowerCase()));
                 const seguimientoPorEstatus = seguimientoActivo.reduce((acc, s) => { const key = String(s.estatus || 'Disponible'); acc[key] = (acc[key] || 0) + 1; return acc; }, {});
+                const thermosConTemp = remolques.filter(r => r.temperatura && r.temperatura.returnC != null);
 
                 const panel = (titulo, accent, children) => (
                   <div style={{ background: '#161616', border: '1px solid #1a3d1a', borderLeft: `3px solid ${accent}`, borderRadius: '10px', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -3597,6 +3604,21 @@ export default function Home() {
                           {bigNum(rem ? `${rem.disponibles}/${rem.total}` : remolques.length, '#3b82f6', 'Disponibles / total')}
                           {fila('Refrigerados', rem ? rem.refrigerados : '—', '#3b82f6')}
                           {fila('Con GPS', rem ? rem.conGps : '—', '#3b82f6')}
+                        </>
+                      ))}
+
+                      {panel('Temperatura', thermosConTemp.length > 0 ? '#60a5fa' : '#4a8a4a', (
+                        <>
+                          {bigNum(thermosConTemp.length, thermosConTemp.length > 0 ? '#60a5fa' : '#6a9b6a', 'Thermos con sensor')}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '120px', overflowY: 'auto' }}>
+                            {thermosConTemp.slice(0, 8).map(r => (
+                              <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', gap: '8px' }}>
+                                <span style={{ color: '#9ca3af', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{numeroRemolque(r.numero)}</span>
+                                <span style={{ fontWeight: 700, color: tempColor(r.temperatura) }}>{r.temperatura.returnC}°C · {r.temperatura.state}</span>
+                              </div>
+                            ))}
+                            {thermosConTemp.length === 0 && <span style={{ fontSize: '12px', color: '#6a9b6a' }}>Sin datos del sensor Samsara</span>}
+                          </div>
                         </>
                       ))}
 
@@ -5101,6 +5123,11 @@ export default function Home() {
                           </div>
                         </div>
                         <div style={{ fontSize: '0.75rem', color: '#f59e0b', textTransform: 'uppercase' }}>{r.categoria || 'Caja Seca'}</div>
+                        {r.temperatura?.returnC != null && (
+                          <div style={{ fontSize: '0.78rem', fontWeight: 700, color: tempColor(r.temperatura) }}>
+                            Temperatura: {r.temperatura.returnC}°C · ajuste {r.temperatura.setPointC ?? '—'}°C · {r.temperatura.state || 'Sin estado'}
+                          </div>
+                        )}
                         {(() => {
                           const ubic = ubicacionRemolque(r);
                           if (ubic.libre) {
