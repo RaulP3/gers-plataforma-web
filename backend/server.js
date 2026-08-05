@@ -533,6 +533,7 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
     email TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+  db.run("ALTER TABLE clientes ADD COLUMN wpp_groups TEXT", [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS remolques (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1037,6 +1038,13 @@ function parseFechaLocal(value) {
   return new Date(str.replace(' ', 'T'));
 }
 
+function localTimestampISO(value = new Date()) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, '0')}`;
+}
+
 async function computeViajesSemanaKpi() {
   const rows = await allQuery(
     `SELECT fecha_inicio, created_at, estado
@@ -1103,20 +1111,16 @@ async function computeCitasHoyKpi() {
     allQuery(`SELECT fecha_inicio, fecha_fin, estado FROM viajes WHERE estado NOT IN ('completado', 'cancelado')`),
     allQuery(`SELECT cita_carga, cita_descarga, estatus FROM seguimiento WHERE COALESCE(estatus, '') NOT IN ('completado', 'cancelado')`),
   ]);
-  const filtrado = items => items.filter(r => {
-    const f = parseFechaLocal(r.fecha_inicio) || parseFechaLocal(r.fecha_fin);
-    return f && !Number.isNaN(f.getTime()) && f >= ini && f <= fin;
-  });
-  const filtradoSeg = items => items.filter(r => {
-    const f = parseFechaLocal(r.cita_carga) || parseFechaLocal(r.cita_descarga);
-    return f && !Number.isNaN(f.getTime()) && f >= ini && f <= fin;
-  });
-  const viajesHoy = filtrado(viajes || []);
-  const seguimientoHoy = filtradoSeg(seguimientoRows || []);
-  const todas = [...viajesHoy.map(v => ({ cita: parseFechaLocal(v.fecha_fin) || parseFechaLocal(v.fecha_inicio) })),
-    ...seguimientoHoy.map(s => ({ cita: parseFechaLocal(s.cita_descarga) || parseFechaLocal(s.cita_carga) }))];
-  const proxima = todas.filter(t => t.cita && t.cita.getTime() >= Date.now())
-    .sort((a, b) => a.cita.getTime() - b.cita.getTime())[0]?.cita || null;
+  const citaViaje = v => parseFechaLocal(v.fecha_fin) || parseFechaLocal(v.fecha_inicio);
+  const citaSeg = s => parseFechaLocal(s.cita_descarga) || parseFechaLocal(s.cita_carga);
+  const enRango = f => f && !Number.isNaN(f.getTime()) && f >= ini && f <= fin;
+  const viajesHoy = (viajes || []).filter(v => enRango(citaViaje(v)));
+  const seguimientoHoy = (seguimientoRows || []).filter(s => enRango(citaSeg(s)));
+  const todas = [...viajesHoy.map(v => ({ cita: citaViaje(v) })),
+    ...seguimientoHoy.map(s => ({ cita: citaSeg(s) }))];
+  const proxima = [...(viajes || []).map(citaViaje), ...(seguimientoRows || []).map(citaSeg)]
+    .filter(t => t && !Number.isNaN(t.getTime()) && t.getTime() >= Date.now())
+    .sort((a, b) => a.getTime() - b.getTime())[0] || null;
   return {
     total: todas.length,
     viajes: viajesHoy.length,
@@ -1896,7 +1900,7 @@ app.delete('/api/geofence-events', requireAdmin, async (req, res) => {
 
 const TRIP_ROUTE_STATES = new Set(['programado', 'en_ruta_vacio', 'en_ruta_cargado']);
 
-async function updateTripStopFromGeofence(vehicle, geofenceName, type, eventTime = new Date().toISOString(), tripIdHint = null) {
+async function getTripContactForGeofence(vehicle, geofenceName, tripIdHint = null) {
   const normalizedGeofence = normalizeDestination(geofenceName);
   if (!normalizedGeofence || (!vehicle?.id && !vehicle?.name)) return null;
   const params = [String(vehicle.id || ''), String(vehicle.name || '')];
@@ -1921,6 +1925,30 @@ async function updateTripStopFromGeofence(vehicle, geofenceName, type, eventTime
   const stop = candidates.find(candidate => normalizeDestination(candidate.destino) === normalizedGeofence);
   const directTrip = activeTrips.find(trip => trip.tipo_entrega !== 'reparto' && normalizeDestination(trip.destino) === normalizedGeofence && String(trip.estado || '').toLowerCase() !== 'completado')
     || activeTrips.find(trip => trip.tipo_entrega !== 'reparto' && normalizeDestination(trip.destino) === normalizedGeofence);
+  const trip = (stop ? activeTrips.find(t => t.id === stop.viaje_id) : null) || directTrip || null;
+  return { stop, trip, directTrip };
+}
+
+async function tripContactIsProgramado(vehicle, geofenceName, tripIdHint = null) {
+  try {
+    const contact = await getTripContactForGeofence(vehicle, geofenceName, tripIdHint);
+    return !!(contact?.trip && String(contact.trip.estado || '').toLowerCase() === 'programado');
+  } catch (error) {
+    console.error('Error verificando estado del viaje para geocerca:', error.message);
+    return false;
+  }
+}
+
+async function updateTripStopFromGeofence(vehicle, geofenceName, type, eventTime = localTimestampISO(new Date()), tripIdHint = null) {
+  const contact = await getTripContactForGeofence(vehicle, geofenceName, tripIdHint);
+  if (!contact) return null;
+  const { stop, trip, directTrip } = contact;
+  const tripId = stop?.viaje_id || directTrip?.id;
+  const estadoActual = String(trip?.estado || '').toLowerCase();
+
+  if (estadoActual === 'programado') {
+    return stop ? getQuery('SELECT * FROM viaje_paradas WHERE id = ?', [stop.id]) : null;
+  }
 
   if (type === 'entrada') {
     if (stop) {
@@ -1946,10 +1974,7 @@ async function updateTripStopFromGeofence(vehicle, geofenceName, type, eventTime
         );
       }
     }
-    const tripId = stop?.viaje_id || directTrip?.id;
     if (tripId) {
-      const trip = activeTrips.find(trip => trip.id === tripId);
-      const estadoActual = String(trip?.estado || '').toLowerCase();
       if (estadoActual === 'completado') {
         await runQuery("UPDATE viajes SET estado = 'espera_ingreso', fecha_fin = NULL, estado_previo = NULL, hora_llegada = COALESCE(hora_llegada, ?), updated_at = datetime('now') WHERE id = ?", [eventTime, tripId]);
       } else if (TRIP_ROUTE_STATES.has(estadoActual)) {
@@ -1968,7 +1993,6 @@ async function updateTripStopFromGeofence(vehicle, geofenceName, type, eventTime
       const nextStop = await getQuery("SELECT id FROM viaje_paradas WHERE viaje_id = ? AND orden > ? AND estado = 'pendiente' ORDER BY orden ASC LIMIT 1", [stop.viaje_id, stop.orden]);
       if (nextStop) await runQuery("UPDATE viaje_paradas SET estado = 'en_camino', updated_at = datetime('now') WHERE id = ?", [nextStop.id]);
     }
-    const trip = activeTrips.find(trip => trip.id === stop.viaje_id);
     const restantes = await allQuery(
       "SELECT id FROM viaje_paradas WHERE viaje_id = ? AND estado NOT IN ('completada', 'omitida')",
       [stop.viaje_id]
@@ -1985,8 +2009,30 @@ async function updateTripStopFromGeofence(vehicle, geofenceName, type, eventTime
   return stop ? getQuery('SELECT * FROM viaje_paradas WHERE id = ?', [stop.id]) : null;
 }
 
+async function resetTripGeofenceState(trip) {
+  try {
+    const geofences = await loadAllGeofences();
+    const destinations = trip.tipo_entrega === 'reparto'
+      ? tripDestinations(trip)
+      : (trip.destino ? [trip.destino] : []);
+    if (!destinations.length) return;
+    const targets = geofences.filter(g => destinations.some(d => normalizeDestination(g.nombre) === normalizeDestination(d)));
+    const vehicleId = String(trip.vehicle_id || '');
+    for (const g of targets) {
+      const res = await runQuery(
+        `UPDATE vehicle_geofence_state SET inside = 0, last_check = datetime('now')
+          WHERE vehicle_id = ? AND geofence_id = ?`,
+        [vehicleId, g.stateId]
+      );
+    }
+  } catch (err) {
+    console.error('Error reseteando estado de geocerca del viaje:', err.message);
+  }
+}
+
 async function markInitialGeofenceContact(trip) {
   const contacts = [];
+  if (String(trip?.estado || '').toLowerCase() === 'programado') return contacts;
   const vehicleId = String(trip.vehicle_id || '');
   const vehicleName = String(trip.vehicle_name || '');
   if (!vehicleId && !vehicleName) return contacts;
@@ -2009,7 +2055,7 @@ async function markInitialGeofenceContact(trip) {
     const matching = geofences.filter(g => normalizeDestination(g.nombre) === normalizeDestination(destination));
     const geofence = matching.find(g => pointInsideGeofence(vehicle.location.latitude, vehicle.location.longitude, g));
     if (!geofence) continue;
-    const eventTime = new Date().toISOString();
+    const eventTime = localTimestampISO(new Date());
     await runQuery(
       `INSERT INTO geofence_events (vehicle_id, vehicle_name, geofence_id, geofence_nombre, tipo, latitud, longitud, source) VALUES (?, ?, ?, ?, 'entrada', ?, ?, ?)`,
       [vehicle.id, vehicle.name, geofence.eventId, geofence.nombre, vehicle.location.latitude, vehicle.location.longitude, geofence.source]
@@ -2064,7 +2110,7 @@ async function createAlertRecord({ vehicle_id = '', vehicle_name = '', tipo = 'a
   return alert;
 }
 
-async function createCustomerGeofenceAlert(vehicle, client, geofenceName, eventTime = new Date().toISOString()) {
+async function createCustomerGeofenceAlert(vehicle, client, geofenceName, eventTime = localTimestampISO(new Date())) {
   if (!client?.id) return null;
   const vehicleId = String(vehicle.id || '');
   const vehicleName = vehicle.name || vehicleId;
@@ -2100,7 +2146,7 @@ function validWebhookSignature(req) {
   return suppliedBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(suppliedBuffer, expectedBuffer);
 }
 
-app.post('/api/webhooks/samsara', (req, res) => {
+app.post('/api/webhooks/samsara', async (req, res) => {
   try {
     if (!validWebhookSignature(req)) return res.status(401).json({ error: 'Firma de webhook inválida' });
     const payload = req.body || {};
@@ -2120,7 +2166,7 @@ app.post('/api/webhooks/samsara', (req, res) => {
     const eventTime = isStandardGeofence
       ? (standardEvent.startMs || payload.eventMs || Date.now())
       : (payload.eventTime || Date.now());
-    const createdAt = new Date(eventTime).toISOString();
+    const createdAt = localTimestampISO(new Date(eventTime));
     const tipo = (eventType === 'GeofenceEntry' || standardCondition === 'DeviceLocationInsideGeofence') ? 'entrada' : 'salida';
     const details = String(standardEvent?.details || standardEvent?.summary || '');
     const geofenceMatch = details.match(/\b(?:inside|outside)\s+(.+?)(?:\s+for more than\s+\d+\s+minutes)?\.?$/i);
@@ -2128,6 +2174,10 @@ app.post('/api/webhooks/samsara', (req, res) => {
     const geofenceId = isStandardGeofence ? null : (address.id || null);
     const latitud = isStandardGeofence ? (standardEvent.location?.latitude ?? null) : (geofence.circle?.latitude ?? null);
     const longitud = isStandardGeofence ? (standardEvent.location?.longitude ?? null) : (geofence.circle?.longitude ?? null);
+
+    if (await tripContactIsProgramado(vehicle, geofenceName)) {
+      return res.json({ ok: true, saved: false, ignored: true, reason: 'viaje_programado' });
+    }
 
     db.run(
       `INSERT OR IGNORE INTO geofence_events (vehicle_id, vehicle_name, geofence_id, geofence_nombre, tipo, latitud, longitud, source, event_uid, raw_payload, created_at)
@@ -2213,37 +2263,41 @@ async function performGeofenceCheck() {
         const wasInside = prev ? prev.inside === 1 : false;
 
         if (inside && !wasInside) {
-          await runQuery(
-            `INSERT INTO geofence_events (vehicle_id, vehicle_name, geofence_id, geofence_nombre, tipo, latitud, longitud, source) VALUES (?, ?, ?, ?, 'entrada', ?, ?, ?)`,
-            [v.id, v.name, g.eventId, g.nombre, vLat, vLon, g.source]
-          );
-          if (g.cliente_id) {
-            await createCustomerGeofenceAlert(v, { id: g.cliente_id, nombre: g.cliente_nombre }, g.nombre);
-          } else {
+          if (!(await tripContactIsProgramado(v, g.nombre))) {
+            await runQuery(
+              `INSERT INTO geofence_events (vehicle_id, vehicle_name, geofence_id, geofence_nombre, tipo, latitud, longitud, source) VALUES (?, ?, ?, ?, 'entrada', ?, ?, ?)`,
+              [v.id, v.name, g.eventId, g.nombre, vLat, vLon, g.source]
+            );
+            if (g.cliente_id) {
+              await createCustomerGeofenceAlert(v, { id: g.cliente_id, nombre: g.cliente_nombre }, g.nombre);
+            } else {
+              await createAlertRecord({
+                vehicle_id: v.id,
+                vehicle_name: v.name,
+                tipo: 'geocerca',
+                mensaje: `${v.name} entró a la geocerca "${g.nombre}"`,
+                severidad: 'info',
+              });
+            }
+            await updateTripStopFromGeofence(v, g.nombre, 'entrada');
+            alerts.push({ vehicle: v.name, geofence: g.nombre, tipo: 'entrada' });
+          }
+        } else if (!inside && wasInside) {
+          if (!(await tripContactIsProgramado(v, g.nombre))) {
+            await runQuery(
+              `INSERT INTO geofence_events (vehicle_id, vehicle_name, geofence_id, geofence_nombre, tipo, latitud, longitud, source) VALUES (?, ?, ?, ?, 'salida', ?, ?, ?)`,
+              [v.id, v.name, g.eventId, g.nombre, vLat, vLon, g.source]
+            );
             await createAlertRecord({
               vehicle_id: v.id,
               vehicle_name: v.name,
               tipo: 'geocerca',
-              mensaje: `${v.name} entró a la geocerca "${g.nombre}"`,
+              mensaje: `${v.name} salió de la geocerca "${g.nombre}"`,
               severidad: 'info',
             });
+            await updateTripStopFromGeofence(v, g.nombre, 'salida');
+            alerts.push({ vehicle: v.name, geofence: g.nombre, tipo: 'salida' });
           }
-          await updateTripStopFromGeofence(v, g.nombre, 'entrada');
-          alerts.push({ vehicle: v.name, geofence: g.nombre, tipo: 'entrada' });
-        } else if (!inside && wasInside) {
-          await runQuery(
-            `INSERT INTO geofence_events (vehicle_id, vehicle_name, geofence_id, geofence_nombre, tipo, latitud, longitud, source) VALUES (?, ?, ?, ?, 'salida', ?, ?, ?)`,
-            [v.id, v.name, g.eventId, g.nombre, vLat, vLon, g.source]
-          );
-          await createAlertRecord({
-            vehicle_id: v.id,
-            vehicle_name: v.name,
-            tipo: 'geocerca',
-            mensaje: `${v.name} salió de la geocerca "${g.nombre}"`,
-            severidad: 'info',
-          });
-          await updateTripStopFromGeofence(v, g.nombre, 'salida');
-          alerts.push({ vehicle: v.name, geofence: g.nombre, tipo: 'salida' });
         }
 
         if (!prev || wasInside !== inside) {
@@ -2680,7 +2734,7 @@ app.put('/api/viajes/:id', async (req, res) => {
       telefono: has('telefono') ? req.body.telefono : row.telefono,
       fecha_inicio: has('fecha_inicio') ? req.body.fecha_inicio : row.fecha_inicio,
       fecha_fin: has('fecha_fin') ? req.body.fecha_fin : row.fecha_fin,
-      cita_programada: has('cita_programada') ? req.body.cita_programada : row.cita_programada,
+      cita_programada: has('fecha_fin') ? req.body.fecha_fin : row.fecha_fin,
       notas: has('notas') ? req.body.notas : row.notas,
       estado: has('estado') ? req.body.estado : row.estado,
       remolque: has('remolque') ? req.body.remolque : row.remolque,
@@ -2693,6 +2747,9 @@ app.put('/api/viajes/:id', async (req, res) => {
     const paradas = await syncTripStops({ id: Number(req.params.id), ...next }, has('tipo_entrega') || has('destinos') || has('destino'));
     let trailerSync = null;
     const nuevoEstado = String(next.estado || '').toLowerCase();
+    if (TRIP_ROUTE_STATES.has(nuevoEstado)) {
+      await resetTripGeofenceState(next);
+    }
     const estadoPrevio = String(row.estado || '').toLowerCase();
     const viajeActivoPrevio = TRIP_TRAILER_ACTIVE_STATES.has(estadoPrevio);
     if (!viajeActivoPrevio && TRIP_TRAILER_ACTIVE_STATES.has(nuevoEstado) && (next.remolque || row.remolque)) {
@@ -2718,7 +2775,7 @@ app.put('/api/viajes/:id/paradas/:paradaId', async (req, res) => {
     await withTransaction(async tx => {
       const stop = await tx.get('SELECT * FROM viaje_paradas WHERE id = ? AND viaje_id = ?', [req.params.paradaId, req.params.id]);
       if (!stop) throw Object.assign(new Error('Parada no encontrada'), { status: 404 });
-      const now = new Date().toISOString();
+      const now = localTimestampISO(new Date());
       const arrival = ['llego', 'completada'].includes(estado) ? (stop.hora_llegada || now) : stop.hora_llegada;
       const departure = ['completada', 'omitida'].includes(estado) ? now : stop.hora_salida;
       await tx.run(
@@ -3331,6 +3388,40 @@ app.get('/api/viajes/activos', async (req, res) => {
 
 // ============ CLIENTES ============
 
+function parseWppGroups(value) {
+  let raw = [];
+  if (Array.isArray(value)) raw = value;
+  else if (typeof value === 'string' && value) {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) raw = parsed;
+    } catch (error) {
+      raw = [];
+    }
+  }
+  return raw
+    .map(item => typeof item === 'string' ? item : (item?.nombre ?? ''))
+    .map(item => String(item || '').trim())
+    .filter(Boolean);
+}
+
+function normalizeWppGroups(value, current = []) {
+  if (value === undefined || value === null) return current;
+  if (!Array.isArray(value)) throw new Error('wpp_groups debe ser una lista de grupos');
+  const grupos = value.map((item, index) => {
+    const nombre = typeof item === 'string' ? item : item?.nombre;
+    const limpio = String(nombre ?? '').trim().replace(/\s+/g, ' ');
+    if (!limpio) throw new Error(`Grupo de WPP ${index + 1} requiere nombre`);
+    if (limpio.length > 150) throw new Error(`Grupo de WPP ${index + 1}: el nombre es muy largo`);
+    return limpio;
+  });
+  return [...new Set(grupos)];
+}
+
+function serializeCliente(row) {
+  return { ...row, wpp_groups: parseWppGroups(row?.wpp_groups) };
+}
+
 function normalizeClientPayload(body, current = {}) {
   const has = key => Object.prototype.hasOwnProperty.call(body || {}, key);
   const text = (key, fallback = '') => {
@@ -3343,6 +3434,9 @@ function normalizeClientPayload(body, current = {}) {
     contacto: text('contacto'),
     telefono: text('telefono'),
     email: text('email').toLowerCase(),
+    wpp_groups: JSON.stringify(
+      normalizeWppGroups(has('wpp_groups') ? body.wpp_groups : undefined, parseWppGroups(current.wpp_groups))
+    ),
   };
   if (!client.nombre) throw new Error('nombre es requerido');
   if (client.nombre.length > 150) throw new Error('nombre no puede exceder 150 caracteres');
@@ -3357,7 +3451,7 @@ function normalizeClientPayload(body, current = {}) {
 app.get('/api/clientes', (req, res) => {
   db.all('SELECT * FROM clientes ORDER BY nombre ASC', [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json(rows || []);
+    res.json((rows || []).map(serializeCliente));
   });
 });
 
@@ -3372,7 +3466,7 @@ app.get('/api/clientes/:id', (req, res) => {
   db.get('SELECT * FROM clientes WHERE id = ?', [req.params.id], (err, row) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!row) return res.status(404).json({ error: 'Cliente no encontrado' });
-    res.json(row);
+    res.json(serializeCliente(row));
   });
 });
 
@@ -3383,11 +3477,11 @@ app.post('/api/clientes', (req, res) => {
   } catch (error) {
     return res.status(400).json({ error: error.message });
   }
-  db.run('INSERT INTO clientes (nombre, contacto, telefono, email) VALUES (?, ?, ?, ?)', [client.nombre, client.contacto, client.telefono, client.email], function (err) {
+  db.run('INSERT INTO clientes (nombre, contacto, telefono, email, wpp_groups) VALUES (?, ?, ?, ?, ?)', [client.nombre, client.contacto, client.telefono, client.email, client.wpp_groups], function (err) {
     if (err) return res.status(500).json({ error: err.message });
     db.get('SELECT * FROM clientes WHERE id = ?', [this.lastID], (getErr, row) => {
       if (getErr) return res.status(500).json({ error: getErr.message });
-      res.status(201).json(row);
+      res.status(201).json(serializeCliente(row));
     });
   });
 });
@@ -3398,18 +3492,18 @@ app.put('/api/clientes/:id', (req, res) => {
     if (!row) return res.status(404).json({ error: 'Cliente no encontrado' });
     let client;
     try {
-      client = normalizeClientPayload(req.body, row);
+      client = normalizeClientPayload(req.body, serializeCliente(row));
     } catch (error) {
       return res.status(400).json({ error: error.message });
     }
     db.run(
-      'UPDATE clientes SET nombre = ?, contacto = ?, telefono = ?, email = ? WHERE id = ?',
-      [client.nombre, client.contacto, client.telefono, client.email, req.params.id],
+      'UPDATE clientes SET nombre = ?, contacto = ?, telefono = ?, email = ?, wpp_groups = ? WHERE id = ?',
+      [client.nombre, client.contacto, client.telefono, client.email, client.wpp_groups, req.params.id],
       function (runErr) {
         if (runErr) return res.status(500).json({ error: runErr.message });
         db.get('SELECT * FROM clientes WHERE id = ?', [req.params.id], (getErr, updated) => {
           if (getErr) return res.status(500).json({ error: getErr.message });
-          res.json(updated);
+          res.json(serializeCliente(updated));
         });
       }
     );
@@ -3941,26 +4035,55 @@ function listBackups() {
 function performDatabaseBackup() {
   return new Promise((resolve, reject) => {
     fs.mkdirSync(backupDir, { recursive: true });
-    const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-');
     const destination = path.join(backupDir, `gers-backup-${stamp}.db`);
-    db.backup(destination, err => {
-      if (err) return reject(err);
-      try {
-        const cutoff = Date.now() - BACKUP_KEEP_DAYS * 24 * 60 * 60 * 1000;
-        let removed = 0;
-        for (const file of listBackups()) {
-          const filePath = path.join(backupDir, file);
-          const stats = fs.statSync(filePath);
-          if (stats.mtimeMs < cutoff) {
-            fs.unlinkSync(filePath);
-            removed += 1;
-          }
+    let backup;
+    try {
+      backup = db.backup(destination);
+    } catch (initErr) {
+      return reject(initErr);
+    }
+    backup.retryErrors = [sqlite3.BUSY, sqlite3.LOCKED];
+    let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; }, 5 * 60 * 1000);
+    const step = () => {
+      backup.step(1024, (stepErr, done) => {
+        if (timedOut) {
+          try { backup.finish(); } catch { /* noop */ }
+          return reject(new Error('Backup excedió el tiempo límite'));
         }
-        resolve({ destination, removed });
-      } catch (cleanErr) {
-        reject(cleanErr);
-      }
-    });
+        if (stepErr) {
+          const code = String(stepErr.code || '').toUpperCase();
+          if (code === 'SQLITE_BUSY' || code === 'SQLITE_LOCKED') {
+            return setTimeout(step, 250);
+          }
+          clearTimeout(timeout);
+          try { backup.finish(); } catch { /* noop */ }
+          return reject(stepErr);
+        }
+        if (!done) return setTimeout(step, 100);
+        clearTimeout(timeout);
+        backup.finish(finishErr => {
+          if (finishErr) return reject(finishErr);
+          try {
+            const cutoff = Date.now() - BACKUP_KEEP_DAYS * 24 * 60 * 60 * 1000;
+            let removed = 0;
+            for (const file of listBackups()) {
+              const filePath = path.join(backupDir, file);
+              const stats = fs.statSync(filePath);
+              if (stats.mtimeMs < cutoff) {
+                fs.unlinkSync(filePath);
+                removed += 1;
+              }
+            }
+            resolve({ destination, removed });
+          } catch (cleanErr) {
+            reject(cleanErr);
+          }
+        });
+      });
+    };
+    step();
   });
 }
 

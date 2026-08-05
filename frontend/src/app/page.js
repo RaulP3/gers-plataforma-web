@@ -11,7 +11,7 @@ const MOVEMENT_THRESHOLD_MPH = 1;
 const CITAS_GPS_STALE_MIN = 60;
 const estaEnMovimiento = (speedMph) => Number(speedMph || 0) > MOVEMENT_THRESHOLD_MPH;
 const VIAJE_DEFAULT = { vehicle_id: '', vehicle_name: '', origen: '', destino: '', tipo_entrega: 'directo', destinos: ['', ''], conductor: '', telefono: '', fecha_inicio: '', fecha_fin: '', notas: '', remolque: '' };
-const CLIENTE_DEFAULT = { nombre: '', contacto: '', telefono: '', email: '' };
+const CLIENTE_DEFAULT = { nombre: '', contacto: '', telefono: '', email: '', wpp_groups: [] };
 const GEOFENCE_DEFAULT = { nombre: '', direccion: '', latitud: '', longitud: '', radio_metros: '500', descripcion: '', color: '#3b82f6' };
 const parseDestinos = (value) => {
   if (Array.isArray(value)) return value.map(item => String(item || '').trim()).filter(Boolean);
@@ -199,6 +199,7 @@ export default function Home() {
   const [seguimientoModalNota, setSeguimientoModalNota] = useState('');
   const [seguimientoModalSaving, setSeguimientoModalSaving] = useState(false);
   const [seguimientoModalError, setSeguimientoModalError] = useState('');
+  const [seguimientoFormAvanzado, setSeguimientoFormAvanzado] = useState(false);
   const [showMensajeModal, setShowMensajeModal] = useState(false);
   const [mensajeCliente, setMensajeCliente] = useState('');
   const [mensajeTexto, setMensajeTexto] = useState('');
@@ -324,6 +325,63 @@ export default function Home() {
     const normalized = normalizeGeofenceName(value);
     return allGeofences.find(g => g.activa !== 0 && normalizeGeofenceName(g.nombre) === normalized) || null;
   };
+  const clienteDeGeofence = (nombre) => {
+    const gf = findGeofence(nombre);
+    if (!gf) return null;
+    const ownerId = geofenceOwnerId(gf);
+    return clientes.find(c => String(c.id) === String(ownerId)) || null;
+  };
+  const TOKENS_GENERICOS_DESTINO = new Set(['pension', 'pensiones', 'planta', 'cedis', 'centro', 'distribucion', 'casa', 'almacen', 'patio', 'parador', 'bodega', 'zona', 'area', 'rampa', 'rampas', 'estacionamiento', 'lavado', 'embarques', 'descarga', 'sucursal', 'puerto', 'aduana', 'caseta', 'peaje', 'tramo', 'acceso', 'modulo', 'bahia', 'km']);
+  const nucleoDestino = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(w => w.length > 2 && !TOKENS_GENERICOS_DESTINO.has(w));
+  const clienteDeDestino = (destino) => {
+    const directo = clienteDeGeofence(destino);
+    if (directo) return directo;
+    for (const nombre of geocercasCoincidentes(destino)) {
+      const gf = findGeofence(nombre);
+      if (!gf) continue;
+      const ownerId = geofenceOwnerId(gf);
+      if (ownerId) {
+        const cliente = clientes.find(c => String(c.id) === String(ownerId));
+        if (cliente) return cliente;
+      }
+    }
+    const palabrasDestino = nucleoDestino(destino);
+    let mejor = null;
+    let mejorScore = 0;
+    for (const g of allGeofences) {
+      if (g.activa === 0) continue;
+      const ownerId = geofenceOwnerId(g);
+      if (!ownerId) continue;
+      const palabrasCand = nucleoDestino(g.nombre);
+      if (!palabrasCand.length) continue;
+      const comunes = palabrasCand.filter(w => palabrasDestino.includes(w)).length;
+      const score = comunes / Math.max(1, Math.min(palabrasDestino.length, palabrasCand.length));
+      if (comunes >= 2 && score >= 0.6 && score > mejorScore) {
+        mejorScore = score;
+        mejor = clientes.find(c => String(c.id) === String(ownerId)) || null;
+      }
+    }
+    return mejor;
+  };
+  const geofencesEnDestino = (destino) => {
+    const mapa = new Map();
+    const agregar = g => { if (g && g.activa !== 0) mapa.set(String(g.id || g.nombre), g); };
+    agregar(findGeofence(destino));
+    const cliente = clienteDeDestino(destino);
+    if (cliente) {
+      allGeofences.forEach(g => { if (g.activa !== 0 && String(geofenceOwnerId(g) || '') === String(cliente.id)) agregar(g); });
+    }
+    const palabrasDestino = nucleoDestino(destino);
+    for (const g of allGeofences) {
+      if (g.activa === 0) continue;
+      const palabrasCand = nucleoDestino(g.nombre);
+      if (!palabrasCand.length) continue;
+      const comunes = palabrasCand.filter(w => palabrasDestino.includes(w)).length;
+      if (comunes >= 2 && comunes / Math.max(1, Math.min(palabrasDestino.length, palabrasCand.length)) >= 0.6) agregar(g);
+    }
+    return [...mapa.values()];
+  };
   const geofenceOptions = (currentValue = '') => {
     const current = String(currentValue || '').trim();
     const isLegacyValue = current && !findGeofence(current);
@@ -384,6 +442,21 @@ export default function Home() {
   };
   const citasOperativas = useMemo(() => {
     const normalize = value => String(value || '').trim().toLowerCase();
+    const normalizeText = value => normalize(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const trailerSet = value => {
+      const set = new Set();
+      normalize(value).split(/[+,\s;]+/).forEach(t => {
+        const n = (t.match(/\d+/g) || []).join('').replace(/^0+/, '');
+        if (n) set.add(n);
+      });
+      return set;
+    };
+    const sameTrailerMatch = (a, b) => {
+      const A = trailerSet(a), B = trailerSet(b);
+      if (!A.size || !B.size) return false;
+      for (const x of A) if (B.has(x)) return true;
+      return false;
+    };
     const normalizeStatus = value => {
       const key = String(value || 'programado').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
       return { en_proceso_de_carga: 'proceso_carga', en_proceso_de_descarga: 'proceso_descarga', en_proceso_de_liberacion: 'proceso_liberacion' }[key] || key;
@@ -414,8 +487,8 @@ export default function Home() {
         const itemDate = parseCitaDate(item.cita_descarga || item.cita_carga)?.getTime();
         const sameDate = rowDate && itemDate && Math.abs(rowDate - itemDate) < 60000;
         if (sameDate) return true;
-        const sameDestination = normalize(item.destino) && normalize(item.destino) === normalize(row.destino);
-        const sameTrailer = normalize(item.remolque) && normalize(item.remolque) === normalize(row.remolque);
+        const sameDestination = normalizeText(item.destino) && normalizeText(item.destino) === normalizeText(row.destino);
+        const sameTrailer = sameTrailerMatch(item.remolque, row.remolque);
         return sameDestination && sameTrailer;
       });
     }).map(row => ({
@@ -442,8 +515,7 @@ export default function Home() {
     const vehicle = vehiculoDeCita(item);
     if (!vehicle?.location) return { label: 'Sin GPS', color: '#6b7280' };
     if (!vehicle.isOnline) return { label: 'Sin señal', color: '#6b7280' };
-    const geofenceDestino = findGeofence(item.destino);
-    if (geofenceDestino && pointInsideGeofence(vehicle.location.latitude, vehicle.location.longitude, geofenceDestino)) {
+    if (geofencesEnDestino(item.destino).some(g => pointInsideGeofence(vehicle.location.latitude, vehicle.location.longitude, g))) {
       return { label: 'En destino', color: '#00ff41' };
     }
     return estaEnMovimiento(vehicle.location.speed)
@@ -1656,6 +1728,7 @@ export default function Home() {
       contacto: cliente.contacto || '',
       telefono: cliente.telefono || '',
       email: cliente.email || '',
+      wpp_groups: (cliente.wpp_groups || []).map(grupo => typeof grupo === 'string' ? grupo : String(grupo?.nombre || '').trim()).filter(Boolean),
     } : CLIENTE_DEFAULT);
     setShowClienteModal(true);
   };
@@ -1944,7 +2017,7 @@ export default function Home() {
       estatus: normalizarEstatusSeguimiento(viajeMasReciente?.estado || base?.estatus || 'Programado'),
       comentarios_cliente: base?.comentarios_cliente || '',
       comentarios_monitoreo: base?.comentarios_monitoreo || base?.notas || '',
-      grupo: base?.grupo || '',
+      grupo: base?.grupo || clienteDeGeofence(viajeMasReciente?.destino || base?.destino || '')?.nombre || '',
     });
   };
 
@@ -2110,6 +2183,17 @@ export default function Home() {
     });
     setSeguimientoEditando(null);
     setShowSeguimientoForm(false);
+  };
+
+  const abrirNuevoSeguimiento = () => {
+    setSeguimientoEditando(null);
+    setSeguimientoFormAvanzado(false);
+    setFormSeguimiento({
+      unidad: '', operador: '', remolque: '', ruta: '', origen: '', destino: '',
+      cita_carga: '', cita_descarga: '', hora_llegada: '', hora_liberacion: '',
+      estatus: 'Disponible', comentarios_cliente: '', comentarios_monitoreo: '', grupo: ''
+    });
+    setShowSeguimientoForm(true);
   };
 
   const guardarSeguimiento = async (e) => {
@@ -3429,9 +3513,24 @@ export default function Home() {
                 const c = kpis?.citasHoy;
                 const pColor = !p || p.entregas === 0 ? '#6a9b6a' : p.porcentaje >= 85 ? '#4ade80' : p.porcentaje >= 60 ? '#facc15' : '#f87171';
                 const uColor = u && u.porcentaje >= 60 ? '#4ade80' : u && u.porcentaje >= 30 ? '#facc15' : '#f87171';
-                const proxima = c?.proximaCita ? formatFechaProgramada(c.proximaCita) : 'Sin citas';
-                const kpiCard = (titulo, valor, sub, color = '#e0e0e0') => (
-                  <div style={{ flex: '0 0 auto', minWidth: '150px', background: '#1a1a1a', borderRadius: '10px', border: '1px solid #1a3d1a', padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                const citasFuturas = citasOperativas
+                  .map(item => ({ item, date: parseCitaDate(item.cita_descarga || item.cita_carga) }))
+                  .filter(x => x.date && x.date.getTime() >= Date.now())
+                  .sort((a, b) => a.date.getTime() - b.date.getTime());
+                const proximaInfo = citasFuturas[0] || null;
+                const proxima = proximaInfo ? proximaInfo.date.toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' }) : 'Sin citas';
+                const proximaRef = proximaInfo?.item || null;
+                const abrirProximaCita = () => {
+                  if (!proximaRef) return;
+                  if (proximaRef.tipo === 'Viaje') {
+                    const viaje = viajes.find(v => Number(v.id) === Number(proximaRef.sourceId));
+                    if (viaje) { setViajeDetalle(viaje); setViajeForm(viaje); setShowViajeModal(true); setViajeEditando(false); return; }
+                  }
+                  setActiveTab('citas');
+                  setCitaSeleccionada(proximaRef);
+                };
+                const kpiCard = (titulo, valor, sub, color = '#e0e0e0', onClick = null) => (
+                  <div onClick={onClick} title={onClick ? 'Ver detalle' : undefined} style={{ flex: '0 0 auto', minWidth: '150px', background: '#1a1a1a', borderRadius: '10px', border: '1px solid #1a3d1a', padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center', cursor: onClick ? 'pointer' : 'default' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
                       <span style={{ width: 7, height: 7, borderRadius: '50%', background: color, flexShrink: 0 }} />
                       <span style={{ fontSize: '10px', color: '#6a9b6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{titulo}</span>
@@ -3445,7 +3544,7 @@ export default function Home() {
                     {kpiCard('Puntualidad', p && p.entregas > 0 ? `${p.porcentaje}%` : '—', p && p.entregas > 0 ? `${p.aTiempo} de ${p.entregas} entregas a tiempo` : 'Sin entregas en 60 días', pColor)}
                     {kpiCard('Uso de flota', u ? `${u.porcentaje}%` : '—', u ? `${u.viajesActivos} de ${u.totalUnidades} unidades en viaje` : '', uColor)}
                     {kpiCard('Citas hoy', c ? c.total : '—', c ? `${c.viajes} viajes · ${c.seguimiento} seguimientos` : '', '#60a5fa')}
-                    {kpiCard('Próxima cita', proxima, c && c.total > 0 ? 'Siguiente en agenda' : 'Sin citas agendadas', '#8b5cf6')}
+                    {kpiCard('Próxima cita', proxima, proximaInfo ? (proximaRef.tipo === 'Viaje' ? 'Abrir viaje' : 'Ver en citas') : 'Sin citas agendadas', '#8b5cf6', proximaRef ? abrirProximaCita : null)}
                   </>
                 );
               })()}
@@ -3476,8 +3575,14 @@ export default function Home() {
                 const mCompletados = mantenimientos.filter(m => m.status === 'completado').length;
                 const rem = kpis?.remolques;
                 const semanas = kpis?.viajesPorSemana || [];
-                const maxSemana = Math.max(1, ...semanas.map(s => s.total));
-                const citasProximas = citasOperativas.slice(0, 3);
+                const semanaActual = semanas.length ? semanas[semanas.length - 1] : null;
+                const hoyKey = new Date().toDateString();
+                const citasDeHoy = citasOperativas.filter(item => {
+                  const carga = parseCitaDate(item.cita_carga);
+                  const descarga = parseCitaDate(item.cita_descarga);
+                  return (carga && carga.toDateString() === hoyKey) || (descarga && descarga.toDateString() === hoyKey);
+                });
+                const citasProximas = citasDeHoy.slice(0, 5);
                 const zc = customRiskZones.reduce((acc, z) => { acc[z.severity] = (acc[z.severity] || 0) + 1; return acc; }, {});
                 const conCombustible = vehiculos.filter(v => v.fuelLevelPercent !== null);
                 const avgFuel = conCombustible.length ? Math.round(conCombustible.reduce((s, v) => s + v.fuelLevelPercent, 0) / conCombustible.length) : 0;
@@ -3566,20 +3671,20 @@ export default function Home() {
                         </>
                       ))}
 
-                      {panel('Citas operativas', citasOperativas.length > 0 ? '#60a5fa' : '#4a8a4a', (
+                      {panel('Citas operativas', citasDeHoy.length > 0 ? '#60a5fa' : '#4a8a4a', (
                         <>
-                          {bigNum(citasOperativas.length, citasOperativas.length > 0 ? '#60a5fa' : '#6a9b6a', 'Próximas citas')}
+                          {bigNum(citasDeHoy.length, citasDeHoy.length > 0 ? '#60a5fa' : '#6a9b6a', 'Citas de hoy')}
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '120px', overflowY: 'auto' }}>
                             {citasProximas.map((c, i) => {
                               const d = parseCitaDate(c.cita_descarga || c.cita_carga);
                               return (
                                 <div key={i} style={{ fontSize: '12px', color: '#9ca3af', display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
                                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.unidad} → {c.destino}</span>
-                                  <span style={{ color: '#e0e0e0', flexShrink: 0 }}>{d ? d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short' }) : '—'}</span>
+                                  <span style={{ color: '#e0e0e0', flexShrink: 0 }}>{d ? d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : '—'}</span>
                                 </div>
                               );
                             })}
-                            {citasOperativas.length === 0 && <span style={{ fontSize: '12px', color: '#6a9b6a' }}>Sin citas agendadas</span>}
+                            {citasDeHoy.length === 0 && <span style={{ fontSize: '12px', color: '#6a9b6a' }}>Sin citas para hoy</span>}
                           </div>
                         </>
                       ))}
@@ -3700,20 +3805,18 @@ export default function Home() {
                         </>
                       ))}
 
-                      {semanas.length > 0 && (
+                      {semanaActual && (
                         <div style={{ gridColumn: '1 / -1', background: '#161616', border: '1px solid #1a3d1a', borderRadius: '10px', padding: '14px 16px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
                             <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#1d4ed8', flexShrink: 0 }} />
-                            <span style={{ fontSize: '10px', color: '#6a9b6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Viajes por semana</span>
+                            <span style={{ fontSize: '10px', color: '#6a9b6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Viajes por semana · semana actual</span>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', height: '70px' }}>
-                            {semanas.map((s, i) => (
-                              <div key={i} title={`${s.inicio} — ${s.fin}: ${s.total} viajes`} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', gap: '4px', height: '100%' }}>
-                                <div style={{ fontSize: '11px', fontWeight: 700, color: '#e0e0e0' }}>{s.total}</div>
-                                <div style={{ width: '100%', maxWidth: '34px', background: i === semanas.length - 1 ? '#00ff41' : '#1d4ed8', borderRadius: '4px 4px 0 0', height: `${Math.max(4, Math.round((s.total / maxSemana) * 100))}%`, opacity: 0.9, transition: 'height 0.4s' }} />
-                                <div style={{ fontSize: '9px', color: '#6a9b6a' }}>{s.inicio}</div>
-                              </div>
-                            ))}
+                            <div title={`${semanaActual.inicio} — ${semanaActual.fin}: ${semanaActual.total} viajes`} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', gap: '4px', height: '100%' }}>
+                              <div style={{ fontSize: '11px', fontWeight: 700, color: '#e0e0e0' }}>{semanaActual.total}</div>
+                              <div style={{ width: '100%', maxWidth: '34px', background: '#00ff41', borderRadius: '4px 4px 0 0', height: '100%', opacity: 0.9, transition: 'height 0.4s' }} />
+                              <div style={{ fontSize: '9px', color: '#6a9b6a' }}>Lun {semanaActual.inicio} — {semanaActual.fin}</div>
+                            </div>
                           </div>
                         </div>
                       )}
@@ -4920,6 +5023,7 @@ export default function Home() {
                 { label: 'Clientes registrados', value: clientes.length, color: '#00ff41' },
                 { label: 'Con teléfono', value: clientes.filter(cliente => cliente.telefono).length, color: '#3b82f6' },
                 { label: 'Con correo', value: clientes.filter(cliente => cliente.email).length, color: '#a855f7' },
+                { label: 'Con grupos WPP', value: clientes.filter(cliente => (cliente.wpp_groups || []).length).length, color: '#22d3ee' },
               ].map(item => (
                 <div key={item.label} style={{ ...s.card, padding: '1rem 1.1rem', borderLeft: `3px solid ${item.color}` }}>
                   <div style={{ color: '#6a9b6a', fontSize: '0.75rem' }}>{item.label}</div>
@@ -4947,6 +5051,7 @@ export default function Home() {
                       <th style={s.th}>Contacto</th>
                       <th style={s.th}>Teléfono</th>
                       <th style={s.th}>Correo</th>
+                      <th style={s.th}>Grupos WPP</th>
                       <th style={s.th}>Registro</th>
                       <th style={{ ...s.th, textAlign: 'right' }}>Acciones</th>
                     </tr>
@@ -4968,6 +5073,11 @@ export default function Home() {
                         </td>
                         <td style={s.td}>
                           {cliente.email ? <a href={`mailto:${cliente.email}`} style={{ color: '#c084fc', textDecoration: 'none' }}>{cliente.email}</a> : <span style={{ color: '#4b6b4b' }}>Sin correo</span>}
+                        </td>
+                        <td style={s.td}>
+                          {(cliente.wpp_groups || []).length === 0
+                            ? <span style={{ color: '#4b6b4b' }}>Sin grupos</span>
+                            : <span style={{ color: '#22d3ee' }}>{cliente.wpp_groups.join(', ')}</span>}
                         </td>
                         <td style={s.td}>{cliente.created_at ? parseFecha(cliente.created_at)?.toLocaleDateString('es-MX') : '-'}</td>
                         <td style={{ ...s.td, textAlign: 'right' }}>
@@ -5021,6 +5131,18 @@ export default function Home() {
                     ))}
                   </div>
                 )}
+                <div style={{ marginTop: '1.1rem' }}>
+                  <div style={{ color: '#4ade80', fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>Grupos de WhatsApp para reportes</div>
+                  {(selectedCliente.wpp_groups || []).length === 0 ? (
+                    <div style={{ color: '#6a9b6a', fontSize: '0.85rem' }}>Sin grupos configurados. Pulsa "Editar" en el cliente para agregarlos.</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                      {selectedCliente.wpp_groups.map(grupo => (
+                        <span key={grupo} style={{ padding: '0.4rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '999px', background: '#0a150a', color: '#e5ffe9', fontSize: '0.82rem' }}>{grupo}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -5333,18 +5455,21 @@ export default function Home() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {showSeguimientoForm && (
               <div style={s.card}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', gap: '0.75rem' }}>
-                  <h3 style={{ margin: 0, fontSize: '1rem' }}>Editar seguimiento</h3>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', gap: '0.75rem', flexWrap: 'wrap' }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1rem' }}>{seguimientoEditando ? 'Editar seguimiento' : 'Nuevo seguimiento'}</h3>
+                    <div style={{ fontSize: '0.8rem', color: '#6a9b6a' }}>Elige la unidad y la mayoría de los datos se llenan solos desde su viaje</div>
+                  </div>
                   <button onClick={limpiarSeguimientoForm} style={s.button('#6b7280')}>Cancelar</button>
                 </div>
                 <form onSubmit={guardarSeguimiento}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '0.75rem', marginBottom: '0.75rem' }}>
                     <div>
                       <label style={s.label}>Unidad *</label>
                       <select
                         style={s.select}
                         value={vehiculos.find(v => v.name === formSeguimiento.unidad)?.id || ''}
-                        onChange={(e) => aplicarSeguimientoDesdeUnidad(e.target.value)}
+                        onChange={(e) => { aplicarSeguimientoDesdeUnidad(e.target.value); setSeguimientoFormAvanzado(false); }}
                         required
                       >
                         <option value="">Seleccionar unidad...</option>
@@ -5354,71 +5479,98 @@ export default function Home() {
                       </select>
                     </div>
                     <div>
-                      <label style={s.label}>Operador</label>
-                      <input style={s.input} value={formSeguimiento.operador} onChange={e => setFormSeguimiento({ ...formSeguimiento, operador: e.target.value })} placeholder="Operador" />
-                    </div>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                    <div>
-                      <label style={s.label}>Remolque</label>
-                      <input style={s.input} value={formSeguimiento.remolque} onChange={e => setFormSeguimiento({ ...formSeguimiento, remolque: e.target.value })} placeholder="Remolque" />
-                    </div>
-                    <div>
                       <label style={s.label}>Grupo</label>
-                      <input style={s.input} value={formSeguimiento.grupo} onChange={e => setFormSeguimiento({ ...formSeguimiento, grupo: e.target.value })} placeholder="Grupo" />
+                      <input style={s.input} list="seguimiento-group-suggestions" value={formSeguimiento.grupo} onChange={e => setFormSeguimiento({ ...formSeguimiento, grupo: e.target.value })} placeholder="Grupo a reportar" />
                     </div>
                   </div>
+
                   <div style={{ marginBottom: '0.75rem' }}>
-                    <label style={s.label}>Ruta</label>
-                    <input style={s.input} value={formSeguimiento.ruta} onChange={e => setFormSeguimiento({ ...formSeguimiento, ruta: e.target.value })} placeholder="Ruta o referencia" />
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                    <div>
-                      <label style={s.label}>Origen</label>
-                       <select style={s.select} value={formSeguimiento.origen} onChange={e => setFormSeguimiento({ ...formSeguimiento, origen: e.target.value })}>{geofenceOptions(formSeguimiento.origen)}</select>
-                    </div>
-                    <div>
-                      <label style={s.label}>Destino</label>
-                       <select style={s.select} value={formSeguimiento.destino} onChange={e => setFormSeguimiento({ ...formSeguimiento, destino: e.target.value })}>{geofenceOptions(formSeguimiento.destino)}</select>
-                    </div>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                    <div>
-                      <label style={s.label}>Estatus</label>
-                      <select style={s.select} value={formSeguimiento.estatus} onChange={e => setFormSeguimiento({ ...formSeguimiento, estatus: e.target.value })}>
-                        {seguimientoEstados.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                      </select>
-                    </div>
-                    </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                    <div>
-                      <label style={s.label}>Cita carga</label>
-                      <input style={s.input} value={formSeguimiento.cita_carga} onChange={e => setFormSeguimiento({ ...formSeguimiento, cita_carga: e.target.value })} placeholder="Fecha / hora" />
-                    </div>
-                    <div>
-                      <label style={s.label}>Cita descarga</label>
-                      <input style={s.input} value={formSeguimiento.cita_descarga} onChange={e => setFormSeguimiento({ ...formSeguimiento, cita_descarga: e.target.value })} placeholder="Fecha / hora" />
+                    <label style={s.label}>Estatus</label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                      {seguimientoEstados.map(est => {
+                        const activo = formSeguimiento.estatus === est;
+                        const estColor = est === 'Disponible' ? '#6b7280' : est === 'Programado' ? '#8b5cf6' : est.includes('carga') ? '#f59e0b' : est.includes('descarga') ? '#ec4899' : est === 'En resguardo' ? '#f97316' : '#10b981';
+                        return (
+                          <button key={est} type="button" onClick={() => setFormSeguimiento({ ...formSeguimiento, estatus: est })}
+                            style={{ padding: '0.45rem 0.7rem', borderRadius: '8px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, background: activo ? estColor : 'transparent', color: activo ? '#0d0d0d' : '#9ca3af', border: activo ? `1px solid ${estColor}` : '1px solid #1f1f1f' }}>
+                            {est}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                    <div>
-                      <label style={s.label}>Hora llegada</label>
-                      <input style={s.input} value={formSeguimiento.hora_llegada} onChange={e => setFormSeguimiento({ ...formSeguimiento, hora_llegada: e.target.value })} placeholder="Hora llegada" />
-                    </div>
-                    <div>
-                      <label style={s.label}>Hora liberación</label>
-                      <input style={s.input} value={formSeguimiento.hora_liberacion} onChange={e => setFormSeguimiento({ ...formSeguimiento, hora_liberacion: e.target.value })} placeholder="Hora liberación" />
-                    </div>
-                  </div>
+
                   <div style={{ marginBottom: '0.75rem' }}>
-                    <label style={s.label}>Comentarios cliente</label>
-                    <textarea style={{ ...s.input, minHeight: '70px', resize: 'vertical', fontFamily: 'inherit' }} value={formSeguimiento.comentarios_cliente} onChange={e => setFormSeguimiento({ ...formSeguimiento, comentarios_cliente: e.target.value })} placeholder="Observaciones del cliente" />
+                    <label style={s.label}>Observación</label>
+                    <textarea style={{ ...s.input, minHeight: '70px', resize: 'vertical', fontFamily: 'inherit' }} value={formSeguimiento.comentarios_monitoreo} onChange={e => setFormSeguimiento({ ...formSeguimiento, comentarios_monitoreo: e.target.value })} placeholder="Notas de seguimiento (aparecen en el reporte)" />
                   </div>
-                  <div style={{ marginBottom: '1rem' }}>
-                    <label style={s.label}>Comentarios monitoreo</label>
-                    <textarea style={{ ...s.input, minHeight: '90px', resize: 'vertical', fontFamily: 'inherit' }} value={formSeguimiento.comentarios_monitoreo} onChange={e => setFormSeguimiento({ ...formSeguimiento, comentarios_monitoreo: e.target.value })} placeholder="Notas internas" />
+
+                  <div style={{ padding: '0.75rem', background: '#111111', border: '1px solid #1a3d1a', borderRadius: '10px', marginBottom: '0.75rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                      <span style={{ fontSize: '0.72rem', color: '#4a8a4a', textTransform: 'uppercase', fontWeight: 700 }}>Resumen (auto-llenado del viaje)</span>
+                      <button type="button" onClick={() => setSeguimientoFormAvanzado(v => !v)} style={{ background: 'none', border: '1px solid #1a3d1a', color: '#60a5fa', borderRadius: '6px', cursor: 'pointer', fontSize: '0.72rem', padding: '3px 8px' }}>
+                        {seguimientoFormAvanzado ? 'Ocultar campos avanzados' : 'Editar campos avanzados'}
+                      </button>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.5rem', fontSize: '0.78rem', color: '#c0c0c0' }}>
+                      <div>Operador: <strong style={{ color: '#e0e0e0' }}>{formSeguimiento.operador || '—'}</strong></div>
+                      <div>Remolque: <strong style={{ color: '#e0e0e0' }}>{formSeguimiento.remolque || '—'}</strong></div>
+                      <div>Ruta: <strong style={{ color: '#e0e0e0' }}>{formSeguimiento.ruta || '—'}</strong></div>
+                      <div>Origen: <strong style={{ color: '#e0e0e0' }}>{formSeguimiento.origen || '—'}</strong></div>
+                      <div>Destino: <strong style={{ color: '#e0e0e0' }}>{formSeguimiento.destino || '—'}</strong></div>
+                      <div>Cita carga: <strong style={{ color: '#e0e0e0' }}>{formSeguimiento.cita_carga || '—'}</strong></div>
+                      <div>Cita descarga: <strong style={{ color: '#e0e0e0' }}>{formSeguimiento.cita_descarga || '—'}</strong></div>
+                      <div>Hora llegada: <strong style={{ color: '#e0e0e0' }}>{formSeguimiento.hora_llegada || '—'}</strong></div>
+                      <div>Hora liberación: <strong style={{ color: '#e0e0e0' }}>{formSeguimiento.hora_liberacion || '—'}</strong></div>
+                      <div>Comentarios cliente: <strong style={{ color: '#e0e0e0' }}>{formSeguimiento.comentarios_cliente || '—'}</strong></div>
+                    </div>
+                    {seguimientoFormAvanzado && (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid #1a3d1a' }}>
+                        <div>
+                          <label style={s.label}>Operador</label>
+                          <input style={s.input} value={formSeguimiento.operador} onChange={e => setFormSeguimiento({ ...formSeguimiento, operador: e.target.value })} placeholder="Operador" />
+                        </div>
+                        <div>
+                          <label style={s.label}>Remolque</label>
+                          <input style={s.input} value={formSeguimiento.remolque} onChange={e => setFormSeguimiento({ ...formSeguimiento, remolque: e.target.value })} placeholder="Remolque" />
+                        </div>
+                        <div style={{ gridColumn: '1 / -1' }}>
+                          <label style={s.label}>Ruta</label>
+                          <input style={s.input} value={formSeguimiento.ruta} onChange={e => setFormSeguimiento({ ...formSeguimiento, ruta: e.target.value })} placeholder="Ruta o referencia" />
+                        </div>
+                        <div>
+                          <label style={s.label}>Origen</label>
+                          <select style={s.select} value={formSeguimiento.origen} onChange={e => setFormSeguimiento({ ...formSeguimiento, origen: e.target.value })}>{geofenceOptions(formSeguimiento.origen)}</select>
+                        </div>
+                        <div>
+                          <label style={s.label}>Destino</label>
+                          <select style={s.select} value={formSeguimiento.destino} onChange={e => setFormSeguimiento({ ...formSeguimiento, destino: e.target.value })}>{geofenceOptions(formSeguimiento.destino)}</select>
+                        </div>
+                        <div>
+                          <label style={s.label}>Cita carga</label>
+                          <input style={s.input} value={formSeguimiento.cita_carga} onChange={e => setFormSeguimiento({ ...formSeguimiento, cita_carga: e.target.value })} placeholder="Fecha / hora" />
+                        </div>
+                        <div>
+                          <label style={s.label}>Cita descarga</label>
+                          <input style={s.input} value={formSeguimiento.cita_descarga} onChange={e => setFormSeguimiento({ ...formSeguimiento, cita_descarga: e.target.value })} placeholder="Fecha / hora" />
+                        </div>
+                        <div>
+                          <label style={s.label}>Hora llegada</label>
+                          <input style={s.input} value={formSeguimiento.hora_llegada} onChange={e => setFormSeguimiento({ ...formSeguimiento, hora_llegada: e.target.value })} placeholder="Llegada con el cliente" />
+                        </div>
+                        <div>
+                          <label style={s.label}>Hora liberación</label>
+                          <input style={s.input} value={formSeguimiento.hora_liberacion} onChange={e => setFormSeguimiento({ ...formSeguimiento, hora_liberacion: e.target.value })} placeholder="Salida de la geocerca" />
+                        </div>
+                        <div style={{ gridColumn: '1 / -1' }}>
+                          <label style={s.label}>Comentarios cliente</label>
+                          <textarea style={{ ...s.input, minHeight: '60px', resize: 'vertical', fontFamily: 'inherit' }} value={formSeguimiento.comentarios_cliente} onChange={e => setFormSeguimiento({ ...formSeguimiento, comentarios_cliente: e.target.value })} placeholder="Observaciones del cliente" />
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <button type="submit" style={{ ...s.button('#10b981'), width: '100%' }}>{seguimientoEditando ? 'Actualizar registro' : 'Guardar registro'}</button>
+
+                  <button type="submit" style={{ ...s.button('#10b981'), width: '100%' }}>{seguimientoEditando ? 'Guardar cambios' : 'Guardar seguimiento'}</button>
                 </form>
               </div>
               )}
@@ -5452,6 +5604,7 @@ export default function Home() {
                     <button onClick={() => { setSeguimientoFilter(''); setSeguimientoUnidadFilter(''); setSeguimientoEstatusFilter(''); setSeguimientoGrupoFilter(''); }} style={s.button('#6b7280')}>Limpiar</button>
                   </div>
                   <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <button onClick={abrirNuevoSeguimiento} style={s.button('#00ff41')}>+ Agregar</button>
                     <button onClick={abrirActualizarSeguimiento} style={s.button('#10b981')}>Actualizar Seguimiento</button>
                     <button onClick={abrirGeneradorMensajes} style={s.button('#8b5cf6')}>📲 Generar Mensaje</button>
                   </div>
@@ -6966,10 +7119,10 @@ export default function Home() {
                               <div style={{ marginTop: '0.35rem', color: '#94a3b8', fontSize: '0.65rem', lineHeight: 1.45 }}>
                                 {viajeDetalle.hora_llegada && <div>Primer contacto: {parseFecha(viajeDetalle.hora_llegada)?.toLocaleString('es-MX')}</div>}
                                 {viajeDetalle.hora_salida && <div>Último contacto: {parseFecha(viajeDetalle.hora_salida)?.toLocaleString('es-MX')}</div>}
-                              </div>
-                            )}
-                          </div>
-                        )}
+                  </div>
+                )}
+              </div>
+            )}
                     </div>
                   </div>
                 </div>
@@ -7447,6 +7600,16 @@ export default function Home() {
               <div style={{ gridColumn: '1 / -1' }}>
                 <label style={s.label}>Correo electrónico</label>
                 <input type="email" maxLength={254} style={s.input} value={formCliente.email} onChange={event => setFormCliente(current => ({ ...current, email: event.target.value }))} placeholder="contacto@cliente.com" />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={s.label}>Grupos de WhatsApp para reportes</label>
+                {(formCliente.wpp_groups || []).map((grupo, index) => (
+                  <div key={index} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.5rem', marginBottom: '0.5rem', alignItems: 'center' }}>
+                    <input maxLength={150} style={s.input} value={grupo} onChange={event => setFormCliente(current => ({ ...current, wpp_groups: (current.wpp_groups || []).map((g, i) => i === index ? event.target.value : g) }))} placeholder="Nombre del grupo (ej: viajes GERS)" />
+                    <button type="button" aria-label={`Quitar grupo ${grupo || index + 1}`} onClick={() => setFormCliente(current => ({ ...current, wpp_groups: (current.wpp_groups || []).filter((g, i) => i !== index) }))} style={s.button('#ef4444')}>✕</button>
+                  </div>
+                ))}
+                <button type="button" onClick={() => setFormCliente(current => ({ ...current, wpp_groups: [...(current.wpp_groups || []), ''] }))} style={{ ...s.button('#3b82f6'), marginTop: '0.15rem' }}>+ Agregar grupo de WhatsApp</button>
               </div>
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.25rem', flexWrap: 'wrap' }}>

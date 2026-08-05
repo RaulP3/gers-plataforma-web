@@ -313,17 +313,25 @@ async function run() {
 
   const client = await request('/clientes', {
     method: 'POST',
-    body: JSON.stringify({ nombre: 'Smoke Cliente', contacto: 'Contacto Inicial', telefono: '614 000 0000', email: 'CLIENTE@EXAMPLE.COM' }),
+    body: JSON.stringify({ nombre: 'Smoke Cliente', contacto: 'Contacto Inicial', telefono: '614 000 0000', email: 'CLIENTE@EXAMPLE.COM', wpp_groups: ['viajes GERS'] }),
   });
   assert.equal(client.email, 'cliente@example.com');
+  assert.equal(client.wpp_groups.length, 1);
+  assert.equal(client.wpp_groups[0], 'viajes GERS');
   assert.equal((await request(`/clientes/${client.id}`)).nombre, 'Smoke Cliente');
   const updatedClient = await request(`/clientes/${client.id}`, {
     method: 'PUT',
-    body: JSON.stringify({ contacto: 'Contacto Actualizado', telefono: '614 111 1111' }),
+    body: JSON.stringify({ contacto: 'Contacto Actualizado', telefono: '614 111 1111', wpp_groups: ['viajes GERS', 'QDL-GERS'] }),
   });
   assert.equal(updatedClient.contacto, 'Contacto Actualizado');
   assert.equal(updatedClient.nombre, 'Smoke Cliente');
+  assert.equal(updatedClient.wpp_groups.length, 2);
+  assert.equal(updatedClient.wpp_groups[1], 'QDL-GERS');
   assert.equal((await request('/clientes')).some(row => row.id === client.id), true);
+  await assert.rejects(
+    request('/clientes', { method: 'POST', body: JSON.stringify({ nombre: 'Smoke Cliente 2', wpp_groups: ['', '  '] }) }),
+    /400.*requiere nombre/
+  );
   const clientGeofence = await request('/geofences', {
     method: 'POST',
     body: JSON.stringify({ nombre: 'Smoke Cliente Geofence', latitud: 24, longitud: -104, radio_metros: 750, cliente_id: client.id }),
@@ -530,6 +538,48 @@ async function run() {
   assert.ok(viajeGeo.hora_salida, 'salida de destino debe registrar hora_salida en el viaje directo');
   await request(`/viajes/${geofenceTrip.id}`, { method: 'DELETE' });
   await request(`/geofences/${destinoGeofence.id}`, { method: 'DELETE' });
+
+  const progGeofence = await request('/geofences', {
+    method: 'POST',
+    body: JSON.stringify({ nombre: 'Smoke Programado Destino', latitud: 17.5, longitud: -92.0, radio_metros: 500 }),
+  });
+  mockLocations = [...mockLocations.filter(v => v.id !== 'smoke-prog-unit'), { id: 'smoke-prog-unit', name: 'Smoke Prog Unit', location: { latitude: 17.5, longitude: -92.0 } }];
+  const progTrip = await request('/viajes', {
+    method: 'POST',
+    body: JSON.stringify({
+      vehicle_id: 'smoke-prog-unit',
+      vehicle_name: 'Smoke Prog Unit',
+      origen: 'Monterrey',
+      destino: 'Smoke Programado Destino',
+      tipo_entrega: 'directo',
+    }),
+  });
+  await request('/check-geofences', { method: 'POST' });
+  let progViaje = (await request('/viajes')).find(row => row.id === progTrip.id);
+  assert.equal(progViaje.estado, 'programado', 'un viaje programado NO debe pasar a espera_ingreso por geocerca');
+  assert.equal(progViaje.hora_llegada, null, 'un viaje programado no debe registrar hora_llegada');
+  const progEvents = await request('/geofence-events?limit=50');
+  assert.equal(
+    progEvents.some(event => event.vehicle_name === 'Smoke Prog Unit' && event.geofence_nombre === 'Smoke Programado Destino'),
+    false,
+    'no debe registrarse ingreso a geocerca para un viaje programado'
+  );
+  await request(`/viajes/${progTrip.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ estado: 'en_ruta_cargado' }),
+  });
+  await request('/check-geofences', { method: 'POST' });
+  progViaje = (await request('/viajes')).find(row => row.id === progTrip.id);
+  assert.equal(progViaje.estado, 'espera_ingreso', 'entrada a destino en ruta debe poner el viaje en espera_ingreso');
+  assert.ok(progViaje.hora_llegada, 'entrada a destino en ruta debe registrar hora_llegada');
+  const progEventsAfter = await request('/geofence-events?limit=50');
+  assert.equal(
+    progEventsAfter.some(event => event.vehicle_name === 'Smoke Prog Unit' && event.geofence_nombre === 'Smoke Programado Destino' && event.tipo === 'entrada'),
+    true,
+    'la entrada a geocerca debe registrarse una vez el viaje está en ruta'
+  );
+  await request(`/viajes/${progTrip.id}`, { method: 'DELETE' });
+  await request(`/geofences/${progGeofence.id}`, { method: 'DELETE' });
 
   const imported = await request('/seguimiento/import', {
     method: 'POST',
