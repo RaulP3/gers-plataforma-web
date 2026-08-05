@@ -3534,208 +3534,249 @@ export default function Home() {
                   </div>
                 );
 
+                const section = (titulo) => (
+                  <div style={{ gridColumn: '1 / -1', fontSize: '11px', fontWeight: 700, color: '#6a9b6a', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: '2px' }}>{titulo}</div>
+                );
+
+                const resumenChips = [
+                  { label: 'Unidades', value: vehiculos.length, color: '#e0e0e0' },
+                  { label: 'En línea', value: vehiculosOnline.length, color: '#4ade80' },
+                  { label: 'En movimiento', value: enMovimiento, color: '#00ff41' },
+                  { label: 'Detenidas', value: detenidas, color: '#60a5fa' },
+                  { label: 'Sin señal', value: vehiculosOffline.length, color: vehiculosOffline.length ? '#facc15' : '#e0e0e0' },
+                  { label: 'Viajes activos', value: viajesEnCurso.length, color: viajesEnCurso.length ? '#00ff41' : '#6a9b6a' },
+                  { label: 'Citas hoy', value: kpis?.citasHoy?.total ?? citasOperativas.length, color: '#60a5fa' },
+                  { label: 'Alertas sin leer', value: alertasNoLeidas.length, color: alertasNoLeidas.length ? '#f87171' : '#4ade80' },
+                  { label: 'Manten. vencido/próx.', value: mVen + mProx, color: mVen ? '#f87171' : mProx ? '#facc15' : '#4ade80' },
+                  { label: 'Pendientes', value: pendientes.length, color: pendientes.length ? '#f59e0b' : '#4ade80' },
+                ];
+
                 return (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(270px, 1fr))', gap: '14px' }}>
-                    {panel('Flota', '🚛', (
-                      <>
-                        <div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#6a9b6a', marginBottom: '4px' }}><span>En línea</span><span>{vehiculosOnline.length} / {vehiculos.length}</span></div>
-                          <div style={{ height: 6, background: '#0d1a0d', borderRadius: 3, overflow: 'hidden' }}>
-                            <div style={{ height: '100%', width: `${onlinePct}%`, background: onlinePct >= 60 ? '#4ade80' : onlinePct >= 30 ? '#facc15' : '#f87171', borderRadius: 3, transition: 'width 0.4s' }} />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    <div style={{ background: 'linear-gradient(135deg, #0d1a0d 0%, #161616 100%)', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '14px 16px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                        <div style={{ fontSize: '12px', fontWeight: 700, color: '#00ff41', textTransform: 'uppercase', letterSpacing: '0.06em' }}>📋 Resumen de la operación</div>
+                        <div style={{ fontSize: '11px', color: '#6a9b6a' }}>
+                          {new Date().toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} · {new Date().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                        {resumenChips.map((r, i) => (
+                          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#1a1a1a', border: '1px solid #1a3d1a', borderRadius: '8px', padding: '6px 10px' }}>
+                            <span style={{ fontSize: '17px', fontWeight: 800, color: r.color, lineHeight: 1 }}>{r.value}</span>
+                            <span style={{ fontSize: '10px', color: '#6a9b6a', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{r.label}</span>
                           </div>
-                        </div>
-                        {fila('🟢 En movimiento', enMovimiento, '#4ade80')}
-                        {fila('🔵 Detenidas', detenidas, '#60a5fa')}
-                        {fila('🟡 Sin señal', vehiculosOffline.length, '#facc15')}
-                        {fila('⛽ Diesel bajo', dieselBajo, dieselBajo > 0 ? '#f59e0b' : '#e0e0e0')}
-                      </>
-                    ), '#1a3d1a')}
+                        ))}
+                      </div>
+                    </div>
 
-                    {panel('Alertas sin leer', '🔔', (
-                      <>
-                        <div style={{ fontSize: '30px', fontWeight: 800, color: alertasNoLeidas.length > 0 ? '#f87171' : '#4ade80', lineHeight: 1 }}>{alertasNoLeidas.length}</div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto' }}>
-                          {Object.entries(alertasPorTipo).map(([tipo, count]) => (
-                            <div key={tipo} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
-                              <span style={{ color: '#9ca3af' }}>{tipoAlerta[tipo] || '⚠️ Otra'}</span>
-                              <span style={{ fontWeight: 700, color: '#f87171' }}>{count}</span>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(270px, 1fr))', gap: '14px' }}>
+                      {section('🚛 Flota y combustible')}
+                      {panel('Flota', '🚛', (
+                        <>
+                          <div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#6a9b6a', marginBottom: '4px' }}><span>En línea</span><span>{vehiculosOnline.length} / {vehiculos.length}</span></div>
+                            <div style={{ height: 6, background: '#0d1a0d', borderRadius: 3, overflow: 'hidden' }}>
+                              <div style={{ height: '100%', width: `${onlinePct}%`, background: onlinePct >= 60 ? '#4ade80' : onlinePct >= 30 ? '#facc15' : '#f87171', borderRadius: 3, transition: 'width 0.4s' }} />
                             </div>
-                          ))}
-                          {alertasNoLeidas.length === 0 && <span style={{ fontSize: '12px', color: '#6a9b6a' }}>Sin alertas pendientes ✨</span>}
-                        </div>
-                      </>
-                    ), '#1a3d1a')}
+                          </div>
+                          {fila('🟢 En movimiento', enMovimiento, '#4ade80')}
+                          {fila('🔵 Detenidas', detenidas, '#60a5fa')}
+                          {fila('🟡 Sin señal', vehiculosOffline.length, '#facc15')}
+                          {fila('⛽ Diesel bajo', dieselBajo, dieselBajo > 0 ? '#f59e0b' : '#e0e0e0')}
+                        </>
+                      ), '#1a3d1a')}
 
-                    {panel('Viajes activos', '🚚', (
-                      <>
-                        <div style={{ fontSize: '30px', fontWeight: 800, color: viajesEnCurso.length > 0 ? '#00ff41' : '#6a9b6a', lineHeight: 1 }}>{viajesEnCurso.length}</div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto' }}>
-                          {Object.entries(viajesPorEstado).map(([estado, count]) => (
-                            <div key={estado} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
-                              <span style={{ color: '#9ca3af' }}>{etiquetaEstado(estado)}</span>
-                              <span style={{ fontWeight: 700, color: estadoColors[estado] || '#e0e0e0' }}>{count}</span>
-                            </div>
-                          ))}
-                          {viajesEnCurso.length === 0 && <span style={{ fontSize: '12px', color: '#6a9b6a' }}>Sin viajes en curso</span>}
-                        </div>
-                      </>
-                    ), '#1a3d1a')}
+                      {panel('Combustible', '⛽', (
+                        <>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#6a9b6a', marginBottom: '4px' }}><span>Promedio de tanque</span><span>{avgFuel}%</span></div>
+                          <div style={{ height: 6, background: '#0d1a0d', borderRadius: 3, overflow: 'hidden', marginBottom: '10px' }}>
+                            <div style={{ height: '100%', width: `${avgFuel}%`, background: avgFuel >= 50 ? '#4ade80' : avgFuel >= 25 ? '#facc15' : '#f87171', borderRadius: 3, transition: 'width 0.4s' }} />
+                          </div>
+                          {fila('🟢 Tanque > 50%', conCombustible.filter(v => v.fuelLevelPercent >= 0.5).length, '#4ade80')}
+                          {fila('🟡 Diesel bajo (< 25%)', dieselBajo, dieselBajo > 0 ? '#f59e0b' : '#e0e0e0')}
+                          {fila('🔴 Crítico (< 10%)', dieselCritico, dieselCritico > 0 ? '#f87171' : '#e0e0e0')}
+                          {fila('📊 Con dato de combustible', conCombustible.length, '#60a5fa')}
+                        </>
+                      ), '#1a3d1a')}
 
-                    {panel('Citas operativas', '📅', (
-                      <>
-                        <div style={{ fontSize: '30px', fontWeight: 800, color: citasOperativas.length > 0 ? '#60a5fa' : '#6a9b6a', lineHeight: 1 }}>{citasOperativas.length}</div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto' }}>
-                          {citasProximas.map((c, i) => {
-                            const d = parseCitaDate(c.cita_descarga || c.cita_carga);
-                            return (
-                              <div key={i} style={{ fontSize: '12px', color: '#9ca3af', display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
-                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.unidad} → {c.destino}</span>
-                                <span style={{ color: '#e0e0e0', flexShrink: 0 }}>{d ? d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short' }) : '—'}</span>
+                      {section('📦 Operación en curso')}
+                      {panel('Viajes activos', '🚚', (
+                        <>
+                          <div style={{ fontSize: '30px', fontWeight: 800, color: viajesEnCurso.length > 0 ? '#00ff41' : '#6a9b6a', lineHeight: 1 }}>{viajesEnCurso.length}</div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto' }}>
+                            {Object.entries(viajesPorEstado).map(([estado, count]) => (
+                              <div key={estado} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                                <span style={{ color: '#9ca3af' }}>{etiquetaEstado(estado)}</span>
+                                <span style={{ fontWeight: 700, color: estadoColors[estado] || '#e0e0e0' }}>{count}</span>
                               </div>
-                            );
-                          })}
-                          {citasOperativas.length === 0 && <span style={{ fontSize: '12px', color: '#6a9b6a' }}>Sin citas agendadas</span>}
-                        </div>
-                      </>
-                    ), '#1a3d1a')}
+                            ))}
+                            {viajesEnCurso.length === 0 && <span style={{ fontSize: '12px', color: '#6a9b6a' }}>Sin viajes en curso</span>}
+                          </div>
+                        </>
+                      ), '#1a3d1a')}
 
-                    {panel('Remolques', '🍆', (
-                      <>
-                        <div style={{ fontSize: '30px', fontWeight: 800, color: '#3b82f6', lineHeight: 1 }}>{rem ? `${rem.disponibles}/${rem.total}` : remolques.length}</div>
-                        {fila('Refrigerados', rem ? rem.refrigerados : '—', '#3b82f6')}
-                        {fila('Con GPS', rem ? rem.conGps : '—', '#3b82f6')}
-                      </>
-                    ), '#1a3d1a')}
+                      {panel('Citas operativas', '📅', (
+                        <>
+                          <div style={{ fontSize: '30px', fontWeight: 800, color: citasOperativas.length > 0 ? '#60a5fa' : '#6a9b6a', lineHeight: 1 }}>{citasOperativas.length}</div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto' }}>
+                            {citasProximas.map((c, i) => {
+                              const d = parseCitaDate(c.cita_descarga || c.cita_carga);
+                              return (
+                                <div key={i} style={{ fontSize: '12px', color: '#9ca3af', display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.unidad} → {c.destino}</span>
+                                  <span style={{ color: '#e0e0e0', flexShrink: 0 }}>{d ? d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short' }) : '—'}</span>
+                                </div>
+                              );
+                            })}
+                            {citasOperativas.length === 0 && <span style={{ fontSize: '12px', color: '#6a9b6a' }}>Sin citas agendadas</span>}
+                          </div>
+                        </>
+                      ), '#1a3d1a')}
 
-                    {panel('Mantenimiento', '🔧', (
-                      <>
-                        <div style={{ fontSize: '30px', fontWeight: 800, color: mVen > 0 ? '#f87171' : mProx > 0 ? '#facc15' : '#4ade80', lineHeight: 1 }}>{mVen + mProx}</div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          {fila('⚠️ Vencidos', mVen, mVen > 0 ? '#f87171' : '#e0e0e0')}
-                          {fila('🟡 Próximos', mProx, mProx > 0 ? '#facc15' : '#e0e0e0')}
-                          {fila('🔵 Programados', mProg, '#60a5fa')}
-                          {fila('✅ Completados', mCompletados, '#4ade80')}
-                        </div>
-                      </>
-                    ), '#1a3d1a')}
+                      {panel('Seguimiento', '📋', (
+                        <>
+                          <div style={{ fontSize: '30px', fontWeight: 800, color: seguimientoActivo.length > 0 ? '#00ff41' : '#6a9b6a', lineHeight: 1 }}>{seguimientoActivo.length}</div>
+                          <div style={{ fontSize: '12px', color: '#6a9b6a', marginTop: '-6px' }}>Filas activas</div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto' }}>
+                            {Object.entries(seguimientoPorEstatus).map(([estado, count]) => (
+                              <div key={estado} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                                <span style={{ color: '#9ca3af' }}>{estado}</span>
+                                <span style={{ fontWeight: 700, color: '#e0e0e0' }}>{count}</span>
+                              </div>
+                            ))}
+                            {seguimientoActivo.length === 0 && <span style={{ fontSize: '12px', color: '#6a9b6a' }}>Sin filas activas</span>}
+                          </div>
+                        </>
+                      ), '#1a3d1a')}
 
-                    {panel('Pendientes', '📌', (
-                      <>
-                        <div style={{ fontSize: '30px', fontWeight: 800, color: pendientes.length > 0 ? '#f59e0b' : '#4ade80', lineHeight: 1 }}>{pendientes.length}</div>
-                        <div style={{ fontSize: '12px', color: '#6a9b6a' }}>{pendientes.length > 0 ? 'Tareas por resolver' : 'Todo al día ✨'}</div>
-                      </>
-                    ), '#1a3d1a')}
+                      {panel('Remolques', '🍆', (
+                        <>
+                          <div style={{ fontSize: '30px', fontWeight: 800, color: '#3b82f6', lineHeight: 1 }}>{rem ? `${rem.disponibles}/${rem.total}` : remolques.length}</div>
+                          {fila('Refrigerados', rem ? rem.refrigerados : '—', '#3b82f6')}
+                          {fila('Con GPS', rem ? rem.conGps : '—', '#3b82f6')}
+                        </>
+                      ), '#1a3d1a')}
 
-                    {panel('Zonas de peligro', '⚠️', (
-                      <>
-                        <div style={{ fontSize: '30px', fontWeight: 800, color: zc.critical ? '#f87171' : '#fb923c', lineHeight: 1 }}>{customRiskZones.length}</div>
-                        {fila('Propias agregadas', customRiskZones.length, '#f87171')}
-                        {fila('Predefinidas (México)', defaultZonesList.length, '#fb923c')}
-                        <button onClick={() => { setActiveTab('geocercas'); }} style={{ marginTop: 'auto', padding: '8px', background: '#7f1d1d', color: '#fca5a5', border: '1px dashed #f87171', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>
-                          Gestionar en Geocercas →
-                        </button>
-                      </>
-                    ), '#1a3d1a')}
+                      {section('⚠️ Seguridad y alertas')}
+                      {panel('Alertas sin leer', '🔔', (
+                        <>
+                          <div style={{ fontSize: '30px', fontWeight: 800, color: alertasNoLeidas.length > 0 ? '#f87171' : '#4ade80', lineHeight: 1 }}>{alertasNoLeidas.length}</div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto' }}>
+                            {Object.entries(alertasPorTipo).map(([tipo, count]) => (
+                              <div key={tipo} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                                <span style={{ color: '#9ca3af' }}>{tipoAlerta[tipo] || '⚠️ Otra'}</span>
+                                <span style={{ fontWeight: 700, color: '#f87171' }}>{count}</span>
+                              </div>
+                            ))}
+                            {alertasNoLeidas.length === 0 && <span style={{ fontSize: '12px', color: '#6a9b6a' }}>Sin alertas pendientes ✨</span>}
+                          </div>
+                        </>
+                      ), '#1a3d1a')}
 
-                    {panel('Combustible', '⛽', (
-                      <>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#6a9b6a', marginBottom: '4px' }}><span>Promedio de tanque</span><span>{avgFuel}%</span></div>
-                        <div style={{ height: 6, background: '#0d1a0d', borderRadius: 3, overflow: 'hidden', marginBottom: '10px' }}>
-                          <div style={{ height: '100%', width: `${avgFuel}%`, background: avgFuel >= 50 ? '#4ade80' : avgFuel >= 25 ? '#facc15' : '#f87171', borderRadius: 3, transition: 'width 0.4s' }} />
-                        </div>
-                        {fila('🟢 Tanque > 50%', conCombustible.filter(v => v.fuelLevelPercent >= 0.5).length, '#4ade80')}
-                        {fila('🟡 Diesel bajo (< 25%)', dieselBajo, dieselBajo > 0 ? '#f59e0b' : '#e0e0e0')}
-                        {fila('🔴 Crítico (< 10%)', dieselCritico, dieselCritico > 0 ? '#f87171' : '#e0e0e0')}
-                        {fila('📊 Con dato de combustible', conCombustible.length, '#60a5fa')}
-                      </>
-                    ), '#1a3d1a')}
+                      {panel('Velocidad', '🚀', (
+                        <>
+                          <div style={{ fontSize: '30px', fontWeight: 800, color: velocidadMaxima > 80 ? '#f87171' : '#00ff41', lineHeight: 1 }}>
+                            {Math.round(velocidadMaxima)} <span style={{ fontSize: '14px', fontWeight: 600, color: '#6a9b6a' }}>mph</span>
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#6a9b6a', marginTop: '-6px' }}>Velocidad máxima actual</div>
+                          {fila('Excediendo 80 mph', excesoVelocidad.length, excesoVelocidad.length > 0 ? '#f87171' : '#4ade80')}
+                          {excesoVelocidad.length > 0 && (
+                            <div style={{ fontSize: '11px', color: '#f87171', maxHeight: '60px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                              {excesoVelocidad.slice(0, 5).map(v => (
+                                <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                  <span>{v.name}</span>
+                                  <span style={{ fontWeight: 700 }}>{Math.round(v.location?.speed || 0)} mph</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      ), '#1a3d1a')}
 
-                    {panel('Operadores', '👤', (
-                      <>
-                        <div style={{ fontSize: '30px', fontWeight: 800, color: '#8b5cf6', lineHeight: 1 }}>{operadoresAsignados}</div>
-                        <div style={{ fontSize: '12px', color: '#6a9b6a', marginTop: '-6px' }}>Operadores asignados</div>
-                        {fila('Conductores Samsara', samsaraDrivers.length, '#3b82f6')}
-                        {fila('Unidades sin operador', unidadesSinOperador, unidadesSinOperador > 0 ? '#f59e0b' : '#4ade80')}
-                      </>
-                    ), '#1a3d1a')}
+                      {panel('Zonas de peligro', '⚠️', (
+                        <>
+                          <div style={{ fontSize: '30px', fontWeight: 800, color: zc.critical ? '#f87171' : '#fb923c', lineHeight: 1 }}>{customRiskZones.length}</div>
+                          {fila('Propias agregadas', customRiskZones.length, '#f87171')}
+                          {fila('Predefinidas (México)', defaultZonesList.length, '#fb923c')}
+                          <button onClick={() => { setActiveTab('geocercas'); }} style={{ marginTop: 'auto', padding: '8px', background: '#7f1d1d', color: '#fca5a5', border: '1px dashed #f87171', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>
+                            Gestionar en Geocercas →
+                          </button>
+                        </>
+                      ), '#1a3d1a')}
 
-                    {panel('Velocidad', '🚀', (
-                      <>
-                        <div style={{ fontSize: '30px', fontWeight: 800, color: velocidadMaxima > 80 ? '#f87171' : '#00ff41', lineHeight: 1 }}>
-                          {Math.round(velocidadMaxima)} <span style={{ fontSize: '14px', fontWeight: 600, color: '#6a9b6a' }}>mph</span>
-                        </div>
-                        <div style={{ fontSize: '12px', color: '#6a9b6a', marginTop: '-6px' }}>Velocidad máxima actual</div>
-                        {fila('Excediendo 80 mph', excesoVelocidad.length, excesoVelocidad.length > 0 ? '#f87171' : '#4ade80')}
-                        {excesoVelocidad.length > 0 && (
-                          <div style={{ fontSize: '11px', color: '#f87171', maxHeight: '60px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                            {excesoVelocidad.slice(0, 5).map(v => (
-                              <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <span>{v.name}</span>
-                                <span style={{ fontWeight: 700 }}>{Math.round(v.location?.speed || 0)} mph</span>
+                      {section('🔧 Mantenimiento y control')}
+                      {panel('Mantenimiento', '🔧', (
+                        <>
+                          <div style={{ fontSize: '30px', fontWeight: 800, color: mVen > 0 ? '#f87171' : mProx > 0 ? '#facc15' : '#4ade80', lineHeight: 1 }}>{mVen + mProx}</div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            {fila('⚠️ Vencidos', mVen, mVen > 0 ? '#f87171' : '#e0e0e0')}
+                            {fila('🟡 Próximos', mProx, mProx > 0 ? '#facc15' : '#e0e0e0')}
+                            {fila('🔵 Programados', mProg, '#60a5fa')}
+                            {fila('✅ Completados', mCompletados, '#4ade80')}
+                          </div>
+                        </>
+                      ), '#1a3d1a')}
+
+                      {panel('Pendientes', '📌', (
+                        <>
+                          <div style={{ fontSize: '30px', fontWeight: 800, color: pendientes.length > 0 ? '#f59e0b' : '#4ade80', lineHeight: 1 }}>{pendientes.length}</div>
+                          <div style={{ fontSize: '12px', color: '#6a9b6a' }}>{pendientes.length > 0 ? 'Tareas por resolver' : 'Todo al día ✨'}</div>
+                        </>
+                      ), '#1a3d1a')}
+
+                      {section('👥 Personal y clientes')}
+                      {panel('Operadores', '👤', (
+                        <>
+                          <div style={{ fontSize: '30px', fontWeight: 800, color: '#8b5cf6', lineHeight: 1 }}>{operadoresAsignados}</div>
+                          <div style={{ fontSize: '12px', color: '#6a9b6a', marginTop: '-6px' }}>Operadores asignados</div>
+                          {fila('Conductores Samsara', samsaraDrivers.length, '#3b82f6')}
+                          {fila('Unidades sin operador', unidadesSinOperador, unidadesSinOperador > 0 ? '#f59e0b' : '#4ade80')}
+                        </>
+                      ), '#1a3d1a')}
+
+                      {panel('Clientes', '🏢', (
+                        <>
+                          <div style={{ fontSize: '30px', fontWeight: 800, color: '#60a5fa', lineHeight: 1 }}>{clientes.length}</div>
+                          <div style={{ fontSize: '12px', color: '#6a9b6a', marginTop: '-6px' }}>Clientes registrados</div>
+                          {fila('🔗 Geocercas vinculadas', geofenceLinks.length, '#8b5cf6')}
+                          {fila('📍 Total geocercas', allGeofences.length, '#3b82f6')}
+                        </>
+                      ), '#1a3d1a')}
+
+                      {semanas.length > 0 && (
+                        <div style={{ gridColumn: '1 / -1', background: '#161616', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '14px 16px' }}>
+                          <div style={{ fontSize: '10px', color: '#6a9b6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '10px' }}>📊 Viajes por semana</div>
+                          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', height: '70px' }}>
+                            {semanas.map((s, i) => (
+                              <div key={i} title={`${s.inicio} — ${s.fin}: ${s.total} viajes`} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', gap: '4px', height: '100%' }}>
+                                <div style={{ fontSize: '11px', fontWeight: 700, color: '#e0e0e0' }}>{s.total}</div>
+                                <div style={{ width: '100%', maxWidth: '34px', background: i === semanas.length - 1 ? '#00ff41' : '#1d4ed8', borderRadius: '4px 4px 0 0', height: `${Math.max(4, Math.round((s.total / maxSemana) * 100))}%`, opacity: 0.9, transition: 'height 0.4s' }} />
+                                <div style={{ fontSize: '9px', color: '#6a9b6a' }}>{s.inicio}</div>
                               </div>
                             ))}
                           </div>
-                        )}
-                      </>
-                    ), '#1a3d1a')}
-
-                    {panel('Seguimiento', '📋', (
-                      <>
-                        <div style={{ fontSize: '30px', fontWeight: 800, color: seguimientoActivo.length > 0 ? '#00ff41' : '#6a9b6a', lineHeight: 1 }}>{seguimientoActivo.length}</div>
-                        <div style={{ fontSize: '12px', color: '#6a9b6a', marginTop: '-6px' }}>Filas activas</div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto' }}>
-                          {Object.entries(seguimientoPorEstatus).map(([estado, count]) => (
-                            <div key={estado} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
-                              <span style={{ color: '#9ca3af' }}>{estado}</span>
-                              <span style={{ fontWeight: 700, color: '#e0e0e0' }}>{count}</span>
-                            </div>
-                          ))}
-                          {seguimientoActivo.length === 0 && <span style={{ fontSize: '12px', color: '#6a9b6a' }}>Sin filas activas</span>}
                         </div>
-                      </>
-                    ), '#1a3d1a')}
+                      )}
 
-                    {panel('Clientes', '🏢', (
-                      <>
-                        <div style={{ fontSize: '30px', fontWeight: 800, color: '#60a5fa', lineHeight: 1 }}>{clientes.length}</div>
-                        <div style={{ fontSize: '12px', color: '#6a9b6a', marginTop: '-6px' }}>Clientes registrados</div>
-                        {fila('🔗 Geocercas vinculadas', geofenceLinks.length, '#8b5cf6')}
-                        {fila('📍 Total geocercas', allGeofences.length, '#3b82f6')}
-                      </>
-                    ), '#1a3d1a')}
-
-                    {semanas.length > 0 && (
-                      <div style={{ gridColumn: '1 / -1', background: '#161616', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '14px 16px' }}>
-                        <div style={{ fontSize: '10px', color: '#6a9b6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '10px' }}>📊 Viajes por semana</div>
-                        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', height: '70px' }}>
-                          {semanas.map((s, i) => (
-                            <div key={i} title={`${s.inicio} — ${s.fin}: ${s.total} viajes`} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', gap: '4px', height: '100%' }}>
-                              <div style={{ fontSize: '11px', fontWeight: 700, color: '#e0e0e0' }}>{s.total}</div>
-                              <div style={{ width: '100%', maxWidth: '34px', background: i === semanas.length - 1 ? '#00ff41' : '#1d4ed8', borderRadius: '4px 4px 0 0', height: `${Math.max(4, Math.round((s.total / maxSemana) * 100))}%`, opacity: 0.9, transition: 'height 0.4s' }} />
-                              <div style={{ fontSize: '9px', color: '#6a9b6a' }}>{s.inicio}</div>
-                            </div>
-                          ))}
+                      {alertasNoLeidas.length > 0 && (
+                        <div style={{ gridColumn: '1 / -1', background: '#161616', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '14px 16px' }}>
+                          <div style={{ fontSize: '10px', color: '#6a9b6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '10px' }}>🕑 Últimas alertas</div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '8px' }}>
+                            {alertasNoLeidas.slice(0, 6).map(a => {
+                              const borderColor = a.tipo === 'geocerca' ? '#8b5cf6' : a.tipo === 'combustible_bajo' ? '#f59e0b' : a.tipo === 'mantenimiento' ? '#f87171' : '#3b82f6';
+                              return (
+                                <div key={a.id} style={{ background: '#1a1a1a', borderRadius: '8px', padding: '10px', borderLeft: `3px solid ${borderColor}` }}>
+                                  <div style={{ fontSize: '12px', fontWeight: 600, color: '#e0e0e0' }}>{a.vehicle_name || a.vehicle_id}</div>
+                                  <div style={{ fontSize: '11px', color: '#6a9b6a', marginTop: 2 }}>{a.mensaje}</div>
+                                  <div style={{ fontSize: '10px', color: '#4a8a4a', marginTop: 2 }}>{parseFecha(a.timestamp)?.toLocaleTimeString()}</div>
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
-                      </div>
-                    )}
-
-                    {alertasNoLeidas.length > 0 && (
-                      <div style={{ gridColumn: '1 / -1', background: '#161616', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '14px 16px' }}>
-                        <div style={{ fontSize: '10px', color: '#6a9b6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '10px' }}>🕑 Últimas alertas</div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '8px' }}>
-                          {alertasNoLeidas.slice(0, 6).map(a => {
-                            const borderColor = a.tipo === 'geocerca' ? '#8b5cf6' : a.tipo === 'combustible_bajo' ? '#f59e0b' : a.tipo === 'mantenimiento' ? '#f87171' : '#3b82f6';
-                            return (
-                              <div key={a.id} style={{ background: '#1a1a1a', borderRadius: '8px', padding: '10px', borderLeft: `3px solid ${borderColor}` }}>
-                                <div style={{ fontSize: '12px', fontWeight: 600, color: '#e0e0e0' }}>{a.vehicle_name || a.vehicle_id}</div>
-                                <div style={{ fontSize: '11px', color: '#6a9b6a', marginTop: 2 }}>{a.mensaje}</div>
-                                <div style={{ fontSize: '10px', color: '#4a8a4a', marginTop: 2 }}>{parseFecha(a.timestamp)?.toLocaleTimeString()}</div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
                 );
               })()}
