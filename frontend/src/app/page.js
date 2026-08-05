@@ -3417,19 +3417,22 @@ export default function Home() {
                 const pColor = !p || p.entregas === 0 ? '#6a9b6a' : p.porcentaje >= 85 ? '#4ade80' : p.porcentaje >= 60 ? '#facc15' : '#f87171';
                 const uColor = u && u.porcentaje >= 60 ? '#4ade80' : u && u.porcentaje >= 30 ? '#facc15' : '#f87171';
                 const proxima = c?.proximaCita ? formatFechaProgramada(c.proximaCita) : 'Sin citas';
-                const kpiCard = (titulo, valor, sub, color = '#e0e0e0', icono = '') => (
+                const kpiCard = (titulo, valor, sub, color = '#e0e0e0') => (
                   <div style={{ flex: '0 0 auto', minWidth: '150px', background: '#1a1a1a', borderRadius: '10px', border: '1px solid #1a3d1a', padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                    <div style={{ fontSize: '10px', color: '#6a9b6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '4px' }}>{icono} {titulo}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                      <span style={{ fontSize: '10px', color: '#6a9b6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{titulo}</span>
+                    </div>
                     <div style={{ fontSize: '22px', fontWeight: 800, color, lineHeight: 1.1 }}>{valor}</div>
                     <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>{sub}</div>
                   </div>
                 );
                 return (
                   <>
-                    {kpiCard('Puntualidad', p && p.entregas > 0 ? `${p.porcentaje}%` : '—', p && p.entregas > 0 ? `${p.aTiempo} de ${p.entregas} entregas a tiempo` : 'Sin entregas en 60 días', pColor, '⏱️')}
-                    {kpiCard('Uso de flota', u ? `${u.porcentaje}%` : '—', u ? `${u.viajesActivos} de ${u.totalUnidades} unidades en viaje` : '', uColor, '🚛')}
-                    {kpiCard('Citas hoy', c ? c.total : '—', c ? `${c.viajes} viajes · ${c.seguimiento} seguimientos` : '', '#60a5fa', '📅')}
-                    {kpiCard('Próxima cita', proxima, c && c.total > 0 ? 'Siguiente en agenda' : 'Sin citas agendadas', '#8b5cf6', '⏰')}
+                    {kpiCard('Puntualidad', p && p.entregas > 0 ? `${p.porcentaje}%` : '—', p && p.entregas > 0 ? `${p.aTiempo} de ${p.entregas} entregas a tiempo` : 'Sin entregas en 60 días', pColor)}
+                    {kpiCard('Uso de flota', u ? `${u.porcentaje}%` : '—', u ? `${u.viajesActivos} de ${u.totalUnidades} unidades en viaje` : '', uColor)}
+                    {kpiCard('Citas hoy', c ? c.total : '—', c ? `${c.viajes} viajes · ${c.seguimiento} seguimientos` : '', '#60a5fa')}
+                    {kpiCard('Próxima cita', proxima, c && c.total > 0 ? 'Siguiente en agenda' : 'Sin citas agendadas', '#8b5cf6')}
                   </>
                 );
               })()}
@@ -3448,7 +3451,7 @@ export default function Home() {
                   return acc;
                 }, {});
                 const etiquetaEstado = (value) => String(value || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-                const tipoAlerta = { geocerca: '⭕ Geocerca', combustible_bajo: '⛽ Combustible', velocidad: '🚀 Velocidad', mantenimiento: '🔧 Mantenimiento' };
+                const tipoAlerta = { geocerca: 'Geocerca', combustible_bajo: 'Combustible', velocidad: 'Velocidad', mantenimiento: 'Mantenimiento' };
                 const alertasPorTipo = alertasNoLeidas.reduce((acc, a) => {
                   const key = String(a.tipo || 'otra');
                   acc[key] = (acc[key] || 0) + 1;
@@ -3468,33 +3471,46 @@ export default function Home() {
                 const dieselCritico = vehiculos.filter(v => v.fuelLevelPercent !== null && v.fuelLevelPercent < 0.10).length;
                 const operadoresAsignados = Object.values(operadores).filter(o => o && o.nombre).length;
                 const unidadesSinOperador = vehiculos.filter(v => !(operadores[String(v.id)]?.nombre)).length;
-                const velocidadMaxima = vehiculos.reduce((m, v) => Math.max(m, Number(v.location?.speed || 0)), 0);
-                const excesoVelocidad = vehiculos.filter(v => Number(v.location?.speed || 0) > 80);
+                const velocidadMaxima = vehiculos.reduce((m, v) => Math.max(m, velocidadKmh(v.location?.speed)), 0);
+                const excesoVelocidad = vehiculos.filter(v => velocidadKmh(v.location?.speed) > 120);
                 const seguimientoActivo = seguimiento.filter(s => !['completado', 'cancelado'].includes(String(s.estatus || '').toLowerCase()));
                 const seguimientoPorEstatus = seguimientoActivo.reduce((acc, s) => { const key = String(s.estatus || 'Disponible'); acc[key] = (acc[key] || 0) + 1; return acc; }, {});
 
-                const panel = (titulo, icono, children, borde = '#1a3d1a') => (
-                  <div style={{ background: '#161616', border: `1px solid ${borde}`, borderRadius: '12px', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <div style={{ fontSize: '10px', color: '#6a9b6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{icono} {titulo}</div>
+                const panel = (titulo, accent, children) => (
+                  <div style={{ background: '#161616', border: '1px solid #1a3d1a', borderLeft: `3px solid ${accent}`, borderRadius: '10px', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minHeight: '14px' }}>
+                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: accent, flexShrink: 0 }} />
+                      <span style={{ fontSize: '10px', color: '#6a9b6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{titulo}</span>
+                    </div>
                     {children}
                   </div>
                 );
 
+                const bigNum = (valor, color = '#e0e0e0', sub = '') => (
+                  <div>
+                    <div style={{ fontSize: '32px', fontWeight: 800, color, lineHeight: 1 }}>{valor}</div>
+                    {sub && <div style={{ fontSize: '11px', color: '#6a9b6a', marginTop: '4px' }}>{sub}</div>}
+                  </div>
+                );
+
                 const fila = (label, value, color = '#e0e0e0') => (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', gap: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', gap: '8px', padding: '2px 0' }}>
                     <span style={{ color: '#9ca3af', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
                     <span style={{ fontWeight: 700, color, flexShrink: 0 }}>{value}</span>
                   </div>
                 );
 
                 const section = (titulo) => (
-                  <div style={{ gridColumn: '1 / -1', fontSize: '11px', fontWeight: 700, color: '#6a9b6a', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: '2px' }}>{titulo}</div>
+                  <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{titulo}</span>
+                    <div style={{ flex: 1, height: 1, background: '#1a3d1a' }} />
+                  </div>
                 );
 
                 return (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(270px, 1fr))', gap: '14px' }}>
-                      {section('🚛 Flota y combustible')}
-                      {panel('Flota', '🚛', (
+                      {section('Flota y combustible')}
+                      {panel('Flota', onlinePct >= 60 ? '#4ade80' : onlinePct >= 30 ? '#facc15' : '#f87171', (
                         <>
                           <div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#6a9b6a', marginBottom: '4px' }}><span>En línea</span><span>{vehiculosOnline.length} / {vehiculos.length}</span></div>
@@ -3502,30 +3518,29 @@ export default function Home() {
                               <div style={{ height: '100%', width: `${onlinePct}%`, background: onlinePct >= 60 ? '#4ade80' : onlinePct >= 30 ? '#facc15' : '#f87171', borderRadius: 3, transition: 'width 0.4s' }} />
                             </div>
                           </div>
-                          {fila('🟢 En movimiento', enMovimiento, '#4ade80')}
-                          {fila('🔵 Detenidas', detenidas, '#60a5fa')}
-                          {fila('🟡 Sin señal', vehiculosOffline.length, '#facc15')}
+                          {fila('En movimiento', enMovimiento, '#4ade80')}
+                          {fila('Detenidas', detenidas, '#60a5fa')}
+                          {fila('Sin señal', vehiculosOffline.length, vehiculosOffline.length > 0 ? '#facc15' : '#e0e0e0')}
                         </>
-                      ), '#1a3d1a')}
+                      ))}
 
-                      {panel('Combustible', '⛽', (
+                      {panel('Combustible', avgFuel >= 50 ? '#4ade80' : avgFuel >= 25 ? '#facc15' : '#f87171', (
                         <>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#6a9b6a', marginBottom: '4px' }}><span>Promedio de tanque</span><span>{avgFuel}%</span></div>
-                          <div style={{ height: 6, background: '#0d1a0d', borderRadius: 3, overflow: 'hidden', marginBottom: '10px' }}>
+                          {bigNum(`${avgFuel}%`, avgFuel >= 50 ? '#4ade80' : avgFuel >= 25 ? '#facc15' : '#f87171', 'Promedio de tanque')}
+                          <div style={{ height: 6, background: '#0d1a0d', borderRadius: 3, overflow: 'hidden' }}>
                             <div style={{ height: '100%', width: `${avgFuel}%`, background: avgFuel >= 50 ? '#4ade80' : avgFuel >= 25 ? '#facc15' : '#f87171', borderRadius: 3, transition: 'width 0.4s' }} />
                           </div>
-                          {fila('🟢 Tanque > 50%', conCombustible.filter(v => v.fuelLevelPercent >= 0.5).length, '#4ade80')}
-                          {fila('🟡 Diesel bajo (< 25%)', dieselBajo, dieselBajo > 0 ? '#f59e0b' : '#e0e0e0')}
-                          {fila('🔴 Crítico (< 10%)', dieselCritico, dieselCritico > 0 ? '#f87171' : '#e0e0e0')}
-                          {fila('📊 Con dato de combustible', conCombustible.length, '#60a5fa')}
+                          {fila('Tanque > 50%', conCombustible.filter(v => v.fuelLevelPercent >= 0.5).length, '#4ade80')}
+                          {fila('Diesel bajo (< 25%)', dieselBajo, dieselBajo > 0 ? '#f59e0b' : '#e0e0e0')}
+                          {fila('Crítico (< 10%)', dieselCritico, dieselCritico > 0 ? '#f87171' : '#e0e0e0')}
                         </>
-                      ), '#1a3d1a')}
+                      ))}
 
-                      {section('📦 Operación en curso')}
-                      {panel('Viajes activos', '🚚', (
+                      {section('Operación en curso')}
+                      {panel('Viajes activos', viajesEnCurso.length > 0 ? '#4ade80' : '#4a8a4a', (
                         <>
-                          <div style={{ fontSize: '30px', fontWeight: 800, color: viajesEnCurso.length > 0 ? '#00ff41' : '#6a9b6a', lineHeight: 1 }}>{viajesEnCurso.length}</div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto' }}>
+                          {bigNum(viajesEnCurso.length, viajesEnCurso.length > 0 ? '#4ade80' : '#6a9b6a', 'Viajes en curso')}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '120px', overflowY: 'auto' }}>
                             {Object.entries(viajesPorEstado).map(([estado, count]) => (
                               <div key={estado} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
                                 <span style={{ color: '#9ca3af' }}>{etiquetaEstado(estado)}</span>
@@ -3535,12 +3550,12 @@ export default function Home() {
                             {viajesEnCurso.length === 0 && <span style={{ fontSize: '12px', color: '#6a9b6a' }}>Sin viajes en curso</span>}
                           </div>
                         </>
-                      ), '#1a3d1a')}
+                      ))}
 
-                      {panel('Citas operativas', '📅', (
+                      {panel('Citas operativas', citasOperativas.length > 0 ? '#60a5fa' : '#4a8a4a', (
                         <>
-                          <div style={{ fontSize: '30px', fontWeight: 800, color: citasOperativas.length > 0 ? '#60a5fa' : '#6a9b6a', lineHeight: 1 }}>{citasOperativas.length}</div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto' }}>
+                          {bigNum(citasOperativas.length, citasOperativas.length > 0 ? '#60a5fa' : '#6a9b6a', 'Próximas citas')}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '120px', overflowY: 'auto' }}>
                             {citasProximas.map((c, i) => {
                               const d = parseCitaDate(c.cita_descarga || c.cita_carga);
                               return (
@@ -3553,13 +3568,12 @@ export default function Home() {
                             {citasOperativas.length === 0 && <span style={{ fontSize: '12px', color: '#6a9b6a' }}>Sin citas agendadas</span>}
                           </div>
                         </>
-                      ), '#1a3d1a')}
+                      ))}
 
-                      {panel('Seguimiento', '📋', (
+                      {panel('Seguimiento', seguimientoActivo.length > 0 ? '#8b5cf6' : '#4a8a4a', (
                         <>
-                          <div style={{ fontSize: '30px', fontWeight: 800, color: seguimientoActivo.length > 0 ? '#00ff41' : '#6a9b6a', lineHeight: 1 }}>{seguimientoActivo.length}</div>
-                          <div style={{ fontSize: '12px', color: '#6a9b6a', marginTop: '-6px' }}>Filas activas</div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto' }}>
+                          {bigNum(seguimientoActivo.length, seguimientoActivo.length > 0 ? '#4ade80' : '#6a9b6a', 'Filas activas')}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '120px', overflowY: 'auto' }}>
                             {Object.entries(seguimientoPorEstatus).map(([estado, count]) => (
                               <div key={estado} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
                                 <span style={{ color: '#9ca3af' }}>{estado}</span>
@@ -3569,105 +3583,100 @@ export default function Home() {
                             {seguimientoActivo.length === 0 && <span style={{ fontSize: '12px', color: '#6a9b6a' }}>Sin filas activas</span>}
                           </div>
                         </>
-                      ), '#1a3d1a')}
+                      ))}
 
-                      {panel('Remolques', '🍆', (
+                      {panel('Remolques', '#3b82f6', (
                         <>
-                          <div style={{ fontSize: '30px', fontWeight: 800, color: '#3b82f6', lineHeight: 1 }}>{rem ? `${rem.disponibles}/${rem.total}` : remolques.length}</div>
+                          {bigNum(rem ? `${rem.disponibles}/${rem.total}` : remolques.length, '#3b82f6', 'Disponibles / total')}
                           {fila('Refrigerados', rem ? rem.refrigerados : '—', '#3b82f6')}
                           {fila('Con GPS', rem ? rem.conGps : '—', '#3b82f6')}
                         </>
-                      ), '#1a3d1a')}
+                      ))}
 
-                      {section('⚠️ Seguridad y alertas')}
-                      {panel('Alertas sin leer', '🔔', (
+                      {section('Seguridad y alertas')}
+                      {panel('Alertas sin leer', alertasNoLeidas.length > 0 ? '#f87171' : '#4ade80', (
                         <>
-                          <div style={{ fontSize: '30px', fontWeight: 800, color: alertasNoLeidas.length > 0 ? '#f87171' : '#4ade80', lineHeight: 1 }}>{alertasNoLeidas.length}</div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto' }}>
+                          {bigNum(alertasNoLeidas.length, alertasNoLeidas.length > 0 ? '#f87171' : '#4ade80', alertasNoLeidas.length > 0 ? 'Requieren revisión' : 'Todo en orden')}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '120px', overflowY: 'auto' }}>
                             {Object.entries(alertasPorTipo).map(([tipo, count]) => (
                               <div key={tipo} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
-                                <span style={{ color: '#9ca3af' }}>{tipoAlerta[tipo] || '⚠️ Otra'}</span>
+                                <span style={{ color: '#9ca3af' }}>{tipoAlerta[tipo] || 'Otra'}</span>
                                 <span style={{ fontWeight: 700, color: '#f87171' }}>{count}</span>
                               </div>
                             ))}
-                            {alertasNoLeidas.length === 0 && <span style={{ fontSize: '12px', color: '#6a9b6a' }}>Sin alertas pendientes ✨</span>}
+                            {alertasNoLeidas.length === 0 && <span style={{ fontSize: '12px', color: '#6a9b6a' }}>Sin alertas pendientes</span>}
                           </div>
                         </>
-                      ), '#1a3d1a')}
+                      ))}
 
-                      {panel('Velocidad', '🚀', (
+                      {panel('Velocidad', excesoVelocidad.length > 0 ? '#f87171' : '#4ade80', (
                         <>
-                          <div style={{ fontSize: '30px', fontWeight: 800, color: velocidadMaxima > 80 ? '#f87171' : '#00ff41', lineHeight: 1 }}>
-                            {Math.round(velocidadMaxima)} <span style={{ fontSize: '14px', fontWeight: 600, color: '#6a9b6a' }}>mph</span>
-                          </div>
-                          <div style={{ fontSize: '12px', color: '#6a9b6a', marginTop: '-6px' }}>Velocidad máxima actual</div>
-                          {fila('Excediendo 80 mph', excesoVelocidad.length, excesoVelocidad.length > 0 ? '#f87171' : '#4ade80')}
+                          {bigNum(`${velocidadMaxima} km/h`, velocidadMaxima > 120 ? '#f87171' : '#4ade80', 'Velocidad máxima actual')}
+                          {fila('Excediendo 120 km/h', excesoVelocidad.length, excesoVelocidad.length > 0 ? '#f87171' : '#4ade80')}
                           {excesoVelocidad.length > 0 && (
                             <div style={{ fontSize: '11px', color: '#f87171', maxHeight: '60px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '2px' }}>
                               {excesoVelocidad.slice(0, 5).map(v => (
                                 <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between' }}>
                                   <span>{v.name}</span>
-                                  <span style={{ fontWeight: 700 }}>{Math.round(v.location?.speed || 0)} mph</span>
+                                  <span style={{ fontWeight: 700 }}>{velocidadKmh(v.location?.speed)} km/h</span>
                                 </div>
                               ))}
                             </div>
                           )}
                         </>
-                      ), '#1a3d1a')}
+                      ))}
 
-                      {panel('Zonas de peligro', '⚠️', (
+                      {panel('Zonas de peligro', zc.critical ? '#f87171' : '#fb923c', (
                         <>
-                          <div style={{ fontSize: '30px', fontWeight: 800, color: zc.critical ? '#f87171' : '#fb923c', lineHeight: 1 }}>{customRiskZones.length}</div>
+                          {bigNum(customRiskZones.length, zc.critical ? '#f87171' : '#fb923c', 'Zonas de riesgo')}
                           {fila('Propias agregadas', customRiskZones.length, '#f87171')}
                           {fila('Predefinidas (México)', defaultZonesList.length, '#fb923c')}
                           <button onClick={() => { setActiveTab('geocercas'); }} style={{ marginTop: 'auto', padding: '8px', background: '#7f1d1d', color: '#fca5a5', border: '1px dashed #f87171', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>
                             Gestionar en Geocercas →
                           </button>
                         </>
-                      ), '#1a3d1a')}
+                      ))}
 
-                      {section('🔧 Mantenimiento y control')}
-                      {panel('Mantenimiento', '🔧', (
+                      {section('Mantenimiento y control')}
+                      {panel('Mantenimiento', mVen > 0 ? '#f87171' : mProx > 0 ? '#facc15' : '#4ade80', (
                         <>
-                          <div style={{ fontSize: '30px', fontWeight: 800, color: mVen > 0 ? '#f87171' : mProx > 0 ? '#facc15' : '#4ade80', lineHeight: 1 }}>{mVen + mProx}</div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                            {fila('⚠️ Vencidos', mVen, mVen > 0 ? '#f87171' : '#e0e0e0')}
-                            {fila('🟡 Próximos', mProx, mProx > 0 ? '#facc15' : '#e0e0e0')}
-                            {fila('🔵 Programados', mProg, '#60a5fa')}
-                            {fila('✅ Completados', mCompletados, '#4ade80')}
-                          </div>
+                          {bigNum(mVen + mProx, mVen > 0 ? '#f87171' : mProx > 0 ? '#facc15' : '#4ade80', 'Vencidos + próximos')}
+                          {fila('Vencidos', mVen, mVen > 0 ? '#f87171' : '#e0e0e0')}
+                          {fila('Próximos', mProx, mProx > 0 ? '#facc15' : '#e0e0e0')}
+                          {fila('Programados', mProg, '#60a5fa')}
+                          {fila('Completados', mCompletados, '#4ade80')}
                         </>
-                      ), '#1a3d1a')}
+                      ))}
 
-                      {panel('Pendientes', '📌', (
+                      {panel('Pendientes', pendientes.length > 0 ? '#f59e0b' : '#4ade80', (
                         <>
-                          <div style={{ fontSize: '30px', fontWeight: 800, color: pendientes.length > 0 ? '#f59e0b' : '#4ade80', lineHeight: 1 }}>{pendientes.length}</div>
-                          <div style={{ fontSize: '12px', color: '#6a9b6a' }}>{pendientes.length > 0 ? 'Tareas por resolver' : 'Todo al día ✨'}</div>
+                          {bigNum(pendientes.length, pendientes.length > 0 ? '#f59e0b' : '#4ade80', pendientes.length > 0 ? 'Tareas por resolver' : 'Todo al día')}
                         </>
-                      ), '#1a3d1a')}
+                      ))}
 
-                      {section('👥 Personal y clientes')}
-                      {panel('Operadores', '👤', (
+                      {section('Personal y clientes')}
+                      {panel('Operadores', '#8b5cf6', (
                         <>
-                          <div style={{ fontSize: '30px', fontWeight: 800, color: '#8b5cf6', lineHeight: 1 }}>{operadoresAsignados}</div>
-                          <div style={{ fontSize: '12px', color: '#6a9b6a', marginTop: '-6px' }}>Operadores asignados</div>
+                          {bigNum(operadoresAsignados, '#8b5cf6', 'Operadores asignados')}
                           {fila('Conductores Samsara', samsaraDrivers.length, '#3b82f6')}
                           {fila('Unidades sin operador', unidadesSinOperador, unidadesSinOperador > 0 ? '#f59e0b' : '#4ade80')}
                         </>
-                      ), '#1a3d1a')}
+                      ))}
 
-                      {panel('Clientes', '🏢', (
+                      {panel('Clientes', '#60a5fa', (
                         <>
-                          <div style={{ fontSize: '30px', fontWeight: 800, color: '#60a5fa', lineHeight: 1 }}>{clientes.length}</div>
-                          <div style={{ fontSize: '12px', color: '#6a9b6a', marginTop: '-6px' }}>Clientes registrados</div>
-                          {fila('🔗 Geocercas vinculadas', geofenceLinks.length, '#8b5cf6')}
-                          {fila('📍 Total geocercas', allGeofences.length, '#3b82f6')}
+                          {bigNum(clientes.length, '#60a5fa', 'Clientes registrados')}
+                          {fila('Geocercas vinculadas', geofenceLinks.length, '#8b5cf6')}
+                          {fila('Total de geocercas', allGeofences.length, '#3b82f6')}
                         </>
-                      ), '#1a3d1a')}
+                      ))}
 
                       {semanas.length > 0 && (
-                        <div style={{ gridColumn: '1 / -1', background: '#161616', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '14px 16px' }}>
-                          <div style={{ fontSize: '10px', color: '#6a9b6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '10px' }}>📊 Viajes por semana</div>
+                        <div style={{ gridColumn: '1 / -1', background: '#161616', border: '1px solid #1a3d1a', borderRadius: '10px', padding: '14px 16px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#1d4ed8', flexShrink: 0 }} />
+                            <span style={{ fontSize: '10px', color: '#6a9b6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Viajes por semana</span>
+                          </div>
                           <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', height: '70px' }}>
                             {semanas.map((s, i) => (
                               <div key={i} title={`${s.inicio} — ${s.fin}: ${s.total} viajes`} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', gap: '4px', height: '100%' }}>
@@ -3681,8 +3690,11 @@ export default function Home() {
                       )}
 
                       {alertasNoLeidas.length > 0 && (
-                        <div style={{ gridColumn: '1 / -1', background: '#161616', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '14px 16px' }}>
-                          <div style={{ fontSize: '10px', color: '#6a9b6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '10px' }}>🕑 Últimas alertas</div>
+                        <div style={{ gridColumn: '1 / -1', background: '#161616', border: '1px solid #1a3d1a', borderRadius: '10px', padding: '14px 16px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#f87171', flexShrink: 0 }} />
+                            <span style={{ fontSize: '10px', color: '#6a9b6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Últimas alertas</span>
+                          </div>
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '8px' }}>
                             {alertasNoLeidas.slice(0, 6).map(a => {
                               const borderColor = a.tipo === 'geocerca' ? '#8b5cf6' : a.tipo === 'combustible_bajo' ? '#f59e0b' : a.tipo === 'mantenimiento' ? '#f87171' : '#3b82f6';
