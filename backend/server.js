@@ -272,6 +272,8 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
   db.run("ALTER TABLE viajes ADD COLUMN updated_at DATETIME", [], () => {});
   db.run("ALTER TABLE viajes ADD COLUMN hora_llegada DATETIME", [], () => {});
   db.run("ALTER TABLE viajes ADD COLUMN hora_salida DATETIME", [], () => {});
+  db.run("ALTER TABLE viajes ADD COLUMN cita_programada DATETIME", [], () => {});
+  db.run('UPDATE viajes SET cita_programada = fecha_fin WHERE cita_programada IS NULL AND fecha_fin IS NOT NULL', [], () => {});
   db.run("ALTER TABLE viajes ADD COLUMN hora_llegada DATETIME", [], () => {});
   db.run("ALTER TABLE viajes ADD COLUMN hora_salida DATETIME", [], () => {});
 
@@ -377,6 +379,17 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS vehicle_locations (
     vehicle_id TEXT PRIMARY KEY,
     vehicle_name TEXT,
+    latitude REAL,
+    longitude REAL,
+    speed REAL,
+    location TEXT,
+    time_ms INTEGER,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS trailer_locations (
+    trailer_id TEXT PRIMARY KEY,
+    trailer_name TEXT,
     latitude REAL,
     longitude REAL,
     speed REAL,
@@ -542,6 +555,29 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
     activa INTEGER DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS mantenimientos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entidad_tipo TEXT DEFAULT 'unidad',
+    entidad_id TEXT,
+    entidad_nombre TEXT,
+    tipo_servicio TEXT DEFAULT 'general',
+    fecha_ultimo DATETIME,
+    fecha_proxima DATETIME,
+    intervalo_dias INTEGER DEFAULT 30,
+    kilometraje_ultimo REAL,
+    kilometraje_proximo REAL,
+    estado TEXT DEFAULT 'programado',
+    notas TEXT,
+    created_by_username TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.run("ALTER TABLE mantenimientos ADD COLUMN intervalo_dias INTEGER DEFAULT 30", [], () => {});
+  db.run("ALTER TABLE mantenimientos ADD COLUMN kilometraje_ultimo REAL", [], () => {});
+  db.run("ALTER TABLE mantenimientos ADD COLUMN kilometraje_proximo REAL", [], () => {});
+  db.run("ALTER TABLE mantenimientos ADD COLUMN created_by_username TEXT", [], () => {});
+  db.run('CREATE INDEX IF NOT EXISTS idx_mantenimientos_estado_proxima ON mantenimientos(estado, fecha_proxima)', [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS cliente_geofence_links (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -935,6 +971,174 @@ app.use('/api', (req, res, next) => {
   if (req.path.startsWith('/auth') || req.path === '/webhooks/samsara') return next();
   return requireAuth(req, res, next);
 });
+
+app.get('/api/kpis', async (req, res) => {
+  try {
+    const start = Date.now();
+
+    const [puntualidad, viajesSemanas, usoFlota, citasHoy, remolquesKpi] = await Promise.all([
+      computePuntualidadKpi(),
+      computeViajesSemanaKpi(),
+      computeUsoFlotaKpi(),
+      computeCitasHoyKpi(),
+      computeRemolquesKpi(),
+    ]);
+
+    res.json({
+      puntualidad,
+      viajesPorSemana: viajesSemanas,
+      usoFlota,
+      citasHoy,
+      remolques: remolquesKpi,
+      computadoEnMs: Date.now() - start,
+    });
+  } catch (err) {
+    console.error('Error al calcular KPIs:', err);
+    res.status(500).json({ error: 'Error al calcular KPIs' });
+  }
+});
+
+async function computePuntualidadKpi() {
+  const rows = await allQuery(
+    `SELECT v.hora_llegada, COALESCE(v.cita_programada, vp.hora_programada, v.fecha_fin) AS cita
+     FROM viajes v
+     LEFT JOIN viaje_paradas vp ON vp.viaje_id = v.id AND vp.orden = 1
+     WHERE v.estado = 'completado'
+       AND v.hora_llegada IS NOT NULL
+       AND v.hora_llegada >= datetime('now', '-60 days')`
+  );
+  const TOLERANCIA_MS = 30 * 60 * 1000;
+  let entregas = 0;
+  let aTiempo = 0;
+  let retrasadas = 0;
+  for (const row of rows) {
+    const llegada = parseFechaLocal(row.hora_llegada);
+    const cita = parseFechaLocal(row.cita);
+    if (!llegada || !cita || Number.isNaN(llegada.getTime()) || Number.isNaN(cita.getTime())) continue;
+    entregas++;
+    const diff = llegada.getTime() - cita.getTime();
+    if (diff <= TOLERANCIA_MS) aTiempo++;
+    else retrasadas++;
+  }
+  return {
+    entregas,
+    aTiempo,
+    retrasadas,
+    porcentaje: entregas ? Math.round((aTiempo / entregas) * 100) : 0,
+    toleranciaMin: 30,
+  };
+}
+
+function parseFechaLocal(value) {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  const str = String(value);
+  if (str.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(str)) return new Date(str);
+  return new Date(str.replace(' ', 'T'));
+}
+
+async function computeViajesSemanaKpi() {
+  const rows = await allQuery(
+    `SELECT fecha_inicio, created_at, estado
+     FROM viajes
+     WHERE COALESCE(fecha_inicio, created_at) >= datetime('now', '-70 days')`
+  );
+  const semanas = [];
+  const hoy = new Date();
+  const inicioSemanaActual = new Date(hoy);
+  const dia = (hoy.getDay() + 6) % 7;
+  inicioSemanaActual.setDate(hoy.getDate() - dia);
+  inicioSemanaActual.setHours(0, 0, 0, 0);
+  for (let i = 7; i >= 0; i--) {
+    const ini = new Date(inicioSemanaActual);
+    ini.setDate(inicioSemanaActual.getDate() - i * 7);
+    const fin = new Date(ini);
+    fin.setDate(ini.getDate() + 7);
+    const total = rows.filter(r => {
+      const f = parseFechaLocal(r.fecha_inicio || r.created_at);
+      if (!f || Number.isNaN(f.getTime())) return false;
+      return f >= ini && f < fin;
+    }).length;
+    const activos = rows.filter(r => {
+      const f = parseFechaLocal(r.fecha_inicio || r.created_at);
+      if (!f || Number.isNaN(f.getTime())) return false;
+      const activo = !['completado', 'cancelado'].includes(String(r.estado || '').toLowerCase());
+      return f >= ini && f < fin && activo;
+    }).length;
+    semanas.push({
+      inicio: ini.toISOString().slice(0, 10),
+      fin: new Date(fin.getTime() - 1).toISOString().slice(0, 10),
+      total,
+      activos,
+    });
+  }
+  return semanas;
+}
+
+async function computeUsoFlotaKpi() {
+  const [totalUnidades, unidadesOnline, viajesActivos, remolquesAsignados] = await Promise.all([
+    getQuery('SELECT COUNT(*) as total FROM vehicle_locations'),
+    getQuery('SELECT COUNT(DISTINCT vehicle_id) as total FROM vehicle_locations WHERE time_ms IS NOT NULL'),
+    getQuery(`SELECT COUNT(*) as total FROM viajes WHERE estado NOT IN ('completado', 'cancelado')`),
+    getQuery('SELECT COUNT(DISTINCT remolque_id) as total FROM remolque_asignaciones WHERE activa = 1'),
+  ]);
+  const total = totalUnidades?.total || 0;
+  const enViaje = viajesActivos?.total || 0;
+  return {
+    totalUnidades: total,
+    unidadesOnline: unidadesOnline?.total || 0,
+    viajesActivos: enViaje,
+    remolquesAsignados: remolquesAsignados?.total || 0,
+    porcentaje: total ? Math.round((enViaje / total) * 100) : 0,
+  };
+}
+
+async function computeCitasHoyKpi() {
+  const hoy = new Date();
+  const ini = new Date(hoy);
+  ini.setHours(0, 0, 0, 0);
+  const fin = new Date(hoy);
+  fin.setHours(23, 59, 59, 999);
+  const [viajes, seguimientoRows] = await Promise.all([
+    allQuery(`SELECT fecha_inicio, fecha_fin, estado FROM viajes WHERE estado NOT IN ('completado', 'cancelado')`),
+    allQuery(`SELECT cita_carga, cita_descarga, estatus FROM seguimiento WHERE COALESCE(estatus, '') NOT IN ('completado', 'cancelado')`),
+  ]);
+  const filtrado = items => items.filter(r => {
+    const f = parseFechaLocal(r.fecha_inicio) || parseFechaLocal(r.fecha_fin);
+    return f && !Number.isNaN(f.getTime()) && f >= ini && f <= fin;
+  });
+  const filtradoSeg = items => items.filter(r => {
+    const f = parseFechaLocal(r.cita_carga) || parseFechaLocal(r.cita_descarga);
+    return f && !Number.isNaN(f.getTime()) && f >= ini && f <= fin;
+  });
+  const viajesHoy = filtrado(viajes || []);
+  const seguimientoHoy = filtradoSeg(seguimientoRows || []);
+  const todas = [...viajesHoy.map(v => ({ cita: parseFechaLocal(v.fecha_fin) || parseFechaLocal(v.fecha_inicio) })),
+    ...seguimientoHoy.map(s => ({ cita: parseFechaLocal(s.cita_descarga) || parseFechaLocal(s.cita_carga) }))];
+  const proxima = todas.filter(t => t.cita && t.cita.getTime() >= Date.now())
+    .sort((a, b) => a.cita.getTime() - b.cita.getTime())[0]?.cita || null;
+  return {
+    total: todas.length,
+    viajes: viajesHoy.length,
+    seguimiento: seguimientoHoy.length,
+    proximaCita: proxima,
+  };
+}
+
+async function computeRemolquesKpi() {
+  const [total, refris, disponibles, online] = await Promise.all([
+    getQuery('SELECT COUNT(*) as total FROM remolques'),
+    getQuery(`SELECT COUNT(*) as total FROM remolques WHERE categoria LIKE '%refri%' OR categoria LIKE '%refrigerado%'`),
+    getQuery(`SELECT COUNT(*) as total FROM remolques WHERE status = 'disponible'`),
+    getQuery('SELECT COUNT(*) as total FROM trailer_locations'),
+  ]);
+  return {
+    total: total?.total || 0,
+    refrigerados: refris?.total || 0,
+    disponibles: disponibles?.total || 0,
+    conGps: online?.total || 0,
+  };
+}
 
 function normalizeDestination(value) {
   return String(value).trim().replace(/\s+/g, ' ').toLocaleLowerCase('es-MX');
@@ -1411,6 +1615,79 @@ async function fetchSamsaraVehicleLocations() {
   } while (after);
   return vehicles;
 }
+
+async function fetchSamsaraTrailerLocations() {
+  const trailers = [];
+  let after = null;
+  do {
+    const locRes = await axios.get(`${SAMSARA_API_BASE_URL}/beta/fleet/trailers/stats`, {
+      headers: { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' },
+      params: { types: 'gps', ...(after ? { after } : {}) },
+      timeout: 15000,
+    });
+    const data = locRes.data || {};
+    trailers.push(...(Array.isArray(data.data) ? data.data : []));
+    after = data.pagination?.hasNextPage ? data.pagination.endCursor : null;
+  } while (after);
+  return trailers;
+}
+
+async function performSamsaraTrailerRefresh() {
+  const trailers = await fetchSamsaraTrailerLocations();
+  for (const t of trailers) {
+    const gps = t.gps;
+    if (!gps || !gps.latitude || !gps.longitude) continue;
+    const now = Date.now();
+    const locTime = new Date(gps.time).getTime();
+    db.run(
+      `INSERT OR REPLACE INTO trailer_locations (trailer_id, trailer_name, latitude, longitude, speed, location, time_ms, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+      [t.id, t.name || null, gps.latitude, gps.longitude, gps.speed || 0, gps.reverseGeo?.formattedLocation || '', locTime],
+      () => {}
+    );
+  }
+  await loadTrailerLocationsCache();
+  return trailers;
+}
+
+function normalizeTrailerNumber(value) {
+  return String(value || '').replace(/[^0-9]/g, '').replace(/^0+/, '');
+}
+
+let trailerLocationsCache = [];
+
+function loadTrailerLocationsCache() {
+  return new Promise(resolve => {
+    db.all('SELECT * FROM trailer_locations', [], (err, rows) => {
+      if (err) {
+        resolve([]);
+        return;
+      }
+      trailerLocationsCache = rows || [];
+      resolve(trailerLocationsCache);
+    });
+  });
+}
+
+function mapTrailerLocation(numero) {
+  const num = normalizeTrailerNumber(numero);
+  if (!num) return null;
+  const row = trailerLocationsCache.find(t => normalizeTrailerNumber(t.trailer_name) === num);
+  if (!row) return null;
+  const timeDiff = Date.now() - (row.time_ms || 0);
+  return {
+    trailer_id: row.trailer_id,
+    trailer_name: row.trailer_name,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    speed: row.speed,
+    location: row.location,
+    timeMs: row.time_ms,
+    minutesAgo: Math.round(timeDiff / 60000),
+    isOnline: !!row.time_ms,
+  };
+}
+
 
 function pointInsidePolygon(latitude, longitude, polygon) {
   const vertices = Array.isArray(polygon) ? polygon : polygon?.vertices;
@@ -1993,6 +2270,133 @@ app.post('/api/check-fuel', async (req, res) => {
   }
 });
 
+// ============ MANTENIMIENTO PREVENTIVO ============
+
+function mantenimientoStatus(m) {
+  if (m.estado === 'completado') return 'completado';
+  const now = Date.now();
+  const proxima = m.fecha_proxima ? parseFechaLocal(m.fecha_proxima) : null;
+  if (!proxima || Number.isNaN(proxima.getTime())) return 'programado';
+  const dias = (proxima.getTime() - now) / (24 * 60 * 60 * 1000);
+  if (dias < 0) return 'vencido';
+  if (dias <= 7) return 'proximo';
+  return 'programado';
+}
+
+async function performMantenimientoCheck() {
+  const rows = await allQuery("SELECT * FROM mantenimientos WHERE estado != 'completado'");
+  const now = Date.now();
+  const alerts = [];
+  for (const m of rows) {
+    const proxima = m.fecha_proxima ? parseFechaLocal(m.fecha_proxima) : null;
+    if (!proxima || Number.isNaN(proxima.getTime())) continue;
+    const status = mantenimientoStatus({ ...m, fecha_proxima: m.fecha_proxima });
+    const dias = (proxima.getTime() - now) / (24 * 60 * 60 * 1000);
+    if (status !== 'vencido' && dias > 7) continue;
+    const nombre = m.entidad_nombre || m.entidad_id || 'Equipo';
+    const label = status === 'vencido' ? 'VENCIDO' : 'PRÓXIMO';
+    const recent = await getQuery(
+      `SELECT id FROM alertas WHERE tipo = 'mantenimiento' AND mensaje LIKE ? AND timestamp > datetime('now', '-24 hours')`,
+      [`%${nombre}%${m.tipo_servicio}%`]
+    );
+    if (recent) continue;
+    await createAlertRecord({
+      vehicle_id: m.entidad_id || '',
+      vehicle_name: nombre,
+      tipo: 'mantenimiento',
+      mensaje: `${label}: ${nombre} requiere ${m.tipo_servicio || 'servicio'} (${status === 'vencido' ? 'venció' : 'vence'} ${proxima.toLocaleString('es-MX')})`,
+      severidad: status === 'vencido' ? 'alta' : 'media',
+    });
+    alerts.push({ nombre, servicio: m.tipo_servicio, dias });
+  }
+  return { checked: rows.length, newAlerts: alerts.length, alerts };
+}
+
+let mantenimientoCheckInFlight = null;
+function checkMantenimiento() {
+  if (!mantenimientoCheckInFlight) {
+    mantenimientoCheckInFlight = performMantenimientoCheck().finally(() => { mantenimientoCheckInFlight = null; });
+  }
+  return mantenimientoCheckInFlight;
+}
+
+app.post('/api/check-mantenimiento', async (req, res) => {
+  try {
+    res.json(await checkMantenimiento());
+  } catch (error) {
+    console.error('Error checking mantenimiento:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/mantenimientos', async (req, res) => {
+  try {
+    const rows = await allQuery('SELECT * FROM mantenimientos ORDER BY CASE estado WHEN \'vencido\' THEN 0 WHEN \'proximo\' THEN 1 WHEN \'programado\' THEN 2 WHEN \'completado\' THEN 3 ELSE 4 END, fecha_proxima ASC');
+    res.json(rows.map(m => ({ ...m, status: mantenimientoStatus(m) })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/mantenimientos', async (req, res) => {
+  const { entidad_tipo = 'unidad', entidad_id = '', entidad_nombre = '', tipo_servicio = 'general', fecha_ultimo, fecha_proxima, intervalo_dias = 30, kilometraje_ultimo, kilometraje_proximo, estado = 'programado', notas = '' } = req.body || {};
+  try {
+    const result = await runQuery(
+      `INSERT INTO mantenimientos (entidad_tipo, entidad_id, entidad_nombre, tipo_servicio, fecha_ultimo, fecha_proxima, intervalo_dias, kilometraje_ultimo, kilometraje_proximo, estado, notas, created_by_username)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [entidad_tipo, String(entidad_id), String(entidad_nombre), String(tipo_servicio), fecha_ultimo || null, fecha_proxima || null, Number(intervalo_dias) || 30, kilometraje_ultimo || null, kilometraje_proximo || null, String(estado), String(notas), req.user?.username || '']
+    );
+    const row = await getQuery('SELECT * FROM mantenimientos WHERE id = ?', [result.lastID]);
+    res.json({ ...row, status: mantenimientoStatus(row) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/mantenimientos/:id', async (req, res) => {
+  const { estado, fecha_proxima, fecha_ultimo, notas, kilometraje_proximo, kilometraje_ultimo, intervalo_dias, tipo_servicio } = req.body || {};
+  try {
+    const row = await getQuery('SELECT * FROM mantenimientos WHERE id = ?', [req.params.id]);
+    if (!row) return res.status(404).json({ error: 'Mantenimiento no encontrado' });
+    const next = {
+      estado: estado !== undefined ? String(estado) : row.estado,
+      fecha_proxima: fecha_proxima !== undefined ? fecha_proxima : row.fecha_proxima,
+      fecha_ultimo: fecha_ultimo !== undefined ? fecha_ultimo : row.fecha_ultimo,
+      notas: notas !== undefined ? String(notas) : row.notas,
+      kilometraje_proximo: kilometraje_proximo !== undefined ? kilometraje_proximo : row.kilometraje_proximo,
+      kilometraje_ultimo: kilometraje_ultimo !== undefined ? kilometraje_ultimo : row.kilometraje_ultimo,
+      intervalo_dias: intervalo_dias !== undefined ? Number(intervalo_dias) : row.intervalo_dias,
+      tipo_servicio: tipo_servicio !== undefined ? String(tipo_servicio) : row.tipo_servicio,
+    };
+    if (estado === 'completado' && !fecha_ultimo) {
+      next.fecha_ultimo = new Date().toISOString();
+    }
+    if (estado === 'completado' && !fecha_proxima && next.intervalo_dias) {
+      const base = parseFechaLocal(next.fecha_ultimo) || new Date();
+      const prox = new Date(base);
+      prox.setDate(prox.getDate() + Number(next.intervalo_dias));
+      next.fecha_proxima = prox.toISOString();
+    }
+    await runQuery(
+      'UPDATE mantenimientos SET estado = ?, fecha_proxima = ?, fecha_ultimo = ?, notas = ?, kilometraje_proximo = ?, kilometraje_ultimo = ?, intervalo_dias = ?, tipo_servicio = ?, updated_at = datetime(\'now\') WHERE id = ?',
+      [next.estado, next.fecha_proxima, next.fecha_ultimo, next.notas, next.kilometraje_proximo, next.kilometraje_ultimo, next.intervalo_dias, next.tipo_servicio, req.params.id]
+    );
+    const updated = await getQuery('SELECT * FROM mantenimientos WHERE id = ?', [req.params.id]);
+    res.json({ ...updated, status: mantenimientoStatus(updated) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/mantenimientos/:id', async (req, res) => {
+  try {
+    await runQuery('DELETE FROM mantenimientos WHERE id = ?', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ============ VIAJES ============
 
 function normalizeTripDelivery(body, current = null) {
@@ -2182,8 +2586,8 @@ app.post('/api/viajes', async (req, res) => {
   }
   try {
     const result = await runQuery(
-      'INSERT INTO viajes (vehicle_id, vehicle_name, origen, destino, tipo_entrega, destinos_json, conductor, telefono, remolque, fecha_inicio, fecha_fin, notas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [vehicle_id, vehicle_name, origen, delivery.destino, delivery.tipo_entrega, delivery.destinos_json, conductor, telefono || '', req.body.remolque || '', fecha_inicio, fecha_fin, notas]
+      'INSERT INTO viajes (vehicle_id, vehicle_name, origen, destino, tipo_entrega, destinos_json, conductor, telefono, remolque, fecha_inicio, fecha_fin, cita_programada, notas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [vehicle_id, vehicle_name, origen, delivery.destino, delivery.tipo_entrega, delivery.destinos_json, conductor, telefono || '', req.body.remolque || '', fecha_inicio, fecha_fin, fecha_fin, notas]
     );
     const trip = await getQuery('SELECT * FROM viajes WHERE id = ?', [result.lastID]);
     const paradas = await syncTripStops(trip);
@@ -2222,14 +2626,15 @@ app.put('/api/viajes/:id', async (req, res) => {
       telefono: has('telefono') ? req.body.telefono : row.telefono,
       fecha_inicio: has('fecha_inicio') ? req.body.fecha_inicio : row.fecha_inicio,
       fecha_fin: has('fecha_fin') ? req.body.fecha_fin : row.fecha_fin,
+      cita_programada: has('cita_programada') ? req.body.cita_programada : row.cita_programada,
       notas: has('notas') ? req.body.notas : row.notas,
       estado: has('estado') ? req.body.estado : row.estado,
       remolque: has('remolque') ? req.body.remolque : row.remolque,
     };
 
     const result = await runQuery(
-      'UPDATE viajes SET vehicle_id = ?, vehicle_name = ?, origen = ?, destino = ?, tipo_entrega = ?, destinos_json = ?, conductor = ?, telefono = ?, fecha_inicio = ?, fecha_fin = ?, notas = ?, estado = ?, remolque = ? WHERE id = ?',
-      [next.vehicle_id, next.vehicle_name, next.origen, next.destino, next.tipo_entrega, next.destinos_json, next.conductor, next.telefono, next.fecha_inicio, next.fecha_fin, next.notas, next.estado, next.remolque, req.params.id]
+      'UPDATE viajes SET vehicle_id = ?, vehicle_name = ?, origen = ?, destino = ?, tipo_entrega = ?, destinos_json = ?, conductor = ?, telefono = ?, fecha_inicio = ?, fecha_fin = ?, cita_programada = ?, notas = ?, estado = ?, remolque = ? WHERE id = ?',
+      [next.vehicle_id, next.vehicle_name, next.origen, next.destino, next.tipo_entrega, next.destinos_json, next.conductor, next.telefono, next.fecha_inicio, next.fecha_fin, next.cita_programada, next.notas, next.estado, next.remolque, req.params.id]
     );
     const paradas = await syncTripStops({ id: Number(req.params.id), ...next }, has('tipo_entrega') || has('destinos') || has('destino'));
     let trailerSync = null;
@@ -3035,7 +3440,11 @@ app.get('/api/remolques', (req, res) => {
     (SELECT ra.grupo_full FROM remolque_asignaciones ra WHERE ra.remolque_id = r.id AND ra.activa = 1 LIMIT 1) as grupo_full
     FROM remolques r ORDER BY r.numero ASC`, [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
+    const enriched = (rows || []).map(r => ({
+      ...r,
+      trailer_gps: mapTrailerLocation(r.numero),
+    }));
+    res.json(enriched);
   });
 });
 
@@ -3461,11 +3870,79 @@ app.delete('/api/unidades/:id', (req, res) => {
   });
 });
 
+// ============ DATABASE BACKUP ============
+
+const BACKUP_KEEP_DAYS = 14;
+const backupDir = process.env.BACKUP_DIR || path.join(dbDir, 'backups');
+
+function listBackups() {
+  if (!fs.existsSync(backupDir)) return [];
+  return fs.readdirSync(backupDir)
+    .filter(file => /^gers-backup-\d{8}-\d{6}\.db$/.test(file))
+    .sort();
+}
+
+function performDatabaseBackup() {
+  return new Promise((resolve, reject) => {
+    fs.mkdirSync(backupDir, { recursive: true });
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+    const destination = path.join(backupDir, `gers-backup-${stamp}.db`);
+    db.backup(destination, err => {
+      if (err) return reject(err);
+      try {
+        const cutoff = Date.now() - BACKUP_KEEP_DAYS * 24 * 60 * 60 * 1000;
+        let removed = 0;
+        for (const file of listBackups()) {
+          const filePath = path.join(backupDir, file);
+          const stats = fs.statSync(filePath);
+          if (stats.mtimeMs < cutoff) {
+            fs.unlinkSync(filePath);
+            removed += 1;
+          }
+        }
+        resolve({ destination, removed });
+      } catch (cleanErr) {
+        reject(cleanErr);
+      }
+    });
+  });
+}
+
+app.get('/api/backups', requireAuth, async (req, res) => {
+  try {
+    const backups = listBackups().map(file => {
+      const filePath = path.join(backupDir, file);
+      return {
+        file,
+        size: fs.statSync(filePath).size,
+        created_at: new Date(fs.statSync(filePath).mtimeMs).toISOString(),
+      };
+    });
+    res.json(backups);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/backups/run', requireAuth, async (req, res) => {
+  try {
+    const result = await performDatabaseBackup();
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ============ AUTO-CHECK INTERVALS ============
 
 const runAlertChecks = async () => {
   await checkGeofences();
   await checkFuel();
+  try {
+    await checkMantenimiento();
+  } catch (error) {
+    console.error('Error checking mantenimiento:', error.message);
+  }
 };
 
 let liveSyncInFlight = null;
@@ -3473,6 +3950,11 @@ const runLiveSync = async () => {
   if (liveSyncInFlight) return liveSyncInFlight;
   liveSyncInFlight = (async () => {
     await refreshSamsaraVehicles();
+    try {
+      await performSamsaraTrailerRefresh();
+    } catch (trailerErr) {
+      console.error('Error refrescando trailers Samsara:', trailerErr.message);
+    }
     await runAlertChecks();
     broadcastLiveUpdate('reload', { source: 'scheduled-sync' });
   })().catch(error => {
@@ -3490,6 +3972,9 @@ async function startServer() {
     throw new Error('SQLite foreign keys no pudieron habilitarse');
   }
   await ensureDefaultAdmin();
+  await loadTrailerLocationsCache().catch(() => {});
+  setTimeout(() => performDatabaseBackup().then(r => console.log(`Backup inicial completado: ${r.destination}${r.removed ? ` (${r.removed} eliminados)` : ''}`)).catch(e => console.error('Backup inicial falló:', e.message)), 60000);
+  setInterval(() => performDatabaseBackup().then(r => console.log(`Backup automático completado: ${r.destination}`)).catch(e => console.error('Backup automático falló:', e.message)), 24 * 60 * 60 * 1000);
   setTimeout(runLiveSync, 10000);
   setInterval(runLiveSync, 60000);
   app.listen(PORT, () => {

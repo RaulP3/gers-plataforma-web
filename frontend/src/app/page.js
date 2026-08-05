@@ -103,6 +103,7 @@ export default function Home() {
   const [usuarioMsg, setUsuarioMsg] = useState('');
   const [activeTab, setActiveTab] = useState('dashboard');
   const [stats, setStats] = useState({});
+  const [kpis, setKpis] = useState(null);
   const [pendientes, setPendientes] = useState([]);
   const [filtroTurno, setFiltroTurno] = useState('');
   const [showPendienteModal, setShowPendienteModal] = useState(false);
@@ -137,6 +138,14 @@ export default function Home() {
   const [vehicleFilter, setVehicleFilter] = useState('');
   const [nuevoComentario, setNuevoComentario] = useState({ vehicle_id: '', vehicle_name: '', tipo: 'seguimiento', titulo: '', contenido: '', estatus: '', remolque: '', grupo: '', origen: '', destino: '' });
   const [remolques, setRemolques] = useState([]);
+  const [mantenimientos, setMantenimientos] = useState([]);
+  const [showMantenimientoModal, setShowMantenimientoModal] = useState(false);
+  const [mantenimientoEditando, setMantenimientoEditando] = useState(null);
+  const [formMantenimiento, setFormMantenimiento] = useState({
+    entidad_tipo: 'unidad', entidad_id: '', entidad_nombre: '', tipo_servicio: 'general',
+    fecha_ultimo: '', fecha_proxima: '', intervalo_dias: 30, kilometraje_ultimo: '', kilometraje_proximo: '', notas: ''
+  });
+  const [mantenimientoSaving, setMantenimientoSaving] = useState(false);
   const [clientes, setClientes] = useState([]);
   const [clienteSearch, setClienteSearch] = useState('');
   const [showClienteModal, setShowClienteModal] = useState(false);
@@ -435,6 +444,84 @@ export default function Home() {
     return estaEnMovimiento(vehicle.location.speed)
       ? { label: 'Circulando', color: '#10b981' }
       : { label: 'Detenido', color: '#3b82f6' };
+  };
+  const [marcandoCitaId, setMarcandoCitaId] = useState(null);
+  const marcarCitaCompletada = async (item) => {
+    const confirmText = `¿Marcar como completada la cita de ${item.unidad} (${item.destino})?`;
+    if (!confirm(confirmText)) return;
+    setMarcandoCitaId(item.id);
+    try {
+      if (item.tipo === 'Viaje') {
+        const viaje = viajes.find(v => String(v.id) === String(item.sourceId));
+        if (!viaje) throw new Error('Viaje no encontrado');
+        await apiJson(`${apiUrl}/viajes/${item.sourceId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...viaje, estado: 'completado' }),
+        });
+      } else if (item.tipo === 'Seguimiento') {
+        const row = seguimiento.find(s => String(s.id) === String(item.sourceId));
+        if (!row) throw new Error('Registro de seguimiento no encontrado');
+        await apiJson(`${apiUrl}/seguimiento/${item.sourceId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...row, estatus: 'completado' }),
+        });
+      }
+      await loadAll();
+      setCitaSeleccionada(prev => prev && prev.id === item.id ? null : prev);
+    } catch (err) {
+      alert(err.message || 'No se pudo marcar la cita como completada');
+    } finally {
+      setMarcandoCitaId(null);
+    }
+  };
+  const completarMantenimiento = async (m) => {
+    if (!confirm(`¿Marcar como completado el mantenimiento de ${m.entidad_nombre || m.entidad_id} (${m.tipo_servicio})?`)) return;
+    try {
+      await apiJson(`${apiUrl}/mantenimientos/${m.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estado: 'completado' }),
+      });
+      await loadAll();
+    } catch (err) {
+      alert(err.message || 'No se pudo completar el mantenimiento');
+    }
+  };
+  const eliminarMantenimiento = async (m) => {
+    if (!confirm(`¿Eliminar el mantenimiento de ${m.entidad_nombre || m.entidad_id} (${m.tipo_servicio})?`)) return;
+    try {
+      await apiJson(`${apiUrl}/mantenimientos/${m.id}`, { method: 'DELETE' });
+      await loadAll();
+    } catch (err) {
+      alert(err.message || 'No se pudo eliminar el mantenimiento');
+    }
+  };
+  const guardarMantenimiento = async () => {
+    setMantenimientoSaving(true);
+    try {
+      const payload = { ...formMantenimiento };
+      if (mantenimientoEditando) {
+        await apiJson(`${apiUrl}/mantenimientos/${mantenimientoEditando.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        await apiJson(`${apiUrl}/mantenimientos`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      }
+      setShowMantenimientoModal(false);
+      await loadAll();
+    } catch (err) {
+      alert(err.message || 'No se pudo guardar el mantenimiento');
+    } finally {
+      setMantenimientoSaving(false);
+    }
   };
   const [formGeofence, setFormGeofence] = useState(GEOFENCE_DEFAULT);
   const [filtroAlertas, setFiltroAlertas] = useState('');
@@ -931,15 +1018,17 @@ export default function Home() {
     const pendientesVersion = pendientesVersionRef.current;
     const run = async () => {
       setLoading(true);
-      const [statsRes, pendientesRes, viajesRes, alertasRes, vehiculosRes, comentariosRes, operadoresRes, driversRes, geofencesRes, eventsRes, riskZonesRes, samsaraAddrRes, remolquesRes, seguimientoRes, unidadesRes, mapasRes, clientesRes, geofenceLinksRes] = await Promise.allSettled([
+      const [statsRes, pendientesRes, viajesRes, alertasRes, vehiculosRes, comentariosRes, operadoresRes, driversRes, geofencesRes, eventsRes, riskZonesRes, samsaraAddrRes, remolquesRes, seguimientoRes, unidadesRes, mapasRes, clientesRes, geofenceLinksRes, kpisRes, mantenimientosRes] = await Promise.allSettled([
         requestJson(`${apiUrl}/reportes/resumen`), requestJson(`${apiUrl}/pendientes`), requestJson(`${apiUrl}/viajes`),
         requestJson(`${apiUrl}/alertas`), requestJson(`${apiUrl}/samsara/vehicles`), requestJson(`${apiUrl}/comentarios`),
         requestJson(`${apiUrl}/vehicle-operators`), requestJson(`${apiUrl}/samsara/drivers`), requestJson(`${apiUrl}/geofences`),
         requestJson(`${apiUrl}/geofence-events?limit=100`), requestJson(`${apiUrl}/risk-zones`), requestJson(`${apiUrl}/samsara/addresses`),
-        requestJson(`${apiUrl}/remolques`), requestJson(`${apiUrl}/seguimiento`), requestJson(`${apiUrl}/unidades`), requestJson(`${apiUrl}/mapas`), requestJson(`${apiUrl}/clientes`), requestJson(`${apiUrl}/clientes/geofence-links`),
+        requestJson(`${apiUrl}/remolques`), requestJson(`${apiUrl}/seguimiento`), requestJson(`${apiUrl}/unidades`), requestJson(`${apiUrl}/mapas`), requestJson(`${apiUrl}/clientes`), requestJson(`${apiUrl}/clientes/geofence-links`), requestJson(`${apiUrl}/kpis`), requestJson(`${apiUrl}/mantenimientos`),
       ]);
 
       if (statsRes.status === 'fulfilled' && statsRes.value && !Array.isArray(statsRes.value)) setStats(statsRes.value);
+      if (kpisRes.status === 'fulfilled' && kpisRes.value && !Array.isArray(kpisRes.value)) setKpis(kpisRes.value);
+      if (mantenimientosRes.status === 'fulfilled' && Array.isArray(mantenimientosRes.value)) setMantenimientos(mantenimientosRes.value);
       if (pendientesRes.status === 'fulfilled' && Array.isArray(pendientesRes.value) && pendientesVersion === pendientesVersionRef.current) setPendientes(pendientesRes.value);
       if (viajesRes.status === 'fulfilled' && Array.isArray(viajesRes.value)) setViajes(normalizarViajes(viajesRes.value));
       if (alertasRes.status === 'fulfilled' && Array.isArray(alertasRes.value)) setAlertas(alertasRes.value);
@@ -1767,8 +1856,28 @@ export default function Home() {
   };
 
   const ubicacionRemolque = (r) => {
+    const gps = r?.trailer_gps || null;
+    const vehicle = r.vehicle_id_asignado || r.unidad_asignada
+      ? vehiculos.find(v => String(v.id) === String(r.vehicle_id_asignado) || String(v.name || '').toLowerCase() === String(r.unidad_asignada || '').toLowerCase())
+      : null;
+    if (gps) {
+      const location = gps.latitude ? { latitude: gps.latitude, longitude: gps.longitude, speed: gps.speed, location: gps.location || '', formattedLocation: gps.location || '' } : null;
+      const geofence = location ? geofenceAtLocation(location) : null;
+      return {
+        libre: false,
+        gpsPropio: true,
+        vehicle,
+        unidad: vehicle?.name || r.unidad_asignada || r.vehicle_id_asignado,
+        trailer: r,
+        location,
+        geofence,
+        enMovimiento: estaEnMovimiento(location?.speed),
+        velocidad: location ? velocidadKmh(location.speed) : 0,
+        online: !!gps.isOnline,
+        lastSeenMin: gps.minutesAgo != null ? gps.minutesAgo : 999,
+      };
+    }
     if (!r.vehicle_id_asignado && !r.unidad_asignada) return { libre: true };
-    const vehicle = vehiculos.find(v => String(v.id) === String(r.vehicle_id_asignado) || String(v.name || '').toLowerCase() === String(r.unidad_asignada || '').toLowerCase());
     if (!vehicle) return { libre: false, sinUnidad: true, unidad: r.unidad_asignada || r.vehicle_id_asignado };
     const location = vehicle.location || null;
     const geofence = location ? geofenceAtLocation(location) : null;
@@ -3202,6 +3311,7 @@ export default function Home() {
     { key: 'operadores', label: 'Operadores', icon: '👤' },
     { key: 'clientes', label: 'Clientes', icon: '🏢', badge: clientes.length },
     { key: 'remolques', label: 'Remolques', icon: '🚛' },
+    { key: 'mantenimiento', label: 'Mantenimiento', icon: '🔧' },
     { key: 'mapas', label: 'Mapas', icon: '🗺️' },
     { key: 'rutas', label: 'Historial Rutas', icon: '🛤️' },
     { key: 'reportes', label: 'Reportes', icon: '📈' },
@@ -3326,6 +3436,52 @@ export default function Home() {
               </button>
               <button onClick={loadAll} style={{ padding: '6px 14px', background: '#00ff41', color: '#0d0d0d', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>Actualizar</button>
               <button onClick={() => { setTurnoSummary(null); setShowTurnoModal(true); }} style={{ padding: '6px 14px', background: '#1d4ed8', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>Entregar turno</button>
+            </div>
+
+            <div className="dashboard-kpis" style={{ display: 'flex', alignItems: 'stretch', gap: '12px', padding: '10px 1.5rem', background: '#151515', borderBottom: '1px solid #1a3d1a', flexShrink: 0, overflowX: 'auto' }}>
+              {(() => {
+                const p = kpis?.puntualidad;
+                const u = kpis?.usoFlota;
+                const c = kpis?.citasHoy;
+                const r = kpis?.remolques;
+                const semanas = kpis?.viajesPorSemana || [];
+                const maxSemana = Math.max(1, ...semanas.map(s => s.total));
+                const pColor = !p || p.entregas === 0 ? '#6a9b6a' : p.porcentaje >= 85 ? '#4ade80' : p.porcentaje >= 60 ? '#facc15' : '#f87171';
+                const uColor = u && u.porcentaje >= 60 ? '#4ade80' : u && u.porcentaje >= 30 ? '#facc15' : '#f87171';
+                const proxima = c?.proximaCita ? formatFechaProgramada(c.proximaCita) : 'Sin citas';
+                const kpiCard = (titulo, valor, sub, color = '#e0e0e0', icono = '') => (
+                  <div style={{ flex: '0 0 auto', minWidth: '150px', background: '#1a1a1a', borderRadius: '10px', border: '1px solid #1a3d1a', padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                    <div style={{ fontSize: '10px', color: '#6a9b6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '4px' }}>{icono} {titulo}</div>
+                    <div style={{ fontSize: '22px', fontWeight: 800, color, lineHeight: 1.1 }}>{valor}</div>
+                    <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>{sub}</div>
+                  </div>
+                );
+                return (
+                  <>
+                    {kpiCard('Puntualidad', p && p.entregas > 0 ? `${p.porcentaje}%` : '—', p && p.entregas > 0 ? `${p.aTiempo} de ${p.entregas} entregas a tiempo` : 'Sin entregas en 60 días', pColor, '⏱️')}
+                    {kpiCard('Uso de flota', u ? `${u.porcentaje}%` : '—', u ? `${u.viajesActivos} de ${u.totalUnidades} unidades en viaje` : '', uColor, '🚛')}
+                    {kpiCard('Citas hoy', c ? c.total : '—', c ? `${c.viajes} viajes · ${c.seguimiento} seguimientos` : '', '#60a5fa', '📅')}
+                    {kpiCard('Próxima cita', proxima, c && c.total > 0 ? 'Siguiente en agenda' : 'Sin citas agendadas', '#8b5cf6', '⏰')}
+                    {kpiCard('Remolques', r ? `${r.disponibles}/${r.total}` : '—', r ? `${r.refrigerados} refris · ${r.conGps} con GPS` : '', '#3b82f6', '🍆')}
+                    {(() => {
+                      if (!semanas.length) return null;
+                      return (
+                        <div style={{ flex: '0 0 auto', minWidth: '280px', background: '#1a1a1a', borderRadius: '10px', border: '1px solid #1a3d1a', padding: '10px 14px' }}>
+                          <div style={{ fontSize: '10px', color: '#6a9b6a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '6px' }}>📊 Viajes por semana</div>
+                          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '5px', height: '46px' }}>
+                            {semanas.map((s, i) => (
+                              <div key={i} title={`${s.inicio} — ${s.fin}: ${s.total} viajes`} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', gap: '3px', height: '100%' }}>
+                                <div style={{ width: '100%', maxWidth: '24px', background: i === semanas.length - 1 ? '#00ff41' : '#1d4ed8', borderRadius: '3px 3px 0 0', height: `${Math.max(4, Math.round((s.total / maxSemana) * 100))}%`, opacity: 0.85 }} />
+                                <div style={{ fontSize: '9px', color: '#6a9b6a' }}>{s.total}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </>
+                );
+              })()}
             </div>
 
             <div className="dashboard-content" style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
@@ -4981,6 +5137,75 @@ export default function Home() {
           </div>
         )}
 
+        {activeTab === 'mantenimiento' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+              <div>
+                <h2 style={{ color: '#e0e0e0', margin: 0, fontSize: '1.35rem' }}>Mantenimiento Preventivo</h2>
+                <div style={{ color: '#6a9b6a', fontSize: '0.8rem', marginTop: '0.25rem' }}>
+                  {(() => {
+                    const vencidos = mantenimientos.filter(m => m.status === 'vencido').length;
+                    const proximos = mantenimientos.filter(m => m.status === 'proximo').length;
+                    const completados = mantenimientos.filter(m => m.status === 'completado').length;
+                    return `Vencidos: ${vencidos} · Próximos: ${proximos} · Completados: ${completados}`;
+                  })()}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button onClick={async () => { try { await apiJson(`${apiUrl}/check-mantenimiento`, { method: 'POST' }); await loadAll(); } catch (e) { console.error(e); } }} style={s.button('#f59e0b')}>Verificar vencimientos</button>
+                <button onClick={() => { setMantenimientoEditando(null); setFormMantenimiento({ entidad_tipo: 'unidad', entidad_id: '', entidad_nombre: '', tipo_servicio: 'general', fecha_ultimo: '', fecha_proxima: '', intervalo_dias: 30, kilometraje_ultimo: '', kilometraje_proximo: '', notas: '' }); setShowMantenimientoModal(true); }} style={{ padding: '0.5rem 1rem', background: '#00ff41', color: '#000', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 700 }}>+ Programar</button>
+              </div>
+            </div>
+
+            <div style={{ background: '#111', border: '1px solid #1a3d1a', borderRadius: '10px', overflow: 'hidden' }}>
+              {mantenimientos.length === 0 && <div style={{ padding: '2rem', textAlign: 'center', color: '#6a9b6a' }}>Sin mantenimientos programados. Haz clic en "+ Programar".</div>}
+              {mantenimientos.length > 0 && (
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th style={s.th}>Equipo</th>
+                      <th style={s.th}>Servicio</th>
+                      <th style={s.th}>Estado</th>
+                      <th style={s.th}>Último</th>
+                      <th style={s.th}>Próximo</th>
+                      <th style={s.th}>Km prox.</th>
+                      <th style={s.th}>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mantenimientos.map(m => {
+                      const color = m.status === 'vencido' ? '#f87171' : m.status === 'proximo' ? '#facc15' : m.status === 'completado' ? '#4ade80' : '#6a9b6a';
+                      const label = m.status === 'vencido' ? 'Vencido' : m.status === 'proximo' ? 'Próximo' : m.status === 'completado' ? 'Completado' : 'Programado';
+                      return (
+                        <tr key={m.id}>
+                          <td style={s.td}>
+                            <div style={{ fontWeight: 600, color: '#e0e0e0' }}>{m.entidad_nombre || m.entidad_id || '-'}</div>
+                            <div style={{ fontSize: '0.75rem', color: '#6a9b6a' }}>{m.entidad_tipo === 'remolque' ? 'Remolque' : 'Unidad'}</div>
+                          </td>
+                          <td style={s.td}>{m.tipo_servicio || 'general'}</td>
+                          <td style={s.td}><span style={s.badge(color)}>{label}</span></td>
+                          <td style={s.td}>{m.fecha_ultimo ? formatFechaProgramada(m.fecha_ultimo) : '-'}</td>
+                          <td style={s.td}>{m.fecha_proxima ? formatFechaProgramada(m.fecha_proxima) : '-'}</td>
+                          <td style={s.td}>{m.kilometraje_proximo || '-'}</td>
+                          <td style={s.td}>
+                            <div style={{ display: 'flex', gap: '0.4rem' }}>
+                              {m.status !== 'completado' && (
+                                <button onClick={() => completarMantenimiento(m)} style={{ background: '#00ff4133', color: '#00ff41', border: '1px solid #00ff4155', padding: '0.3rem 0.7rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>✓ Completar</button>
+                              )}
+                              <button onClick={() => { setMantenimientoEditando(m); setFormMantenimiento({ entidad_tipo: m.entidad_tipo || 'unidad', entidad_id: m.entidad_id || '', entidad_nombre: m.entidad_nombre || '', tipo_servicio: m.tipo_servicio || 'general', fecha_ultimo: m.fecha_ultimo || '', fecha_proxima: m.fecha_proxima || '', intervalo_dias: m.intervalo_dias || 30, kilometraje_ultimo: m.kilometraje_ultimo || '', kilometraje_proximo: m.kilometraje_proximo || '', notas: m.notas || '' }); setShowMantenimientoModal(true); }} style={s.button('#60a5fa')}>Editar</button>
+                              <button onClick={() => eliminarMantenimiento(m)} style={{ background: '#ff444433', color: '#ff4444', border: '1px solid #ff444455', padding: '0.3rem 0.7rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>Eliminar</button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )}
+
         {activeTab === 'seguimiento' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
@@ -5719,6 +5944,7 @@ export default function Home() {
                               <th style={s.th}>Cumplimiento</th>
                               <th style={s.th}>Remolque</th>
                               <th style={s.th}>Estatus</th>
+                              <th style={s.th}>Acción</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -5741,6 +5967,16 @@ export default function Home() {
                                 <td style={s.td}><span style={s.badge(etaColor)}>{etaInfo?.label || (citasEtaLoading ? 'Calculando...' : 'Sin cálculo')}</span></td>
                                 <td style={s.td}>{item.remolque || '-'}</td>
                                 <td style={s.td}><span style={s.badge(item.tipo === 'Viaje' ? '#3b82f6' : '#f59e0b')}>{item.estatus || 'pendiente'}</span></td>
+                                <td style={s.td}>
+                                  <button
+                                    type="button"
+                                    disabled={marcandoCitaId === item.id}
+                                    onClick={(e) => { e.stopPropagation(); marcarCitaCompletada(item); }}
+                                    style={{ ...s.button('#10b981'), padding: '0.25rem 0.5rem', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
+                                  >
+                                    {marcandoCitaId === item.id ? 'Guardando...' : '✓ Completar'}
+                                  </button>
+                                </td>
                               </tr>
                               );
                             })}
@@ -5816,7 +6052,12 @@ export default function Home() {
                           <MapaUnidades vehiculos={[vehicle]} geofences={allGeofences} selectedVehicleId={vehicle.id} />
                         </div>
                       )}
-                      <button onClick={() => setCitaSeleccionada(null)} style={{ width: '100%', padding: '0.7rem', background: '#00ff41', color: '#000', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600, marginTop: '1rem' }}>Cerrar</button>
+                      <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
+                        <button onClick={() => marcarCitaCompletada(citaSeleccionada)} disabled={marcandoCitaId === citaSeleccionada.id} style={{ flex: 1, padding: '0.7rem', background: '#10b981', color: '#000', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600 }}>
+                          {marcandoCitaId === citaSeleccionada.id ? 'Guardando...' : '✓ Marcar completada'}
+                        </button>
+                        <button onClick={() => setCitaSeleccionada(null)} style={{ flex: 1, padding: '0.7rem', background: '#00ff41', color: '#000', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600 }}>Cerrar</button>
+                      </div>
                     </>
                   );
                 })()}
@@ -7083,6 +7324,91 @@ export default function Home() {
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
                 <button type="button" onClick={cerrarRemolqueModal} style={s.button('#6b7280')}>Cancelar</button>
                 <button type="button" onClick={crearRemolque} style={s.button('#00ff41')}>{remolqueEditando ? 'Actualizar' : 'Guardar'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showMantenimientoModal && (
+        <div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2200 }} onClick={() => setShowMantenimientoModal(false)}>
+          <div className="modal-panel" role="dialog" aria-modal="true" aria-label={mantenimientoEditando ? 'Editar mantenimiento' : 'Programar mantenimiento'} style={{ background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '16px', width: '620px', maxWidth: '95vw', maxHeight: '90vh', overflow: 'auto', padding: '1.5rem' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h2 style={{ margin: 0, color: '#00ff41' }}>{mantenimientoEditando ? 'Editar mantenimiento' : 'Programar mantenimiento'}</h2>
+              <button onClick={() => setShowMantenimientoModal(false)} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <div style={{ display: 'grid', gap: '0.85rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.85rem' }}>
+                <div>
+                  <label style={s.label}>Tipo de equipo</label>
+                  <select style={s.select} value={formMantenimiento.entidad_tipo} onChange={(e) => setFormMantenimiento({ ...formMantenimiento, entidad_tipo: e.target.value, entidad_id: '', entidad_nombre: '' })}>
+                    <option value="unidad">Unidad</option>
+                    <option value="remolque">Remolque</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={s.label}>Servicio</label>
+                  <select style={s.select} value={formMantenimiento.tipo_servicio} onChange={(e) => setFormMantenimiento({ ...formMantenimiento, tipo_servicio: e.target.value })}>
+                    <option value="general">Servicio general</option>
+                    <option value="aceite">Cambio de aceite</option>
+                    <option value="llantas">Llantas</option>
+                    <option value="frenos">Frenos</option>
+                    <option value="filtros">Filtros</option>
+                    <option value="verificacion">Verificación / reglamentario</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label style={s.label}>Equipo</label>
+                {formMantenimiento.entidad_tipo === 'unidad' ? (
+                  <select style={s.select} value={formMantenimiento.entidad_id} onChange={(e) => {
+                    const unidad = todasLasUnidades.find(u => String(u.id) === String(e.target.value));
+                    setFormMantenimiento({ ...formMantenimiento, entidad_id: e.target.value, entidad_nombre: unidad?.name || unidad?.nombre || '' });
+                  }}>
+                    <option value="">Selecciona una unidad...</option>
+                    {todasLasUnidades.map(u => <option key={u.id} value={u.id}>{u.name || u.nombre || u.id}</option>)}
+                  </select>
+                ) : (
+                  <select style={s.select} value={formMantenimiento.entidad_id} onChange={(e) => {
+                    const rem = remolques.find(r => String(r.numero) === String(e.target.value));
+                    setFormMantenimiento({ ...formMantenimiento, entidad_id: e.target.value, entidad_nombre: rem?.numero || e.target.value });
+                  }}>
+                    <option value="">Selecciona un remolque...</option>
+                    {remolques.map(r => <option key={r.numero} value={r.numero}>{r.numero} ({r.categoria || 'Caja Seca'})</option>)}
+                  </select>
+                )}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.85rem' }}>
+                <div>
+                  <label style={s.label}>Último mantenimiento</label>
+                  <input type="datetime-local" style={s.input} value={formMantenimiento.fecha_ultimo} onChange={(e) => setFormMantenimiento({ ...formMantenimiento, fecha_ultimo: e.target.value })} />
+                </div>
+                <div>
+                  <label style={s.label}>Próximo vencimiento</label>
+                  <input type="datetime-local" style={s.input} value={formMantenimiento.fecha_proxima} onChange={(e) => setFormMantenimiento({ ...formMantenimiento, fecha_proxima: e.target.value })} />
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.85rem' }}>
+                <div>
+                  <label style={s.label}>Intervalo (días)</label>
+                  <input type="number" min="1" style={s.input} value={formMantenimiento.intervalo_dias} onChange={(e) => setFormMantenimiento({ ...formMantenimiento, intervalo_dias: e.target.value })} />
+                </div>
+                <div>
+                  <label style={s.label}>Km último</label>
+                  <input type="number" min="0" style={s.input} value={formMantenimiento.kilometraje_ultimo} onChange={(e) => setFormMantenimiento({ ...formMantenimiento, kilometraje_ultimo: e.target.value })} />
+                </div>
+                <div>
+                  <label style={s.label}>Km próximo</label>
+                  <input type="number" min="0" style={s.input} value={formMantenimiento.kilometraje_proximo} onChange={(e) => setFormMantenimiento({ ...formMantenimiento, kilometraje_proximo: e.target.value })} />
+                </div>
+              </div>
+              <div>
+                <label style={s.label}>Notas</label>
+                <input style={s.input} value={formMantenimiento.notas} onChange={(e) => setFormMantenimiento({ ...formMantenimiento, notas: e.target.value })} placeholder="Detalles del servicio..." />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                <button type="button" onClick={() => setShowMantenimientoModal(false)} style={s.button('#6b7280')}>Cancelar</button>
+                <button type="button" disabled={mantenimientoSaving} onClick={guardarMantenimiento} style={s.button('#00ff41')}>{mantenimientoSaving ? 'Guardando...' : mantenimientoEditando ? 'Actualizar' : 'Guardar'}</button>
               </div>
             </div>
           </div>
