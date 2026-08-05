@@ -102,6 +102,11 @@ export default function Home() {
   const [formUsuario, setFormUsuario] = useState({ username: '', password: '', nombre: '', rol: 'user' });
   const [usuarioMsg, setUsuarioMsg] = useState('');
   const [activeTab, setActiveTab] = useState('dashboard');
+  useEffect(() => {
+    if (currentUser && currentUser.rol !== 'admin' && ['dashboard', 'operadores', 'mantenimiento', 'reportes'].includes(activeTab)) {
+      setActiveTab('monitoreo');
+    }
+  }, [currentUser, activeTab]);
   const [stats, setStats] = useState({});
   const [kpis, setKpis] = useState(null);
   const [pendientes, setPendientes] = useState([]);
@@ -3295,6 +3300,8 @@ export default function Home() {
     );
   }
 
+  const esAdmin = currentUser?.rol === 'admin';
+  const tabsOcultosParaUser = ['dashboard', 'operadores', 'mantenimiento', 'reportes', 'usuarios'];
   const menuItems = [
     { key: 'dashboard', label: 'Dashboard', icon: '📊' },
     { key: 'monitoreo', label: 'Monitoreo', icon: '🗺️' },
@@ -3313,8 +3320,8 @@ export default function Home() {
     { key: 'mapas', label: 'Mapas', icon: '🗺️' },
     { key: 'rutas', label: 'Historial Rutas', icon: '🛤️' },
     { key: 'reportes', label: 'Reportes', icon: '📈' },
-    ...(currentUser?.rol === 'admin' ? [{ key: 'usuarios', label: 'Usuarios', icon: '🔐' }] : []),
-  ];
+    ...(esAdmin ? [{ key: 'usuarios', label: 'Usuarios', icon: '🔐' }] : []),
+  ].filter(item => esAdmin || !tabsOcultosParaUser.includes(item.key));
 
   const s = {
     container: { fontFamily: 'system-ui, -apple-system, sans-serif', minHeight: '100vh', display: 'flex', background: '#0a0a0a' },
