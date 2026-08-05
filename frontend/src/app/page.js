@@ -146,7 +146,6 @@ export default function Home() {
     fecha_ultimo: '', fecha_proxima: '', intervalo_dias: 30, kilometraje_ultimo: '', kilometraje_proximo: '', notas: ''
   });
   const [mantenimientoSaving, setMantenimientoSaving] = useState(false);
-  const [samsaraMantenimiento, setSamsaraMantenimiento] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [clienteSearch, setClienteSearch] = useState('');
   const [showClienteModal, setShowClienteModal] = useState(false);
@@ -1017,18 +1016,17 @@ export default function Home() {
     const pendientesVersion = pendientesVersionRef.current;
     const run = async () => {
       setLoading(true);
-      const [statsRes, pendientesRes, viajesRes, alertasRes, vehiculosRes, comentariosRes, operadoresRes, driversRes, geofencesRes, eventsRes, riskZonesRes, samsaraAddrRes, remolquesRes, seguimientoRes, unidadesRes, mapasRes, clientesRes, geofenceLinksRes, kpisRes, mantenimientosRes, samsaraMantRes] = await Promise.allSettled([
+      const [statsRes, pendientesRes, viajesRes, alertasRes, vehiculosRes, comentariosRes, operadoresRes, driversRes, geofencesRes, eventsRes, riskZonesRes, samsaraAddrRes, remolquesRes, seguimientoRes, unidadesRes, mapasRes, clientesRes, geofenceLinksRes, kpisRes, mantenimientosRes] = await Promise.allSettled([
         requestJson(`${apiUrl}/reportes/resumen`), requestJson(`${apiUrl}/pendientes`), requestJson(`${apiUrl}/viajes`),
         requestJson(`${apiUrl}/alertas`), requestJson(`${apiUrl}/samsara/vehicles`), requestJson(`${apiUrl}/comentarios`),
         requestJson(`${apiUrl}/vehicle-operators`), requestJson(`${apiUrl}/samsara/drivers`), requestJson(`${apiUrl}/geofences`),
         requestJson(`${apiUrl}/geofence-events?limit=100`), requestJson(`${apiUrl}/risk-zones`), requestJson(`${apiUrl}/samsara/addresses`),
-        requestJson(`${apiUrl}/remolques`), requestJson(`${apiUrl}/seguimiento`), requestJson(`${apiUrl}/unidades`), requestJson(`${apiUrl}/mapas`), requestJson(`${apiUrl}/clientes`), requestJson(`${apiUrl}/clientes/geofence-links`), requestJson(`${apiUrl}/kpis`), requestJson(`${apiUrl}/mantenimientos`), requestJson(`${apiUrl}/samsara/mantenimiento`),
+        requestJson(`${apiUrl}/remolques`), requestJson(`${apiUrl}/seguimiento`), requestJson(`${apiUrl}/unidades`), requestJson(`${apiUrl}/mapas`), requestJson(`${apiUrl}/clientes`), requestJson(`${apiUrl}/clientes/geofence-links`), requestJson(`${apiUrl}/kpis`), requestJson(`${apiUrl}/mantenimientos`),
       ]);
 
       if (statsRes.status === 'fulfilled' && statsRes.value && !Array.isArray(statsRes.value)) setStats(statsRes.value);
       if (kpisRes.status === 'fulfilled' && kpisRes.value && !Array.isArray(kpisRes.value)) setKpis(kpisRes.value);
       if (mantenimientosRes.status === 'fulfilled' && Array.isArray(mantenimientosRes.value)) setMantenimientos(mantenimientosRes.value);
-      if (samsaraMantRes.status === 'fulfilled' && Array.isArray(samsaraMantRes.value)) setSamsaraMantenimiento(samsaraMantRes.value);
       if (pendientesRes.status === 'fulfilled' && Array.isArray(pendientesRes.value) && pendientesVersion === pendientesVersionRef.current) setPendientes(pendientesRes.value);
       if (viajesRes.status === 'fulfilled' && Array.isArray(viajesRes.value)) setViajes(normalizarViajes(viajesRes.value));
       if (alertasRes.status === 'fulfilled' && Array.isArray(alertasRes.value)) setAlertas(alertasRes.value);
@@ -5225,62 +5223,6 @@ export default function Home() {
                               <button onClick={() => eliminarMantenimiento(m)} style={{ background: '#ff444433', color: '#ff4444', border: '1px solid #ff444455', padding: '0.3rem 0.7rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>Eliminar</button>
                             </div>
                           </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
-            </div>
-
-            <div style={{ background: '#111', border: '1px solid #3d1a1a', borderRadius: '10px', overflow: 'hidden' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', padding: '1rem 1.25rem', borderBottom: '1px solid #1a3d1a' }}>
-                <div>
-                  <h3 style={{ margin: 0, fontSize: '1rem', color: '#e0e0e0' }}>📡 Mantenimiento Samsara</h3>
-                  <div style={{ color: '#6a9b6a', fontSize: '0.8rem', marginTop: '0.25rem' }}>
-                    {(() => {
-                      const abiertos = samsaraMantenimiento.filter(s => s.estado === 'abierto' || s.estado === 'en_progreso').length;
-                      const resueltos = samsaraMantenimiento.filter(s => s.estado === 'resuelto').length;
-                      return `DVIR + Issues de los últimos 30 días · Abiertos: ${abiertos} · Resueltos: ${resueltos} · Total: ${samsaraMantenimiento.length}`;
-                    })()}
-                  </div>
-                </div>
-                <button onClick={async () => { try { await apiJson(`${apiUrl}/samsara/mantenimiento/sync`, { method: 'POST' }); await loadAll(); } catch (e) { console.error(e); } }} style={s.button('#8b5cf6')}>Sincronizar Samsara</button>
-              </div>
-              {samsaraMantenimiento.length === 0 && <div style={{ padding: '2rem', textAlign: 'center', color: '#6a9b6a' }}>Sin defectos DVIR ni issues de Samsara en los últimos 30 días.</div>}
-              {samsaraMantenimiento.length > 0 && (
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr>
-                      <th style={s.th}>Fuente</th>
-                      <th style={s.th}>Unidad</th>
-                      <th style={s.th}>Reporte</th>
-                      <th style={s.th}>Severidad</th>
-                      <th style={s.th}>Estado</th>
-                      <th style={s.th}>Creado</th>
-                      <th style={s.th}>Resuelto</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {samsaraMantenimiento.map(sm => {
-                      const fuenteColor = sm.fuente === 'dvir' ? '#8b5cf6' : '#3b82f6';
-                      const fuenteLabel = sm.fuente === 'dvir' ? 'DVIR' : 'Issue';
-                      const sevColor = sm.severidad === 'alta' ? '#f87171' : sm.severidad === 'media' ? '#f59e0b' : '#60a5fa';
-                      const sevLabel = sm.severidad === 'alta' ? 'Alta' : sm.severidad === 'media' ? 'Media' : 'Baja';
-                      const estadoColor = sm.estado === 'abierto' ? '#f87171' : sm.estado === 'en_progreso' ? '#facc15' : sm.estado === 'resuelto' ? '#4ade80' : '#6b7280';
-                      const estadoLabel = sm.estado === 'abierto' ? 'Abierto' : sm.estado === 'en_progreso' ? 'En progreso' : sm.estado === 'resuelto' ? 'Resuelto' : 'Descartado';
-                      return (
-                        <tr key={sm.id}>
-                          <td style={s.td}><span style={s.badge(fuenteColor)}>{fuenteLabel}</span></td>
-                          <td style={s.td}><strong>{sm.vehicle_name || '-'}</strong></td>
-                          <td style={s.td}>
-                            <div style={{ fontWeight: 600, color: '#e0e0e0' }}>{sm.entidad || '-'}</div>
-                            {sm.descripcion && <div style={{ fontSize: '0.75rem', color: '#6a9b6a', marginTop: 2 }}>{sm.descripcion}</div>}
-                          </td>
-                          <td style={s.td}><span style={s.badge(sevColor)}>{sevLabel}</span></td>
-                          <td style={s.td}><span style={s.badge(estadoColor)}>{estadoLabel}</span></td>
-                          <td style={s.td}>{sm.fecha_creado ? parseFecha(sm.fecha_creado)?.toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '-'}</td>
-                          <td style={s.td}>{sm.fecha_resuelto ? parseFecha(sm.fecha_resuelto)?.toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '-'}</td>
                         </tr>
                       );
                     })}
