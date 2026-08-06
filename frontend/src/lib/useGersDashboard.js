@@ -147,10 +147,10 @@ export default function useGersDashboard() {
       msg += `Remolque: ${row.remolque || 'N/A'}\n`;
       msg += `Operador: ${row.operador || 'N/A'}\n`;
       msg += `Origen -- Destino: ${row.origen || 'N/A'} -- ${row.destino || 'N/A'}\n`;
-      msg += `Cita de carga(Hora inicial): ${row.cita_carga || 'N/A'}\n`;
-      msg += `Cita de descarga(Hora final): ${row.cita_descarga || 'N/A'}\n`;
-      msg += `Llegada con el cliente(primer contacto con geocerca): ${row.hora_llegada || 'N/A'}\n`;
-      msg += `Hora de liberacion(ultima salida de la geocerca): ${row.hora_liberacion || 'N/A'}\n`;
+      msg += `Cita de carga: ${row.cita_carga || 'N/A'}\n`;
+      msg += `Cita de descarga: ${row.cita_descarga || 'N/A'}\n`;
+      msg += `Llegada con el cliente: ${row.hora_llegada || 'N/A'}\n`;
+      msg += `Hora de liberacion: ${row.hora_liberacion || 'N/A'}\n`;
       msg += `Estatus: ${row.estatus || 'N/A'}\n`;
       msg += `Observaciones: ${(row.comentarios_cliente || row.comentarios_monitoreo || 'Sin observaciones')}\n\n`;
     });
@@ -223,10 +223,10 @@ export default function useGersDashboard() {
   const geofenceCategories = [
     { key: 'todas', label: 'Todas', icon: '📋' },
     { key: 'samsara', label: 'Samsara', icon: '☁️' },
-    { key: 'planta', label: 'Plantas GERS', icon: '🏭' },
-    { key: 'logistica', label: 'Zonas Logísticas', icon: '📦' },
-    { key: 'puerto', label: 'Puertos', icon: '🚢' },
-    { key: 'aduana', label: 'Aduanas', icon: '🛃' },
+  //  { key: 'planta', label: 'Plantas GERS', icon: '🏭' },
+  //  { key: 'logistica', label: 'Zonas Logísticas', icon: '📦' },
+  //  { key: 'puerto', label: 'Puertos', icon: '🚢' },
+  //  { key: 'aduana', label: 'Aduanas', icon: '🛃' },
     { key: 'custom', label: 'Mis Geocercas', icon: '📍' },
   ];
   const allGeofences = useMemo(() => {
