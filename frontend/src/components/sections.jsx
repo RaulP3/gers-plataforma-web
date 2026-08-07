@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import dynamic from 'next/dynamic';
 
 import {
@@ -10,6 +11,7 @@ import {
   ordenarViajesPorUnidad,
   paradaActualViaje,
   paradasViaje,
+  parseDestinos,
 } from '../lib/viajes';
 
 import {
@@ -2597,6 +2599,7 @@ export function GeocercasSection({
 
 export function MapasSection({
   cancelarEdicionMapa,
+  detectarMapasLinks,
   editarMapa,
   eliminarMapa,
   formMapa,
@@ -2604,6 +2607,7 @@ export function MapasSection({
   googleMyMapsEmbedUrl,
   googleUrlSeguro,
   guardarMapa,
+  guardarMapaDetectado,
   mapaEditando,
   mapaSaving,
   mapaUrl,
@@ -2615,6 +2619,108 @@ export function MapasSection({
   setFormMapa,
   setSelectedMapa,
 }) {
+  const [mapaBusqueda, setMapaBusqueda] = useState('');
+  const [importLinks, setImportLinks] = useState('');
+  const [importDetectando, setImportDetectando] = useState(false);
+  const [importResult, setImportResult] = useState(null);
+  const [importGuardando, setImportGuardando] = useState(false);
+  const [importSaveError, setImportSaveError] = useState('');
+  const [importSaveOk, setImportSaveOk] = useState('');
+  const [importEdiciones, setImportEdiciones] = useState({});
+  const importResultCount = Array.isArray(importResult?.mapas) ? importResult.mapas.length : 0;
+  const importErrorCount = Array.isArray(importResult?.errores) ? importResult.errores.length : 0;
+  const normalizarBusqueda = value => String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const mapasFiltrados = normalizarBusqueda(mapaBusqueda)
+    ? mapas.filter(mapa => [mapa.nombre, mapa.origen, mapa.destino, ...parseDestinos(mapa.destinos_json || mapa.destinos)]
+        .some(campo => normalizarBusqueda(campo).includes(normalizarBusqueda(mapaBusqueda))))
+    : mapas;
+  const detectarImport = async () => {
+    const urls = importLinks.split(/\r?\n|,/).map(u => u.trim()).filter(Boolean);
+    if (!urls.length) return;
+    setImportDetectando(true);
+    setImportResult(null);
+    setImportEdiciones({});
+    try {
+      const result = await detectarMapasLinks(urls);
+      setImportResult(result);
+      if (result.errores?.length && !result.mapas?.length) {
+        setImportSaveError(result.errores.map(e => e.error).join(' '));
+      } else {
+        setImportSaveError('');
+      }
+    } catch (err) {
+      setImportSaveError(err.message || 'No se pudieron detectar los links');
+      setImportResult(null);
+    } finally {
+      setImportDetectando(false);
+    }
+  };
+  const setImportCampo = (index, campo, value) => {
+    setImportEdiciones(prev => ({ ...prev, [index]: { ...(prev[index] || {}), [campo]: value } }));
+  };
+  const copiarTexto = async (texto) => {
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(texto);
+        return true;
+      } catch {}
+    }
+    const textarea = document.createElement('textarea');
+    textarea.value = texto;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    let ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch {}
+    document.body.removeChild(textarea);
+    return ok;
+  };
+  const importValue = (index, campo, fallback) => importEdiciones[index]?.[campo] ?? fallback ?? '';
+  const guardarDetectados = async () => {
+    const mapasDetectados = (importResult?.mapas || []).map((mapa, index) => ({
+      ...mapa,
+      nombre: importValue(index, 'nombre', mapa.nombre),
+      origen: importValue(index, 'origen', mapa.origen),
+      destino: importValue(index, 'destino', mapa.destinos?.at(-1)),
+      destinos: importValue(index, 'destinos', mapa.destinos),
+      tipo_entrega: importValue(index, 'tipo_entrega', mapa.tipo_entrega),
+    }));
+    setImportGuardando(true);
+    setImportSaveError('');
+    setImportSaveOk('');
+    let ok = 0;
+    const fallos = [];
+    try {
+      const resultados = await Promise.allSettled(
+        mapasDetectados.map(mapa => guardarMapaDetectado(mapa))
+      );
+      resultados.forEach((res, i) => {
+        if (res.status === 'fulfilled') {
+          ok += 1;
+        } else {
+          const err = res.reason;
+          fallos.push({ nombre: mapasDetectados[i].nombre || mapasDetectados[i].tipo_entrega, error: (err && err.message) || 'No se pudo guardar' });
+        }
+      });
+      await refreshMapas();
+      if (fallos.length === 0) {
+        setImportSaveOk(`Se guardaron ${ok} ruta(s) correctamente.`);
+        setImportResult(null);
+        setImportLinks('');
+        setImportEdiciones({});
+      } else {
+        setImportSaveError(`Guardadas ${ok} de ${mapasDetectados.length} rutas. Falló: ${fallos.map(f => `'${f.nombre}': ${f.error}`).join('; ')}`);
+      }
+    } catch (err) {
+      setImportSaveError(err.message || 'No se pudieron guardar las rutas detectadas');
+    } finally {
+      setImportGuardando(false);
+    }
+  };
   return (<div className="mapas-page">
             <div className="mapas-header">
               <div>
@@ -2644,6 +2750,23 @@ export function MapasSection({
                        <select value={formMapa.destino} onChange={e => setFormMapa({ ...formMapa, destino: e.target.value })}>{geofenceOptions(formMapa.destino)}</select>
                     </label>
                   </div>
+                  <div className="trip-delivery-type" role="group" aria-label="Tipo de entrega">
+                    <button type="button" className={formMapa.tipo_entrega !== 'reparto' ? 'active' : ''} onClick={() => setFormMapa(prev => ({ ...prev, tipo_entrega: 'directo', destino: parseDestinos(prev.destinos).at(-1) || prev.destino }))}>Destino único</button>
+                    <button type="button" className={formMapa.tipo_entrega === 'reparto' ? 'active' : ''} onClick={() => setFormMapa(prev => ({ ...prev, tipo_entrega: 'reparto', destinos: parseDestinos(prev.destinos).length >= 2 ? prev.destinos : [prev.destino || '', ''] }))}>Reparto</button>
+                  </div>
+                  {formMapa.tipo_entrega === 'reparto' ? (
+                    <div className="trip-stops-editor">
+                      <label><span>Destinos en orden</span></label>
+                      {formMapa.destinos.map((destino, index) => (
+                        <div className="trip-stop-input" key={index}>
+                          <span>{index + 1}</span>
+                           <select aria-label={`Destino ${index + 1}`} value={destino} onChange={(e) => setFormMapa(prev => ({ ...prev, destinos: prev.destinos.map((item, itemIndex) => itemIndex === index ? e.target.value : item) }))}>{geofenceOptions(destino)}</select>
+                          <button type="button" disabled={formMapa.destinos.length <= 2} onClick={() => setFormMapa(prev => ({ ...prev, destinos: prev.destinos.filter((_, itemIndex) => itemIndex !== index) }))} aria-label={`Eliminar destino ${index + 1}`}>Quitar</button>
+                        </div>
+                      ))}
+                      <button type="button" className="trip-add-stop" onClick={() => setFormMapa(prev => ({ ...prev, destinos: [...prev.destinos, ''] }))}>+ Agregar destino</button>
+                    </div>
+                  ) : null}
                   <label>
                     <span>Descripción</span>
                     <textarea rows="3" value={formMapa.descripcion} onChange={e => setFormMapa({ ...formMapa, descripcion: e.target.value })} placeholder="Paradas, restricciones y referencias de la ruta" />
@@ -2662,34 +2785,69 @@ export function MapasSection({
                       placeholder="https://www.google.com/maps/d/viewer?mid=..."
                     />
                   </label>
+                  <details className="mapas-import">
+                    <summary>Importar varios links</summary>
+                    <div className="mapas-import-body">
+                      <label>
+                        <span>Links de Google My Maps (uno por línea)</span>
+                        <textarea rows="3" value={importLinks} onChange={e => setImportLinks(e.target.value)} placeholder={"https://www.google.com/maps/d/viewer?mid=...\nhttps://www.google.com/maps/d/viewer?mid=..."} />
+                      </label>
+                      <button type="button" disabled={importDetectando || !importLinks.trim()} onClick={detectarImport} style={s.button()}>{importDetectando ? 'Detectando...' : 'Detectar rutas'}</button>
+                    </div>
+                  </details>
+                  {importResult && importResultCount > 0 && (
+                    <div className="mapas-import-results">
+                      <h4>Rutas detectadas ({importResultCount})</h4>
+                      {importResult.mapas.map((mapa, index) => (
+                        <div className="mapas-import-item" key={`${mapa.mid}-${index}`}>
+                          <label>
+                            <span>Nombre</span>
+                            <input value={importValue(index, 'nombre', mapa.nombre)} onChange={e => setImportCampo(index, 'nombre', e.target.value)} />
+                          </label>
+                          <div className="mapas-form-route">
+                            <label>
+                              <span>Origen</span>
+                              <select value={importValue(index, 'origen', mapa.origen)} onChange={e => setImportCampo(index, 'origen', e.target.value)}>{geofenceOptions(importValue(index, 'origen', mapa.origen))}</select>
+                            </label>
+                            <label>
+                              <span>Tipo</span>
+                              <select value={importValue(index, 'tipo_entrega', mapa.tipo_entrega)} onChange={e => setImportCampo(index, 'tipo_entrega', e.target.value)}>
+                                <option value="directo">Destino único</option>
+                                <option value="reparto">Reparto</option>
+                              </select>
+                            </label>
+                          </div>
+                          {importValue(index, 'tipo_entrega', mapa.tipo_entrega) === 'reparto' ? (
+                            <label>
+                              <span>Destinos en orden (separados por comas)</span>
+                              <input value={importValue(index, 'destinos', mapa.destinos).join(', ')} onChange={e => setImportCampo(index, 'destinos', e.target.value.split(',').map(v => v.trim()))} />
+                            </label>
+                          ) : (
+                            <label>
+                              <span>Destino</span>
+                              <select value={importValue(index, 'destino', mapa.destinos?.at(-1))} onChange={e => setImportCampo(index, 'destino', e.target.value)}>{geofenceOptions(importValue(index, 'destino', mapa.destinos?.at(-1)))}</select>
+                            </label>
+                          )}
+                          {mapa.geocercas_creadas?.length > 0 && (
+                            <p className="mapas-import-created">📍 Geocercas nuevas: {mapa.geocercas_creadas.join(', ')}</p>
+                          )}
+                        </div>
+                      ))}
+                      <div className="mapas-form-actions">
+                        <button type="button" onClick={guardarDetectados} disabled={importGuardando} style={s.button()}>{importGuardando ? 'Guardando...' : `Guardar ${importResultCount} rutas`}</button>
+                        {importSaveOk && <p className="mapas-import-ok" role="status">{importSaveOk}</p>}
+                        {importSaveError && <p className="mapas-import-error" role="alert">{importSaveError}</p>}
+                      </div>
+                    </div>
+                  )}
+                  {importResult && importErrorCount > 0 && (
+                    <p className="mapas-import-errors">⚠️ No se pudo procesar: {importResult.errores.map(e => e.url).join(', ')}</p>
+                  )}
                   <div className="mapas-form-actions">
                     {mapaEditando && <button type="button" onClick={cancelarEdicionMapa} style={s.button('#9ca3af')}>Cancelar</button>}
                     <button type="submit" disabled={mapaSaving} style={s.button()}>{mapaSaving ? 'Guardando...' : mapaEditando ? 'Actualizar' : 'Guardar mapa'}</button>
                   </div>
                 </form>
-
-                <div className="mapas-list" aria-label="Mapas guardados">
-                  {mapas.length === 0 ? (
-                    <div className="mapas-empty">No hay mapas guardados.</div>
-                  ) : mapas.map(mapa => (
-                    <article
-                      key={mapa.id}
-                      className={`mapa-card${String(selectedMapa?.id) === String(mapa.id) ? ' selected' : ''}`}
-                      role="button"
-                      tabIndex="0"
-                      onClick={() => setSelectedMapa(mapa)}
-                      onKeyDown={e => activarConTeclado(e, () => setSelectedMapa(mapa))}
-                    >
-                      <div className="mapa-card-title">{mapa.nombre}</div>
-                      <div className="mapa-card-route">{mapa.origen || 'Origen sin definir'} <span>→</span> {mapa.destino || 'Destino sin definir'}</div>
-                      {mapa.descripcion && <p>{mapa.descripcion}</p>}
-                      <div className="mapa-card-actions">
-                        <button type="button" onClick={e => { e.stopPropagation(); editarMapa(mapa); }} style={s.button('#60a5fa')}>Editar</button>
-                        <button type="button" onClick={e => { e.stopPropagation(); eliminarMapa(mapa); }} style={s.button('#ef4444')}>Eliminar</button>
-                      </div>
-                    </article>
-                  ))}
-                </div>
               </aside>
 
               <section className="mapas-viewer">
@@ -2705,10 +2863,22 @@ export function MapasSection({
                     <>
                       <div className="mapas-viewer-header">
                         <div>
-                          <h3>{selectedMapa.nombre}</h3>
-                          <p>{selectedMapa.origen || 'Origen sin definir'} → {selectedMapa.destino || 'Destino sin definir'}</p>
+                          <h3>{selectedMapa.nombre}{selectedMapa.tipo_entrega === 'reparto' && <span className="trip-reparto-badge">Reparto</span>}</h3>
+                          {selectedMapa.tipo_entrega === 'reparto' ? (
+                            <p>{selectedMapa.origen || 'Origen sin definir'} → {parseDestinos(selectedMapa.destinos_json || selectedMapa.destinos).length} paradas</p>
+                          ) : (
+                            <p>{selectedMapa.origen || 'Origen sin definir'} → {selectedMapa.destino || 'Destino sin definir'}</p>
+                          )}
                         </div>
-                        {urlSegura && <a href={urlSegura} target="_blank" rel="noopener noreferrer">Abrir en Google</a>}
+                        <div className="mapas-viewer-actions">
+                          {urlSegura && <a href={urlSegura} target="_blank" rel="noopener noreferrer">Abrir en Google</a>}
+                          {urlSegura && (
+                            <button type="button" className="mapas-share-btn" onClick={async () => {
+                              const ok = await copiarTexto(urlSegura);
+                              alert(ok ? 'Link copiado al portapapeles' : 'No se pudo copiar el link');
+                            }}>Compartir</button>
+                          )}
+                        </div>
                       </div>
                       {selectedMapa.descripcion && <div className="mapas-viewer-description">{selectedMapa.descripcion}</div>}
                       {embedUrl ? (
@@ -2726,6 +2896,50 @@ export function MapasSection({
                   );
                 })()}
               </section>
+
+              <div className="mapas-list-section">
+                <div className="mapas-search" role="search">
+                  <input
+                    type="search"
+                    value={mapaBusqueda}
+                    onChange={e => setMapaBusqueda(e.target.value)}
+                    placeholder="Buscar ruta por nombre, origen o destino..."
+                    aria-label="Buscar ruta"
+                  />
+                </div>
+
+                <div className="mapas-list" aria-label="Mapas guardados">
+                  {mapas.length === 0 ? (
+                    <div className="mapas-empty">No hay mapas guardados.</div>
+                  ) : mapasFiltrados.length === 0 ? (
+                    <div className="mapas-empty">No se encontraron rutas para «{mapaBusqueda}».</div>
+                  ) : mapasFiltrados.map(mapa => (
+                    <article
+                      key={mapa.id}
+                      className={`mapa-card${String(selectedMapa?.id) === String(mapa.id) ? ' selected' : ''}`}
+                      role="button"
+                      tabIndex="0"
+                      onClick={() => setSelectedMapa(mapa)}
+                      onKeyDown={e => activarConTeclado(e, () => setSelectedMapa(mapa))}
+                    >
+                      <div className="mapa-card-title">{mapa.nombre}{mapa.tipo_entrega === 'reparto' && <span className="trip-reparto-badge">Reparto</span>}</div>
+                      {mapa.tipo_entrega === 'reparto' ? (
+                        <div className="mapa-card-route">
+                          <div>{mapa.origen || 'Origen sin definir'} <span>→</span></div>
+                          <div className="trip-stops-display">{parseDestinos(mapa.destinos_json || mapa.destinos).map((destino, stopIndex) => <div key={`${mapa.id}-map-stop-${stopIndex}`}><span>{stopIndex + 1}</span>{destino}</div>)}</div>
+                        </div>
+                      ) : (
+                        <div className="mapa-card-route">{mapa.origen || 'Origen sin definir'} <span>→</span> {mapa.destino || 'Destino sin definir'}</div>
+                      )}
+                      {mapa.descripcion && <p>{mapa.descripcion}</p>}
+                      <div className="mapa-card-actions">
+                        <button type="button" onClick={e => { e.stopPropagation(); editarMapa(mapa); }} style={s.button('#60a5fa')}>Editar</button>
+                        <button type="button" onClick={e => { e.stopPropagation(); eliminarMapa(mapa); }} style={s.button('#ef4444')}>Eliminar</button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>);
 }

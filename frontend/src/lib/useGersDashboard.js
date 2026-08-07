@@ -11,7 +11,9 @@ import {
   GEOFENCE_DEFAULT,
   destinosViaje,
   destinoViajeActual,
+  mapaCoincidente,
   normalizarViaje,
+  parseDestinos,
   payloadViaje,
 } from './viajes';
 
@@ -558,7 +560,7 @@ export default function useGersDashboard() {
   const [mapas, setMapas] = useState([]);
   const [selectedMapa, setSelectedMapa] = useState(null);
   const [mapaEditando, setMapaEditando] = useState(null);
-  const [formMapa, setFormMapa] = useState({ nombre: '', origen: '', destino: '', descripcion: '', url: '' });
+  const [formMapa, setFormMapa] = useState({ nombre: '', origen: '', destino: '', descripcion: '', url: '', tipo_entrega: 'directo', destinos: ['', ''] });
   const [mapaSaving, setMapaSaving] = useState(false);
   const [mapasError, setMapasError] = useState('');
   const [customRiskZones, setCustomRiskZones] = useState([]);
@@ -1187,15 +1189,23 @@ export default function useGersDashboard() {
       setMapasError('Ingresa un nombre y una URL HTTPS válida de Google My Maps.');
       return;
     }
-    if ((formMapa.origen && !findGeofence(formMapa.origen)) || (formMapa.destino && !findGeofence(formMapa.destino))) {
-      setMapasError('Selecciona el origen y el destino de la lista de geocercas.');
+    const esReparto = formMapa.tipo_entrega === 'reparto';
+    const destinos = esReparto ? parseDestinos(formMapa.destinos) : [];
+    if (esReparto && destinos.length < 2) {
+      setMapasError('Ingresa al menos dos destinos para el reparto.');
+      return;
+    }
+    if (!findGeofence(formMapa.origen) || [...destinos].some(destino => !findGeofence(destino))) {
+      setMapasError('Selecciona el origen y todos los destinos de la lista de geocercas.');
       return;
     }
     const urlNormalizada = googleMyMapsEmbedUrl(urlSegura) || urlSegura;
     const payload = {
       nombre: formMapa.nombre.trim(),
       origen: formMapa.origen.trim(),
-      destino: formMapa.destino.trim(),
+      destino: esReparto ? destinos[destinos.length - 1] : formMapa.destino.trim(),
+      tipo_entrega: esReparto ? 'reparto' : 'directo',
+      destinos: esReparto ? destinos : (formMapa.destino.trim() ? [formMapa.destino.trim()] : []),
       descripcion: formMapa.descripcion.trim(),
       url: urlNormalizada,
     };
@@ -1208,7 +1218,7 @@ export default function useGersDashboard() {
         body: JSON.stringify(payload),
       });
       const preferredId = guardado?.id || mapaEditando?.id;
-      setFormMapa({ nombre: '', origen: '', destino: '', descripcion: '', url: '' });
+      setFormMapa({ nombre: '', origen: '', destino: '', descripcion: '', url: '', tipo_entrega: 'directo', destinos: ['', ''] });
       setMapaEditando(null);
       await refreshMapas(preferredId);
     } catch (err) {
@@ -1220,19 +1230,23 @@ export default function useGersDashboard() {
 
   const editarMapa = (mapa) => {
     setMapaEditando(mapa);
+    const destinosParse = parseDestinos(mapa.destinos_json || mapa.destinos);
+    const esReparto = mapa.tipo_entrega === 'reparto' || destinosParse.length > 1;
     setFormMapa({
       nombre: mapa.nombre || '',
       origen: mapa.origen || '',
-      destino: mapa.destino || '',
+      destino: mapa.destino || destinosParse.at(-1) || '',
       descripcion: mapa.descripcion || '',
       url: mapaUrl(mapa),
+      tipo_entrega: esReparto ? 'reparto' : 'directo',
+      destinos: esReparto ? [...destinosParse, '', ''].slice(0, Math.max(2, destinosParse.length)) : ['', ''],
     });
     setMapasError('');
   };
 
   const cancelarEdicionMapa = () => {
     setMapaEditando(null);
-    setFormMapa({ nombre: '', origen: '', destino: '', descripcion: '', url: '' });
+    setFormMapa({ nombre: '', origen: '', destino: '', descripcion: '', url: '', tipo_entrega: 'directo', destinos: ['', ''] });
     setMapasError('');
   };
 
@@ -1244,6 +1258,42 @@ export default function useGersDashboard() {
     } catch (err) {
       setMapasError(err.message || 'No se pudo eliminar el mapa');
     }
+  };
+
+  const detectarMapasLinks = async (urls) => {
+    const data = await apiJson(`${apiUrl}/mapas/detectar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ urls }),
+    });
+    const creadas = [...new Set((data?.mapas || []).flatMap(m => m.geocercas_creadas || []))];
+    if (creadas.length) {
+      const geofencesRes = await fetch(`${apiUrl}/geofences`).then(r => r.json()).catch(() => []);
+      setGeofences(Array.isArray(geofencesRes) ? geofencesRes : []);
+    }
+    return { mapas: data?.mapas || [], errores: data?.errores || [] };
+  };
+
+  const guardarMapaDetectado = async (mapaDetectado) => {
+    const esReparto = mapaDetectado.tipo_entrega === 'reparto';
+    const destinos = esReparto ? parseDestinos(mapaDetectado.destinos) : [];
+    const urlNormalizada = googleMyMapsEmbedUrl(mapaDetectado.url) || mapaDetectado.url;
+    const payload = {
+      nombre: (mapaDetectado.nombre || '').trim(),
+      origen: (mapaDetectado.origen || '').trim(),
+      destino: esReparto ? destinos[destinos.length - 1] : (mapaDetectado.destino || '').trim(),
+      tipo_entrega: esReparto ? 'reparto' : 'directo',
+      destinos: esReparto ? destinos : ((mapaDetectado.destino || '').trim() ? [(mapaDetectado.destino || '').trim()] : []),
+      descripcion: mapaDetectado.descripcion || 'Detectada desde Google My Maps',
+      url: urlNormalizada,
+    };
+    if (!payload.nombre || !payload.origen) throw new Error('Cada ruta detectada necesita nombre y origen.');
+    const guardado = await apiJson(`${apiUrl}/mapas`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return guardado;
   };
 
   const refreshPendientes = async () => {
@@ -1486,11 +1536,8 @@ export default function useGersDashboard() {
         ? `\n\n*Destinos de reparto:*\n${payload.destinos.map((destino, index) => `${index + 1}. ${destino}`).join('\n')}`
         : '';
       const nombreDestino = payload.tipo_entrega === 'reparto' ? `${payload.destinos.length} paradas (final: ${payload.destino})` : payload.destino;
-      const normalizarMatch = value => String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-      const listaMapas = Array.isArray(mapas) ? mapas : [];
-      const mapaExacto = listaMapas.find(mapa => mapa.origen && mapa.destino && normalizarMatch(mapa.origen) === normalizarMatch(formViaje.origen) && normalizarMatch(mapa.destino) === normalizarMatch(payload.destino));
-      const mapaCoincidente = mapaExacto || listaMapas.find(mapa => mapa.origen && geocercasCoincidentes(formViaje.origen).some(nombre => normalizarMatch(nombre) === normalizarMatch(mapa.origen)));
-      const linkMapaGuardado = mapaCoincidente ? googleUrlSeguro(mapaUrl(mapaCoincidente)) || googleMyMapsEmbedUrl(mapaUrl(mapaCoincidente)) : '';
+      const mapaCoincidenteEncontrado = mapaCoincidente(mapas, payload);
+      const linkMapaGuardado = mapaCoincidenteEncontrado ? googleUrlSeguro(mapaUrl(mapaCoincidenteEncontrado)) || googleMyMapsEmbedUrl(mapaUrl(mapaCoincidenteEncontrado)) : '';
       const lineasLinks = linkMapaGuardado
         ? `*Mapa de la ruta:* ${linkMapaGuardado}`
         : `*Link de ruta:* ${directions.toString()}`;
@@ -3816,6 +3863,8 @@ export default function useGersDashboard() {
     editarMapa,
     cancelarEdicionMapa,
     eliminarMapa,
+    detectarMapasLinks,
+    guardarMapaDetectado,
     refreshPendientes,
     refreshViajes,
     guardarPendiente,

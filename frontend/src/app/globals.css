@@ -334,7 +334,7 @@ textarea:focus-visible {
   display: grid;
   grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
   gap: 1.25rem;
-  align-items: start;
+  align-items: stretch;
 }
 
 .mapas-sidebar,
@@ -354,7 +354,6 @@ textarea:focus-visible {
   display: grid;
   gap: 0.85rem;
   padding: 1rem;
-  margin-bottom: 1rem;
 }
 
 .mapas-form label {
@@ -405,12 +404,20 @@ textarea:focus-visible {
   min-width: 0;
 }
 
+.mapas-list-section {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
 .mapas-list {
   display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 0.75rem;
-  max-height: 50vh;
-  overflow-y: auto;
-  padding-right: 0.2rem;
+  overflow-x: auto;
+  padding-bottom: 0.2rem;
+  max-height: none;
 }
 
 .mapa-card {
@@ -448,6 +455,130 @@ textarea:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.mapas-search {
+  margin-bottom: 0.75rem;
+}
+
+.mapas-search input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #1a3d1a;
+  border-radius: 8px;
+  background: #fff;
+  color: #111;
+  font: inherit;
+}
+
+.mapas-import {
+  border: 1px solid #1a3d1a;
+  border-radius: 9px;
+  background: #0d1a0d;
+  padding: 0.5rem 0.6rem;
+}
+
+.mapas-import summary {
+  cursor: pointer;
+  color: #86efac;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.mapas-import-body {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+}
+
+.mapas-import textarea,
+.mapas-import input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid #1a3d1a;
+  border-radius: 8px;
+  background: #fff;
+  color: #111;
+  font: inherit;
+}
+
+.mapas-import-results {
+  display: grid;
+  gap: 0.9rem;
+  border-top: 1px dashed #1a3d1a;
+  padding-top: 0.9rem;
+}
+
+.mapas-import-results h4 {
+  margin: 0;
+  color: #e0e0e0;
+  font-size: 0.9rem;
+}
+
+.mapas-import-item {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.7rem;
+  border: 1px solid #1a3d1a;
+  border-radius: 9px;
+  background: #0a140a;
+}
+
+.mapas-import-item label {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.mapas-import-item label > span {
+  color: #6a9b6a;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.mapas-import-item input,
+.mapas-import-item select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid #1a3d1a;
+  border-radius: 8px;
+  background: #fff;
+  color: #111;
+  font: inherit;
+}
+
+.mapas-import-created {
+  margin: 0;
+  padding: 0.45rem 0.6rem;
+  border-radius: 8px;
+  background: #101c10;
+  color: #86efac;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.mapas-import-errors {
+  margin: 0.5rem 0 0;
+  color: #fca5a5;
+  font-size: 0.8rem;
+}
+.mapas-import-ok {
+  margin: 0.5rem 0 0;
+  color: #86efac;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.mapas-import-error {
+  margin: 0.5rem 0 0;
+  color: #fca5a5;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
 .mapas-empty {
   padding: 1.5rem;
   border: 1px dashed #1a3d1a;
@@ -459,14 +590,30 @@ textarea:focus-visible {
 .mapas-viewer {
   padding: 1rem;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.mapas-viewer-header,
+.mapas-viewer-description {
+  flex-shrink: 0;
 }
 
 .mapas-viewer-header {
   margin-bottom: 0.75rem;
 }
 
+.mapas-viewer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
 .mapas-viewer-header a,
-.mapas-not-embeddable a {
+.mapas-not-embeddable a,
+.mapas-share-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -478,6 +625,16 @@ textarea:focus-visible {
   font-size: 0.82rem;
   font-weight: 600;
   text-decoration: none;
+  cursor: pointer;
+}
+
+.mapas-share-btn {
+  background: transparent;
+  font: inherit;
+}
+
+.mapas-share-btn:hover {
+  background: #00ff4115;
 }
 
 .mapas-viewer-description {
@@ -491,7 +648,8 @@ textarea:focus-visible {
 .mapas-iframe-wrap {
   position: relative;
   width: 100%;
-  height: clamp(420px, 68vh, 760px);
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: hidden;
   border-radius: 9px;
   background: #0a0a0a;
@@ -507,7 +665,8 @@ textarea:focus-visible {
 .mapas-not-embeddable {
   display: grid;
   place-items: center;
-  min-height: 420px;
+  flex: 1 1 auto;
+  min-height: 0;
   padding: 2rem;
   text-align: center;
   color: #6a9b6a;
@@ -701,12 +860,10 @@ textarea:focus-visible {
   }
 
   .mapas-list {
-    max-height: none;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .mapas-iframe-wrap {
-    height: 62vh;
     min-height: 360px;
   }
 }
@@ -741,7 +898,6 @@ textarea:focus-visible {
   }
 
   .mapas-iframe-wrap {
-    height: 55vh;
     min-height: 320px;
   }
 }

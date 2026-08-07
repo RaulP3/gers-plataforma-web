@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic';
 import {
   activarConTeclado,
   destinosViaje,
+  mapaCoincidente,
   normalizarViaje,
   paradasViaje,
   parseDestinos,
@@ -1132,18 +1133,15 @@ export function ViajeModal({
                 </div>
 
                 {(() => {
-                  const normalizarMatch = value => String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
                   const listaMapas = Array.isArray(mapas) ? mapas : [];
-                  const mapaExacto = listaMapas.find(mapa => mapa.origen && mapa.destino && normalizarMatch(mapa.origen) === normalizarMatch(viajeDetalle.origen) && normalizarMatch(mapa.destino) === normalizarMatch(viajeDetalle.destino));
-                  const mapaPorOrigen = !mapaExacto && listaMapas.find(mapa => mapa.origen && geocercasCoincidentes(viajeDetalle.origen).some(nombre => normalizarMatch(nombre) === normalizarMatch(mapa.origen)));
-                  const mapaViaje = mapaExacto || mapaPorOrigen;
+                  const mapaViaje = mapaCoincidente(listaMapas, viajeDetalle);
                   if (!mapaViaje) return null;
                   const urlSegura = googleUrlSeguro(mapaUrl(mapaViaje));
                   const embedUrl = googleMyMapsEmbedUrl(urlSegura);
                   return (
                     <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a', marginBottom: '1rem' }}>
                       <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Mapa de la ruta</div>
-                      <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.5rem' }}>{mapaViaje.nombre} {urlSegura && <a href={urlSegura} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa' }}>Abrir en Google</a>}</div>
+                      <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.5rem' }}>{mapaViaje.nombre}{mapaViaje.tipo_entrega === 'reparto' && <span className="trip-reparto-badge">Reparto</span>} {urlSegura && <a href={urlSegura} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa' }}>Abrir en Google</a>}</div>
                       {embedUrl ? (
                         <div style={{ borderRadius: '8px', overflow: 'hidden', border: '1px solid #1a3d1a' }}>
                           <iframe src={embedUrl} title={`Mapa ${mapaViaje.nombre}`} loading="lazy" referrerPolicy="no-referrer-when-downgrade" allowFullScreen style={{ width: '100%', height: '280px', border: 'none', display: 'block' }} />

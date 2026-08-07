@@ -59,6 +59,30 @@ export const payloadViaje = (viaje = {}) => {
   const { destinos_json, ...base } = viaje;
   return { ...base, tipo_entrega: reparto ? 'reparto' : 'directo', destinos, destino: destinos.at(-1) || '' };
 };
+export const normalizarMatch = value => String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+export const mapaCoincidente = (mapas = [], viaje = {}) => {
+  const listaMapas = Array.isArray(mapas) ? mapas : [];
+  const destinosViajeReparto = destinosViaje(viaje);
+  const esReparto = viaje?.tipo_entrega === 'reparto' || destinosViajeReparto.length > 1;
+  const destinosMapa = mapa => {
+    const parsed = parseDestinos(mapa?.destinos_json || mapa?.destinos);
+    return parsed.length ? parsed : [mapa?.destino].filter(Boolean);
+  };
+  const esMapaReparto = mapa => mapa?.tipo_entrega === 'reparto' || destinosMapa(mapa).length > 1;
+
+  return listaMapas.find(mapa => {
+    if (!mapa?.origen) return false;
+    if (normalizarMatch(mapa.origen) !== normalizarMatch(viaje?.origen)) return false;
+    if (esReparto) {
+      if (!esMapaReparto(mapa)) return false;
+      if (destinosViajeReparto.length === 0) return false;
+      const destinosNorm = destinosMapa(mapa).map(normalizarMatch);
+      return destinosViajeReparto.every(d => destinosNorm.includes(normalizarMatch(d)));
+    }
+    if (esMapaReparto(mapa)) return false;
+    return normalizarMatch(mapa.destino) === normalizarMatch(viaje?.destino);
+  }) || null;
+};
 export const activarConTeclado = (e, action) => {
   if (e.target !== e.currentTarget) return;
   if (e.key === 'Enter' || e.key === ' ') {

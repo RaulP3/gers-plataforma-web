@@ -13,19 +13,19 @@ function getMapa(id) {
   return getQuery('SELECT * FROM mapas_mymaps WHERE id = ?', [id]);
 }
 
-function createMapa({ nombre, descripcion, origen, destino, url, created_by_user_id, created_by_username }) {
+function createMapa({ nombre, descripcion, origen, destino, tipo_entrega, destinos_json, url, created_by_user_id, created_by_username }) {
   return runQuery(
-    `INSERT INTO mapas_mymaps (nombre, descripcion, origen, destino, url, created_by_user_id, created_by_username)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [nombre, descripcion ?? null, origen ?? null, destino ?? null, url, created_by_user_id, created_by_username]
+    `INSERT INTO mapas_mymaps (nombre, descripcion, origen, destino, tipo_entrega, destinos_json, url, created_by_user_id, created_by_username)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [nombre, descripcion ?? null, origen ?? null, destino ?? null, tipo_entrega ?? 'directo', destinos_json ?? null, url, created_by_user_id, created_by_username]
   );
 }
 
 function updateMapa(id, fields) {
   return runQuery(
-    `UPDATE mapas_mymaps SET nombre = ?, descripcion = ?, origen = ?, destino = ?, url = ?, updated_at = CURRENT_TIMESTAMP
+    `UPDATE mapas_mymaps SET nombre = ?, descripcion = ?, origen = ?, destino = ?, tipo_entrega = ?, destinos_json = ?, url = ?, updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
-    [fields.nombre, fields.descripcion, fields.origen, fields.destino, fields.url, id]
+    [fields.nombre, fields.descripcion, fields.origen, fields.destino, fields.tipo_entrega ?? 'directo', fields.destinos_json ?? null, fields.url, id]
   );
 }
 

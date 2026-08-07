@@ -402,12 +402,16 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
     descripcion TEXT,
     origen TEXT,
     destino TEXT,
+    tipo_entrega TEXT DEFAULT 'directo',
+    destinos_json TEXT,
     url TEXT NOT NULL,
     created_by_user_id INTEGER,
     created_by_username TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+  db.run("ALTER TABLE mapas_mymaps ADD COLUMN tipo_entrega TEXT DEFAULT 'directo'", [], () => {});
+  db.run('ALTER TABLE mapas_mymaps ADD COLUMN destinos_json TEXT', [], () => {});
   db.run("ALTER TABLE remolque_asignaciones ADD COLUMN tipo_asignacion TEXT DEFAULT 'sencillo'", [], () => {});
   db.run('ALTER TABLE remolque_asignaciones ADD COLUMN grupo_full TEXT', [], () => {});
   db.run("UPDATE remolque_asignaciones SET tipo_asignacion = 'sencillo' WHERE tipo_asignacion IS NULL OR tipo_asignacion = ''");

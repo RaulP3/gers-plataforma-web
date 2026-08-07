@@ -1,8 +1,26 @@
 const express = require('express');
 const { runQuery, getQuery, allQuery } = require('../db');
 const { validMyMapsUrl } = require('../services/geocode');
+const { normalizeTripDelivery } = require('../services/viajes');
+const { detectMapasFromUrls, midFromUrl } = require('../services/kml');
 
 const router = express.Router();
+
+router.post('/mapas/detectar', async (req, res) => {
+  const urls = Array.isArray(req.body?.urls) ? req.body.urls.map(u => String(u || '').trim()).filter(Boolean) : [];
+  if (!urls.length) return res.status(400).json({ error: 'Pega al menos un link de Google My Maps.' });
+  if (urls.length > 30) return res.status(400).json({ error: 'Máximo 30 links por detección.' });
+  for (const url of urls) {
+    if (!validMyMapsUrl(url)) return res.status(400).json({ error: `Link inválido: ${url}. Debe ser HTTP(S) de google.com` });
+    if (!midFromUrl(url)) return res.status(400).json({ error: `Link sin parámetro mid: ${url}` });
+  }
+  try {
+    res.json(await detectMapasFromUrls(urls));
+  } catch (err) {
+    console.error('Error al detectar mapas:', err);
+    res.status(500).json({ error: 'No se pudieron detectar las rutas', details: err.message });
+  }
+});
 
 router.get('/mapas', async (req, res) => {
   try {
@@ -18,11 +36,17 @@ router.post('/mapas', async (req, res) => {
   const url = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
   if (!nombre) return res.status(400).json({ error: 'nombre es requerido' });
   if (!validMyMapsUrl(url)) return res.status(400).json({ error: 'url debe ser HTTP(S) de google.com o googleusercontent.com' });
+  let delivery;
+  try {
+    delivery = normalizeTripDelivery(req.body);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
   try {
     const result = await runQuery(
-      `INSERT INTO mapas_mymaps (nombre, descripcion, origen, destino, url, created_by_user_id, created_by_username)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [nombre, req.body.descripcion ?? null, req.body.origen ?? null, req.body.destino ?? null, url, req.user.id, req.user.username]
+      `INSERT INTO mapas_mymaps (nombre, descripcion, origen, destino, tipo_entrega, destinos_json, url, created_by_user_id, created_by_username)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [nombre, req.body.descripcion ?? null, req.body.origen ?? null, delivery.destino, delivery.tipo_entrega, delivery.destinos_json, url, req.user.id, req.user.username]
     );
     res.status(201).json(await getQuery('SELECT * FROM mapas_mymaps WHERE id = ?', [result.lastID]));
   } catch (err) {
@@ -48,14 +72,22 @@ router.put('/mapas/:id', async (req, res) => {
     const url = has('url') ? req.body.url.trim() : current.url;
     if (!nombre) return res.status(400).json({ error: 'nombre no puede estar vacío' });
     if (!validMyMapsUrl(url)) return res.status(400).json({ error: 'url debe ser HTTP(S) de google.com o googleusercontent.com' });
+    let delivery;
+    try {
+      delivery = normalizeTripDelivery(req.body, current);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
     await runQuery(
-      `UPDATE mapas_mymaps SET nombre = ?, descripcion = ?, origen = ?, destino = ?, url = ?, updated_at = CURRENT_TIMESTAMP
+      `UPDATE mapas_mymaps SET nombre = ?, descripcion = ?, origen = ?, destino = ?, tipo_entrega = ?, destinos_json = ?, url = ?, updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
       [
         nombre,
         has('descripcion') ? req.body.descripcion : current.descripcion,
         has('origen') ? req.body.origen : current.origen,
-        has('destino') ? req.body.destino : current.destino,
+        delivery.destino,
+        delivery.tipo_entrega,
+        delivery.destinos_json,
         url,
         id,
       ]
