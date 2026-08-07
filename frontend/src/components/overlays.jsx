@@ -108,6 +108,8 @@ export function ModalsRoot({
   geocercasCoincidentes,
   geofenceOptions,
   geofenceOwnerId,
+  googleMyMapsEmbedUrl,
+  googleUrlSeguro,
   gruposUnicos,
   guardarActualizacionSeguimiento,
   guardarCierreTurno,
@@ -122,6 +124,8 @@ export function ModalsRoot({
   labelDiaEntrega,
   mantenimientoEditando,
   mantenimientoSaving,
+  mapaUrl,
+  mapas,
   marcandoCitaId,
   marcarCitaCompletada,
   mensajeCliente,
@@ -316,6 +320,10 @@ export function ModalsRoot({
   parseFecha={parseFecha}
   actualizarParadaViaje={actualizarParadaViaje}
   formatFechaProgramada={formatFechaProgramada}
+  mapas={mapas}
+  mapaUrl={mapaUrl}
+  googleUrlSeguro={googleUrlSeguro}
+  googleMyMapsEmbedUrl={googleMyMapsEmbedUrl}
 />
 }
 

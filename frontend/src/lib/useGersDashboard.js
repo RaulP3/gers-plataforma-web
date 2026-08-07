@@ -1542,7 +1542,13 @@ export default function useGersDashboard() {
         ? `\n\n*Destinos de reparto:*\n${payload.destinos.map((destino, index) => `${index + 1}. ${destino}`).join('\n')}`
         : '';
       const nombreDestino = payload.tipo_entrega === 'reparto' ? `${payload.destinos.length} paradas (final: ${payload.destino})` : payload.destino;
-      const msg = encodeURIComponent(`*Saludos ${formViaje.conductor || 'Operador'}.*\nSe le ha asignado un nuevo viaje, a continuación los detalles:\n\n*Nombre de viaje:* ${formViaje.origen || '?'} --> ${nombreDestino || '?'}${detalleDestinos}\n\n*Unidad:* ${formViaje.vehicle_name || formViaje.vehicle_id}\n*Remolque:* ${formViaje.remolque || 'Sin remolque'}\n*Hora de salida:* ${inicio}\n*Hora de descarga:* ${fin}\n\n*Instrucciones Adicionales:* ${formViaje.notas || 'Ninguna'}\n\n*Link de ruta:* ${directions.toString()}\n\n=========================================`);
+      const normalizarMatch = value => String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const mapaCoincidente = mapas.find(mapa => normalizarMatch(mapa.origen) === normalizarMatch(formViaje.origen) && normalizarMatch(mapa.destino) === normalizarMatch(payload.destino));
+      const linkMapaGuardado = mapaCoincidente ? googleUrlSeguro(mapaUrl(mapaCoincidente)) || googleMyMapsEmbedUrl(mapaUrl(mapaCoincidente)) : '';
+      const lineasLinks = linkMapaGuardado
+        ? `*Mapa de la ruta:* ${linkMapaGuardado}\n*Link de ruta:* ${directions.toString()}`
+        : `*Link de ruta:* ${directions.toString()}`;
+      const msg = encodeURIComponent(`*Saludos ${formViaje.conductor || 'Operador'}.*\nSe le ha asignado un nuevo viaje, a continuación los detalles:\n\n*Nombre de viaje:* ${formViaje.origen || '?'} --> ${nombreDestino || '?'}${detalleDestinos}\n\n*Unidad:* ${formViaje.vehicle_name || formViaje.vehicle_id}\n*Remolque:* ${formViaje.remolque || 'Sin remolque'}\n*Hora de salida:* ${inicio}\n*Hora de descarga:* ${fin}\n\n*Instrucciones Adicionales:* ${formViaje.notas || 'Ninguna'}\n\n${lineasLinks}\n\n=========================================`);
       whatsappUrl = `https://wa.me/${tel}?text=${msg}`;
       whatsappPopup = window.open('', '_blank');
     }

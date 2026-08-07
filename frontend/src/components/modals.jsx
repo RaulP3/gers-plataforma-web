@@ -898,6 +898,10 @@ export function ViajeModal({
   parseFecha,
   actualizarParadaViaje,
   formatFechaProgramada,
+  mapas,
+  mapaUrl,
+  googleUrlSeguro,
+  googleMyMapsEmbedUrl,
 }) {
   return (<div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => { setShowViajeModal(false); setViajeEditando(false); setViajeForm({}); }}>
           <div className="modal-panel" role="dialog" aria-modal="true" aria-label={viajeEditando ? 'Editar viaje' : 'Detalles del viaje'} style={{ background: '#0d1a0d', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '1.5rem', maxWidth: '600px', width: '90%', maxHeight: '80vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
@@ -1126,6 +1130,27 @@ export function ViajeModal({
                     </div>
                   </div>
                 </div>
+
+                {(() => {
+                  const normalizarMatch = value => String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+                  const mapaViaje = mapas.find(mapa => mapa.origen && mapa.destino && normalizarMatch(mapa.origen) === normalizarMatch(viajeDetalle.origen) && normalizarMatch(mapa.destino) === normalizarMatch(viajeDetalle.destino));
+                  if (!mapaViaje) return null;
+                  const urlSegura = googleUrlSeguro(mapaUrl(mapaViaje));
+                  const embedUrl = googleMyMapsEmbedUrl(urlSegura);
+                  return (
+                    <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a', marginBottom: '1rem' }}>
+                      <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Mapa de la ruta</div>
+                      <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.5rem' }}>{mapaViaje.nombre} {urlSegura && <a href={urlSegura} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa' }}>Abrir en Google</a>}</div>
+                      {embedUrl ? (
+                        <div style={{ borderRadius: '8px', overflow: 'hidden', border: '1px solid #1a3d1a' }}>
+                          <iframe src={embedUrl} title={`Mapa ${mapaViaje.nombre}`} loading="lazy" referrerPolicy="no-referrer-when-downgrade" allowFullScreen style={{ width: '100%', height: '280px', border: 'none', display: 'block' }} />
+                        </div>
+                      ) : urlSegura ? (
+                        <a href={urlSegura} target="_blank" rel="noopener noreferrer" style={s.button('#60a5fa')}>Ver ruta en Google</a>
+                      ) : null}
+                    </div>
+                  );
+                })()}
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
                   <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
