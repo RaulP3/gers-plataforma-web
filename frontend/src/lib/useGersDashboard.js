@@ -27,7 +27,7 @@ export default function useGersDashboard() {
   const [usuarioMsg, setUsuarioMsg] = useState('');
   const [activeTab, setActiveTab] = useState('dashboard');
   useEffect(() => {
-    if (currentUser && currentUser.rol !== 'admin' && ['dashboard', 'operadores', 'mantenimiento', 'reportes'].includes(activeTab)) {
+    if (currentUser && currentUser.rol !== 'admin' && ['dashboard', 'operadores', 'reportes'].includes(activeTab)) {
       setActiveTab('monitoreo');
     }
   }, [currentUser, activeTab]);
@@ -67,14 +67,6 @@ export default function useGersDashboard() {
   const [vehicleFilter, setVehicleFilter] = useState('');
   const [nuevoComentario, setNuevoComentario] = useState({ vehicle_id: '', vehicle_name: '', tipo: 'seguimiento', titulo: '', contenido: '', estatus: '', remolque: '', grupo: '', origen: '', destino: '' });
   const [remolques, setRemolques] = useState([]);
-  const [mantenimientos, setMantenimientos] = useState([]);
-  const [showMantenimientoModal, setShowMantenimientoModal] = useState(false);
-  const [mantenimientoEditando, setMantenimientoEditando] = useState(null);
-  const [formMantenimiento, setFormMantenimiento] = useState({
-    entidad_tipo: 'unidad', entidad_id: '', entidad_nombre: '', tipo_servicio: 'general',
-    fecha_ultimo: '', fecha_proxima: '', intervalo_dias: 30, kilometraje_ultimo: '', kilometraje_proximo: '', notas: ''
-  });
-  const [mantenimientoSaving, setMantenimientoSaving] = useState(false);
   const [clientes, setClientes] = useState([]);
   const [clienteSearch, setClienteSearch] = useState('');
   const [showClienteModal, setShowClienteModal] = useState(false);
@@ -539,53 +531,6 @@ export default function useGersDashboard() {
       alert(err.message || 'No se pudo marcar la cita como completada');
     } finally {
       setMarcandoCitaId(null);
-    }
-  };
-  const completarMantenimiento = async (m) => {
-    if (!confirm(`¿Marcar como completado el mantenimiento de ${m.entidad_nombre || m.entidad_id} (${m.tipo_servicio})?`)) return;
-    try {
-      await apiJson(`${apiUrl}/mantenimientos/${m.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ estado: 'completado' }),
-      });
-      await loadAll();
-    } catch (err) {
-      alert(err.message || 'No se pudo completar el mantenimiento');
-    }
-  };
-  const eliminarMantenimiento = async (m) => {
-    if (!confirm(`¿Eliminar el mantenimiento de ${m.entidad_nombre || m.entidad_id} (${m.tipo_servicio})?`)) return;
-    try {
-      await apiJson(`${apiUrl}/mantenimientos/${m.id}`, { method: 'DELETE' });
-      await loadAll();
-    } catch (err) {
-      alert(err.message || 'No se pudo eliminar el mantenimiento');
-    }
-  };
-  const guardarMantenimiento = async () => {
-    setMantenimientoSaving(true);
-    try {
-      const payload = { ...formMantenimiento };
-      if (mantenimientoEditando) {
-        await apiJson(`${apiUrl}/mantenimientos/${mantenimientoEditando.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-      } else {
-        await apiJson(`${apiUrl}/mantenimientos`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-      }
-      setShowMantenimientoModal(false);
-      await loadAll();
-    } catch (err) {
-      alert(err.message || 'No se pudo guardar el mantenimiento');
-    } finally {
-      setMantenimientoSaving(false);
     }
   };
   const [formGeofence, setFormGeofence] = useState(GEOFENCE_DEFAULT);
@@ -1088,17 +1033,16 @@ export default function useGersDashboard() {
     const pendientesVersion = pendientesVersionRef.current;
     const run = async () => {
       setLoading(true);
-      const [statsRes, pendientesRes, viajesRes, alertasRes, vehiculosRes, comentariosRes, operadoresRes, driversRes, geofencesRes, eventsRes, riskZonesRes, samsaraAddrRes, remolquesRes, seguimientoRes, unidadesRes, mapasRes, clientesRes, geofenceLinksRes, kpisRes, mantenimientosRes] = await Promise.allSettled([
+      const [statsRes, pendientesRes, viajesRes, alertasRes, vehiculosRes, comentariosRes, operadoresRes, driversRes, geofencesRes, eventsRes, riskZonesRes, samsaraAddrRes, remolquesRes, seguimientoRes, unidadesRes, mapasRes, clientesRes, geofenceLinksRes, kpisRes] = await Promise.allSettled([
         requestJson(`${apiUrl}/reportes/resumen`), requestJson(`${apiUrl}/pendientes`), requestJson(`${apiUrl}/viajes`),
         requestJson(`${apiUrl}/alertas`), requestJson(`${apiUrl}/samsara/vehicles`), requestJson(`${apiUrl}/comentarios`),
         requestJson(`${apiUrl}/vehicle-operators`), requestJson(`${apiUrl}/samsara/drivers`), requestJson(`${apiUrl}/geofences`),
         requestJson(`${apiUrl}/geofence-events?limit=100`), requestJson(`${apiUrl}/risk-zones`), requestJson(`${apiUrl}/samsara/addresses`),
-        requestJson(`${apiUrl}/remolques`), requestJson(`${apiUrl}/seguimiento`), requestJson(`${apiUrl}/unidades`), requestJson(`${apiUrl}/mapas`), requestJson(`${apiUrl}/clientes`), requestJson(`${apiUrl}/clientes/geofence-links`), requestJson(`${apiUrl}/kpis`), requestJson(`${apiUrl}/mantenimientos`),
+        requestJson(`${apiUrl}/remolques`), requestJson(`${apiUrl}/seguimiento`), requestJson(`${apiUrl}/unidades`), requestJson(`${apiUrl}/mapas`), requestJson(`${apiUrl}/clientes`), requestJson(`${apiUrl}/clientes/geofence-links`), requestJson(`${apiUrl}/kpis`),
       ]);
 
       if (statsRes.status === 'fulfilled' && statsRes.value && !Array.isArray(statsRes.value)) setStats(statsRes.value);
       if (kpisRes.status === 'fulfilled' && kpisRes.value && !Array.isArray(kpisRes.value)) setKpis(kpisRes.value);
-      if (mantenimientosRes.status === 'fulfilled' && Array.isArray(mantenimientosRes.value)) setMantenimientos(mantenimientosRes.value);
       if (pendientesRes.status === 'fulfilled' && Array.isArray(pendientesRes.value) && pendientesVersion === pendientesVersionRef.current) setPendientes(pendientesRes.value);
       if (viajesRes.status === 'fulfilled' && Array.isArray(viajesRes.value)) setViajes(normalizarViajes(viajesRes.value));
       if (alertasRes.status === 'fulfilled' && Array.isArray(alertasRes.value)) setAlertas(alertasRes.value);
@@ -1548,7 +1492,7 @@ export default function useGersDashboard() {
       const mapaCoincidente = mapaExacto || listaMapas.find(mapa => mapa.origen && geocercasCoincidentes(formViaje.origen).some(nombre => normalizarMatch(nombre) === normalizarMatch(mapa.origen)));
       const linkMapaGuardado = mapaCoincidente ? googleUrlSeguro(mapaUrl(mapaCoincidente)) || googleMyMapsEmbedUrl(mapaUrl(mapaCoincidente)) : '';
       const lineasLinks = linkMapaGuardado
-        ? `*Mapa de la ruta:* ${linkMapaGuardado}\n*Link de ruta:* ${directions.toString()}`
+        ? `*Mapa de la ruta:* ${linkMapaGuardado}`
         : `*Link de ruta:* ${directions.toString()}`;
       const msg = encodeURIComponent(`*Saludos ${formViaje.conductor || 'Operador'}.*\nSe le ha asignado un nuevo viaje, a continuación los detalles:\n\n*Nombre de viaje:* ${formViaje.origen || '?'} --> ${nombreDestino || '?'}${detalleDestinos}\n\n*Unidad:* ${formViaje.vehicle_name || formViaje.vehicle_id}\n*Remolque:* ${formViaje.remolque || 'Sin remolque'}\n*Hora de salida:* ${inicio}\n*Hora de descarga:* ${fin}\n\n*Instrucciones Adicionales:* ${formViaje.notas || 'Ninguna'}\n\n${lineasLinks}\n\n=========================================`);
       whatsappUrl = `https://wa.me/${tel}?text=${msg}`;
@@ -3369,7 +3313,7 @@ export default function useGersDashboard() {
 
 
   const esAdmin = currentUser?.rol === 'admin';
-  const tabsOcultosParaUser = ['dashboard', 'operadores', 'mantenimiento', 'reportes', 'usuarios'];
+  const tabsOcultosParaUser = ['dashboard', 'operadores', 'reportes', 'usuarios'];
   const menuItems = [
     { key: 'dashboard', label: 'Dashboard', icon: '📊' },
     { key: 'monitoreo', label: 'Monitoreo', icon: '🗺️' },
@@ -3384,7 +3328,6 @@ export default function useGersDashboard() {
     { key: 'operadores', label: 'Operadores', icon: '👤' },
     { key: 'clientes', label: 'Clientes', icon: '🏢', badge: clientes.length },
     { key: 'remolques', label: 'Remolques', icon: '🚛' },
-    { key: 'mantenimiento', label: 'Mantenimiento', icon: '🔧' },
     { key: 'mapas', label: 'Mapas', icon: '🗺️' },
     { key: 'rutas', label: 'Historial Rutas', icon: '🛤️' },
     { key: 'reportes', label: 'Reportes', icon: '📈' },
@@ -3514,16 +3457,6 @@ export default function useGersDashboard() {
     setNuevoComentario,
     remolques,
     setRemolques,
-    mantenimientos,
-    setMantenimientos,
-    showMantenimientoModal,
-    setShowMantenimientoModal,
-    mantenimientoEditando,
-    setMantenimientoEditando,
-    formMantenimiento,
-    setFormMantenimiento,
-    mantenimientoSaving,
-    setMantenimientoSaving,
     clientes,
     setClientes,
     clienteSearch,
@@ -3732,9 +3665,6 @@ export default function useGersDashboard() {
     marcandoCitaId,
     setMarcandoCitaId,
     marcarCitaCompletada,
-    completarMantenimiento,
-    eliminarMantenimiento,
-    guardarMantenimiento,
     formGeofence,
     setFormGeofence,
     filtroAlertas,

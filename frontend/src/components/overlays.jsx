@@ -11,7 +11,6 @@ import {
   DetalleUnidadModal,
   ExistingGeofenceModal,
   HistorialModal,
-  MantenimientoModal,
   MensajeModal,
   PendienteModal,
   RemolqueModal,
@@ -99,7 +98,6 @@ export function ModalsRoot({
   findGeofence,
   formCliente,
   formClienteGeofence,
-  formMantenimiento,
   formPendiente,
   formRemolque,
   formUnidad,
@@ -115,15 +113,12 @@ export function ModalsRoot({
   guardarCierreTurno,
   guardarCliente,
   guardarComentarioRapido,
-  guardarMantenimiento,
   guardarOperador,
   guardarPendiente,
   guardarRemolqueSeleccionado,
   guardarUnidad,
   historialPendientes,
   labelDiaEntrega,
-  mantenimientoEditando,
-  mantenimientoSaving,
   mapaUrl,
   mapas,
   marcandoCitaId,
@@ -169,7 +164,6 @@ export function ModalsRoot({
   setExistingGeofenceSelections,
   setFormCliente,
   setFormClienteGeofence,
-  setFormMantenimiento,
   setFormPendiente,
   setFormRemolque,
   setFormUnidad,
@@ -184,7 +178,6 @@ export function ModalsRoot({
   setSeguimientoModalNota,
   setSelectedVehicle,
   setShowHistorialModal,
-  setShowMantenimientoModal,
   setShowMensajeModal,
   setShowSeguimientoUpdateModal,
   setShowTurnoModal,
@@ -205,7 +198,6 @@ export function ModalsRoot({
   showClienteModal,
   showExistingGeofenceModal,
   showHistorialModal,
-  showMantenimientoModal,
   showMensajeModal,
   showPendienteModal,
   showRemolqueModal,
@@ -436,20 +428,6 @@ export function ModalsRoot({
   formRemolque={formRemolque}
   setFormRemolque={setFormRemolque}
   crearRemolque={crearRemolque}
-/>
-}
-
-      {showMantenimientoModal &&
-  <MantenimientoModal
-  setShowMantenimientoModal={setShowMantenimientoModal}
-  mantenimientoEditando={mantenimientoEditando}
-  s={s}
-  formMantenimiento={formMantenimiento}
-  setFormMantenimiento={setFormMantenimiento}
-  todasLasUnidades={todasLasUnidades}
-  remolques={remolques}
-  mantenimientoSaving={mantenimientoSaving}
-  guardarMantenimiento={guardarMantenimiento}
 />
 }
 

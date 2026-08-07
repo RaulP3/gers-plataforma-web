@@ -82,7 +82,6 @@ export function DashboardSection({
   geofenceLinks,
   kpis,
   loadAll,
-  mantenimientos,
   numeroRemolque,
   operadores,
   parseCitaDate,
@@ -179,16 +178,12 @@ export function DashboardSection({
                   return acc;
                 }, {});
                 const etiquetaEstado = (value) => String(value || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-                const tipoAlerta = { geocerca: 'Geocerca', combustible_bajo: 'Combustible', velocidad: 'Velocidad', mantenimiento: 'Mantenimiento' };
+                const tipoAlerta = { geocerca: 'Geocerca', combustible_bajo: 'Combustible', velocidad: 'Velocidad' };
                 const alertasPorTipo = alertasNoLeidas.reduce((acc, a) => {
                   const key = String(a.tipo || 'otra');
                   acc[key] = (acc[key] || 0) + 1;
                   return acc;
                 }, {});
-                const mVen = mantenimientos.filter(m => m.status === 'vencido').length;
-                const mProx = mantenimientos.filter(m => m.status === 'proximo').length;
-                const mProg = mantenimientos.filter(m => m.status === 'programado').length;
-                const mCompletados = mantenimientos.filter(m => m.status === 'completado').length;
                 const rem = kpis?.remolques;
                 const semanas = kpis?.viajesPorSemana || [];
                 const semanaActual = semanas.length ? semanas[semanas.length - 1] : null;
@@ -387,17 +382,6 @@ export function DashboardSection({
                         </>
                       ))}
 
-                      {section('Mantenimiento y control')}
-                      {panel('Mantenimiento', mVen > 0 ? '#f87171' : mProx > 0 ? '#facc15' : '#4ade80', (
-                        <>
-                          {bigNum(mVen + mProx, mVen > 0 ? '#f87171' : mProx > 0 ? '#facc15' : '#4ade80', 'Vencidos + próximos')}
-                          {fila('Vencidos', mVen, mVen > 0 ? '#f87171' : '#e0e0e0')}
-                          {fila('Próximos', mProx, mProx > 0 ? '#facc15' : '#e0e0e0')}
-                          {fila('Programados', mProg, '#60a5fa')}
-                          {fila('Completados', mCompletados, '#4ade80')}
-                        </>
-                      ))}
-
                       {panel('Pendientes', pendientes.length > 0 ? '#f59e0b' : '#4ade80', (
                         <>
                           {bigNum(pendientes.length, pendientes.length > 0 ? '#f59e0b' : '#4ade80', pendientes.length > 0 ? 'Tareas por resolver' : 'Todo al día')}
@@ -445,7 +429,7 @@ export function DashboardSection({
                           </div>
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '8px' }}>
                             {alertasNoLeidas.slice(0, 6).map(a => {
-                              const borderColor = a.tipo === 'geocerca' ? '#8b5cf6' : a.tipo === 'combustible_bajo' ? '#f59e0b' : a.tipo === 'mantenimiento' ? '#f87171' : '#3b82f6';
+                              const borderColor = a.tipo === 'geocerca' ? '#8b5cf6' : a.tipo === 'combustible_bajo' ? '#f59e0b' : '#3b82f6';
                               return (
                                 <div key={a.id} style={{ background: '#1a1a1a', borderRadius: '8px', padding: '10px', borderLeft: `3px solid ${borderColor}` }}>
                                   <div style={{ fontSize: '12px', fontWeight: 600, color: '#e0e0e0' }}>{a.vehicle_name || a.vehicle_id}</div>
@@ -1991,87 +1975,6 @@ export function RemolquesSection({
                 </div>
               </div>
             )}
-          </div>);
-}
-
-export function MantenimientoSection({
-  apiJson,
-  apiUrl,
-  completarMantenimiento,
-  eliminarMantenimiento,
-  formatFechaProgramada,
-  loadAll,
-  mantenimientos,
-  s,
-  setFormMantenimiento,
-  setMantenimientoEditando,
-  setShowMantenimientoModal,
-}) {
-  return (<div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-              <div>
-                <h2 style={{ color: '#e0e0e0', margin: 0, fontSize: '1.35rem' }}>Mantenimiento Preventivo</h2>
-                <div style={{ color: '#6a9b6a', fontSize: '0.8rem', marginTop: '0.25rem' }}>
-                  {(() => {
-                    const vencidos = mantenimientos.filter(m => m.status === 'vencido').length;
-                    const proximos = mantenimientos.filter(m => m.status === 'proximo').length;
-                    const completados = mantenimientos.filter(m => m.status === 'completado').length;
-                    return `Vencidos: ${vencidos} · Próximos: ${proximos} · Completados: ${completados}`;
-                  })()}
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <button onClick={async () => { try { await apiJson(`${apiUrl}/check-mantenimiento`, { method: 'POST' }); await loadAll(); } catch (e) { console.error(e); } }} style={s.button('#f59e0b')}>Verificar vencimientos</button>
-                <button onClick={() => { setMantenimientoEditando(null); setFormMantenimiento({ entidad_tipo: 'unidad', entidad_id: '', entidad_nombre: '', tipo_servicio: 'general', fecha_ultimo: '', fecha_proxima: '', intervalo_dias: 30, kilometraje_ultimo: '', kilometraje_proximo: '', notas: '' }); setShowMantenimientoModal(true); }} style={{ padding: '0.5rem 1rem', background: '#00ff41', color: '#000', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 700 }}>+ Programar</button>
-              </div>
-            </div>
-
-            <div style={{ background: '#111', border: '1px solid #1a3d1a', borderRadius: '10px', overflow: 'hidden' }}>
-              {mantenimientos.length === 0 && <div style={{ padding: '2rem', textAlign: 'center', color: '#6a9b6a' }}>Sin mantenimientos programados. Haz clic en &quot;+ Programar&quot;.</div>}
-              {mantenimientos.length > 0 && (
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr>
-                      <th style={s.th}>Equipo</th>
-                      <th style={s.th}>Servicio</th>
-                      <th style={s.th}>Estado</th>
-                      <th style={s.th}>Último</th>
-                      <th style={s.th}>Próximo</th>
-                      <th style={s.th}>Km prox.</th>
-                      <th style={s.th}>Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {mantenimientos.map(m => {
-                      const color = m.status === 'vencido' ? '#f87171' : m.status === 'proximo' ? '#facc15' : m.status === 'completado' ? '#4ade80' : '#6a9b6a';
-                      const label = m.status === 'vencido' ? 'Vencido' : m.status === 'proximo' ? 'Próximo' : m.status === 'completado' ? 'Completado' : 'Programado';
-                      return (
-                        <tr key={m.id}>
-                          <td style={s.td}>
-                            <div style={{ fontWeight: 600, color: '#e0e0e0' }}>{m.entidad_nombre || m.entidad_id || '-'}</div>
-                            <div style={{ fontSize: '0.75rem', color: '#6a9b6a' }}>{m.entidad_tipo === 'remolque' ? 'Remolque' : 'Unidad'}</div>
-                          </td>
-                          <td style={s.td}>{m.tipo_servicio || 'general'}</td>
-                          <td style={s.td}><span style={s.badge(color)}>{label}</span></td>
-                          <td style={s.td}>{m.fecha_ultimo ? formatFechaProgramada(m.fecha_ultimo) : '-'}</td>
-                          <td style={s.td}>{m.fecha_proxima ? formatFechaProgramada(m.fecha_proxima) : '-'}</td>
-                          <td style={s.td}>{m.kilometraje_proximo || '-'}</td>
-                          <td style={s.td}>
-                            <div style={{ display: 'flex', gap: '0.4rem' }}>
-                              {m.status !== 'completado' && (
-                                <button onClick={() => completarMantenimiento(m)} style={{ background: '#00ff4133', color: '#00ff41', border: '1px solid #00ff4155', padding: '0.3rem 0.7rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>✓ Completar</button>
-                              )}
-                              <button onClick={() => { setMantenimientoEditando(m); setFormMantenimiento({ entidad_tipo: m.entidad_tipo || 'unidad', entidad_id: m.entidad_id || '', entidad_nombre: m.entidad_nombre || '', tipo_servicio: m.tipo_servicio || 'general', fecha_ultimo: m.fecha_ultimo || '', fecha_proxima: m.fecha_proxima || '', intervalo_dias: m.intervalo_dias || 30, kilometraje_ultimo: m.kilometraje_ultimo || '', kilometraje_proximo: m.kilometraje_proximo || '', notas: m.notas || '' }); setShowMantenimientoModal(true); }} style={s.button('#60a5fa')}>Editar</button>
-                              <button onClick={() => eliminarMantenimiento(m)} style={{ background: '#ff444433', color: '#ff4444', border: '1px solid #ff444455', padding: '0.3rem 0.7rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>Eliminar</button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
-            </div>
           </div>);
 }
 

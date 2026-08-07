@@ -384,29 +384,6 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  db.run(`CREATE TABLE IF NOT EXISTS mantenimientos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    entidad_tipo TEXT DEFAULT 'unidad',
-    entidad_id TEXT,
-    entidad_nombre TEXT,
-    tipo_servicio TEXT DEFAULT 'general',
-    fecha_ultimo DATETIME,
-    fecha_proxima DATETIME,
-    intervalo_dias INTEGER DEFAULT 30,
-    kilometraje_ultimo REAL,
-    kilometraje_proximo REAL,
-    estado TEXT DEFAULT 'programado',
-    notas TEXT,
-    created_by_username TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
-  db.run("ALTER TABLE mantenimientos ADD COLUMN intervalo_dias INTEGER DEFAULT 30", [], () => {});
-  db.run("ALTER TABLE mantenimientos ADD COLUMN kilometraje_ultimo REAL", [], () => {});
-  db.run("ALTER TABLE mantenimientos ADD COLUMN kilometraje_proximo REAL", [], () => {});
-  db.run("ALTER TABLE mantenimientos ADD COLUMN created_by_username TEXT", [], () => {});
-  db.run('CREATE INDEX IF NOT EXISTS idx_mantenimientos_estado_proxima ON mantenimientos(estado, fecha_proxima)', [], () => {});
-
   db.run(`CREATE TABLE IF NOT EXISTS cliente_geofence_links (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     cliente_id INTEGER NOT NULL,

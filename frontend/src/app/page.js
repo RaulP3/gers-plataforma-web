@@ -13,7 +13,6 @@ import {
   ClientesSection,
   OperadoresSection,
   RemolquesSection,
-  MantenimientoSection,
   SeguimientoSection,
   GeocercasSection,
   MapasSection,
@@ -91,8 +90,6 @@ export default function Home() {
         {activeTab === 'operadores' && <OperadoresSection {...d} />}
 
         {activeTab === 'remolques' && <RemolquesSection {...d} />}
-
-        {activeTab === 'mantenimiento' && <MantenimientoSection {...d} />}
 
         {activeTab === 'seguimiento' && <SeguimientoSection {...d} />}
 

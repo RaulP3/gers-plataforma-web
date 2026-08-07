@@ -38,13 +38,6 @@ function getRecentAlertByType(vehicleId, tipo, hoursAgo = 4) {
   );
 }
 
-function getRecentMantenimientoAlert(nombre, tipoServicio) {
-  return getQuery(
-    `SELECT id FROM alertas WHERE tipo = 'mantenimiento' AND mensaje LIKE ? AND timestamp > datetime('now', '-24 hours')`,
-    [`%${nombre}%${tipoServicio}%`]
-  );
-}
-
 function markAlertaLeida(id) {
   return runQuery('UPDATE alertas SET leida = 1 WHERE id = ?', [id]);
 }
@@ -66,7 +59,6 @@ module.exports = {
   createAlertRecord,
   getRecentCustomerGeofenceAlert,
   getRecentAlertByType,
-  getRecentMantenimientoAlert,
   markAlertaLeida,
   archivarTodasAlertas,
   archivarAlerta,
