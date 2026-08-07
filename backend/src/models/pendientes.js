@@ -16,7 +16,7 @@ function listPendientes({ turno, estado } = {}) {
 
 function createPendiente({ titulo, descripcion, prioridad, asignado_a, turno, notas, creado_por, created_by_user_id, created_by_username }) {
   return runQuery(
-    'INSERT INTO pendientes (titulo, descripcion, prioridad, asignado_a, turno, notas, creado_por, created_by_user_id, created_by_username) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO pendientes (titulo, descripcion, prioridad, asignado_a, turno, notas, creado_por, created_by_user_id, created_by_username, fecha_creacion, fecha_actualizacion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime(\'now\'), datetime(\'now\'))',
     [titulo, descripcion || '', prioridad || 'media', asignado_a || '', turno || '', notas || '', creado_por, created_by_user_id, created_by_username]
   );
 }
