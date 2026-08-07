@@ -1133,7 +1133,10 @@ export function ViajeModal({
 
                 {(() => {
                   const normalizarMatch = value => String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-                  const mapaViaje = mapas.find(mapa => mapa.origen && mapa.destino && normalizarMatch(mapa.origen) === normalizarMatch(viajeDetalle.origen) && normalizarMatch(mapa.destino) === normalizarMatch(viajeDetalle.destino));
+                  const listaMapas = Array.isArray(mapas) ? mapas : [];
+                  const mapaExacto = listaMapas.find(mapa => mapa.origen && mapa.destino && normalizarMatch(mapa.origen) === normalizarMatch(viajeDetalle.origen) && normalizarMatch(mapa.destino) === normalizarMatch(viajeDetalle.destino));
+                  const mapaPorOrigen = !mapaExacto && listaMapas.find(mapa => mapa.origen && geocercasCoincidentes(viajeDetalle.origen).some(nombre => normalizarMatch(nombre) === normalizarMatch(mapa.origen)));
+                  const mapaViaje = mapaExacto || mapaPorOrigen;
                   if (!mapaViaje) return null;
                   const urlSegura = googleUrlSeguro(mapaUrl(mapaViaje));
                   const embedUrl = googleMyMapsEmbedUrl(urlSegura);

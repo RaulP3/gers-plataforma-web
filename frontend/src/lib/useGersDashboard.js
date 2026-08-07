@@ -1543,7 +1543,9 @@ export default function useGersDashboard() {
         : '';
       const nombreDestino = payload.tipo_entrega === 'reparto' ? `${payload.destinos.length} paradas (final: ${payload.destino})` : payload.destino;
       const normalizarMatch = value => String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-      const mapaCoincidente = mapas.find(mapa => normalizarMatch(mapa.origen) === normalizarMatch(formViaje.origen) && normalizarMatch(mapa.destino) === normalizarMatch(payload.destino));
+      const listaMapas = Array.isArray(mapas) ? mapas : [];
+      const mapaExacto = listaMapas.find(mapa => mapa.origen && mapa.destino && normalizarMatch(mapa.origen) === normalizarMatch(formViaje.origen) && normalizarMatch(mapa.destino) === normalizarMatch(payload.destino));
+      const mapaCoincidente = mapaExacto || listaMapas.find(mapa => mapa.origen && geocercasCoincidentes(formViaje.origen).some(nombre => normalizarMatch(nombre) === normalizarMatch(mapa.origen)));
       const linkMapaGuardado = mapaCoincidente ? googleUrlSeguro(mapaUrl(mapaCoincidente)) || googleMyMapsEmbedUrl(mapaUrl(mapaCoincidente)) : '';
       const lineasLinks = linkMapaGuardado
         ? `*Mapa de la ruta:* ${linkMapaGuardado}\n*Link de ruta:* ${directions.toString()}`
