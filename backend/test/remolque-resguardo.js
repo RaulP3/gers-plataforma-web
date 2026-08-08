@@ -101,9 +101,45 @@ async function request(pathname, options = {}) {
 
     const asig = await request(`/remolques/${id}/asignar`, { method: 'POST', body: JSON.stringify({ vehicle_id: 'unit-test', vehicle_name: 'U1' }) });
     assert.ok(asig.ok && asig.data.id, 'no se pudo asignar tras quitar resguardo');
+    await request(`/remolques/${id}/desasignar`, { method: 'POST' });
+
+    // guardia en syncTripTrailer (asignación automática de viajes)
+    await request(`/remolques/${id}/resguardo`, { method: 'PUT', body: JSON.stringify({ resguardo: true, fecha_cita: cita }) });
+    const viaje = await request('/viajes', {
+      method: 'POST',
+      body: JSON.stringify({
+        vehicle_id: 'v-001',
+        vehicle_name: 'Unidad Viaje',
+        origen: 'Monterrey',
+        destino: 'Saltillo',
+        remolque: 'T1',
+        estado: 'programado',
+      }),
+    });
+    assert.ok(viaje.ok && viaje.data.id, `no se creó el viaje: ${viaje.status} ${JSON.stringify(viaje.data)}`);
+    const viajeId = viaje.data.id;
+
+    const tripSyncBlocked = await request(`/viajes/${viajeId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ estado: 'en_ruta_cargado' }),
+    });
+    assert.equal(tripSyncBlocked.status, 409, 'no debe asignar remolque en resguardo vía syncTripTrailer');
+    await request(`/viajes/${viajeId}`, { method: 'PUT', body: JSON.stringify({ estado: 'programado' }) });
+
+    await request(`/remolques/${id}/resguardo`, { method: 'PUT', body: JSON.stringify({ resguardo: false }) });
+    const tripSyncOk = await request(`/viajes/${viajeId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ estado: 'en_ruta_cargado' }),
+    });
+    assert.ok(tripSyncOk.ok, `syncTripTrailer falló tras quitar resguardo: ${tripSyncOk.status} ${JSON.stringify(tripSyncOk.data)}`);
+    const asignaciones = await request('/remolques/asignaciones/activas');
+    const viajeAsig = asignaciones.data.find(a => a.vehicle_id === 'v-001' && a.remolque_id === id);
+    assert.ok(viajeAsig, 'el viaje debe asignar el remolque tras quitar resguardo');
+
+    await request(`/viajes/${viajeId}`, { method: 'DELETE' }).catch(() => {});
+    await request(`/remolques/${id}/desasignar`, { method: 'POST' }).catch(() => {});
 
     // cleanup
-    await request(`/remolques/${id}/desasignar`, { method: 'POST' });
     await request(`/remolques/${id}`, { method: 'PUT', body: JSON.stringify({ resguardo: true }) }).catch(() => {});
     await request(`/remolques/${id2}`, { method: 'DELETE' }).catch(() => {});
     await request(`/remolques/${id}`, { method: 'DELETE' }).catch(() => {});

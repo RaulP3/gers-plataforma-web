@@ -108,6 +108,14 @@ async function syncTripTrailer(trip) {
   const isFull = ids.length > 1;
   const vehicleId = trip.vehicle_id;
   const vehicleName = String(trip.vehicle_name || '');
+  const placeholders = ids.map(() => '?').join(',');
+  const trailers = await allQuery(`SELECT id, resguardo FROM remolques WHERE id IN (${placeholders})`, ids);
+  const resguardado = trailers.find(trailer => Number(trailer.resguardo));
+  if (resguardado) {
+    const error = new Error(`El remolque en resguardo no se puede asignar automáticamente a un viaje`);
+    error.status = 409;
+    throw error;
+  }
   return withTransaction(async tx => {
     const current = await tx.all('SELECT remolque_id FROM remolque_asignaciones WHERE activa = 1 AND vehicle_id = ?', [vehicleId]);
     const currentIds = current.map(row => row.remolque_id);
