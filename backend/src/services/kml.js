@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { allQuery, runQuery } = require('../db');
+const { findGeofenceByNameOrProximity } = require('../models/geofences');
 
 const NAMESPACE_RE = /xmlns\s*=\s*"[^"]*"/g;
 const PLACEMARK_RE = /<Placemark[^>]*>([\s\S]*?)<\/Placemark>/g;
@@ -82,6 +83,8 @@ async function matchOrCreateGeofence({ nombre, latitud, longitud }, createdNames
   const existing = await allQuery('SELECT nombre FROM geofences');
   const found = (existing || []).find(row => normalizeName(row.nombre) === normalized);
   if (found) return { nombre: found.nombre, creada: false };
+  const proxima = await findGeofenceByNameOrProximity({ nombre, latitud, longitud });
+  if (proxima) return { nombre: proxima.nombre, creada: false };
   const nombreFinal = nombre.trim();
   await runQuery(
     'INSERT INTO geofences (nombre, latitud, longitud, radio_metros, descripcion, color, categoria) VALUES (?, ?, ?, 500, ?, ?, ?)',

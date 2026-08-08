@@ -27,6 +27,39 @@ function createGeofence({ nombre, direccion, latitud, longitud, radio_metros, de
   );
 }
 
+function haversineMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = (v) => Number(v) * Math.PI / 180;
+  const dLat = toRad(lat2) - toRad(lat1);
+  const dLon = toRad(lon2) - toRad(lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+async function findGeofenceByNameOrProximity({ nombre, latitud, longitud }, meters = 50) {
+  const rows = await allQuery('SELECT id, nombre, latitud, longitud FROM geofences');
+  const nameNorm = String(nombre || '').trim().toLowerCase();
+  let best = null;
+  let bestDist = Infinity;
+  const tol = Number(meters) || 50;
+  const lat = Number(latitud);
+  const lon = Number(longitud);
+  const hasCoords = Number.isFinite(lat) && Number.isFinite(lon);
+  for (const r of rows) {
+    if (nameNorm && String(r.nombre || '').trim().toLowerCase() === nameNorm) {
+      return r;
+    }
+    if (hasCoords && Number.isFinite(Number(r.latitud)) && Number.isFinite(Number(r.longitud))) {
+      const d = haversineMeters(lat, lon, Number(r.latitud), Number(r.longitud));
+      if (d <= tol && d < bestDist) {
+        bestDist = d;
+        best = r;
+      }
+    }
+  }
+  return best;
+}
+
 function updateGeofence(id, { nombre, direccion, latitud, longitud, radio_metros, descripcion, color, activa, cliente_id }) {
   return runQuery(
     `UPDATE geofences SET nombre = COALESCE(?, nombre), latitud = COALESCE(?, latitud),
@@ -197,4 +230,5 @@ module.exports = {
   deleteClienteGeofenceLink,
   deleteAllClienteGeofenceLinks,
   findSamsaraGeofenceClient,
+  findGeofenceByNameOrProximity,
 };

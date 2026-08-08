@@ -1715,6 +1715,21 @@ export default function useGersDashboard() {
     }
   };
 
+  const setResguardoRemolque = async (id, { resguardo, fecha_cita } = {}) => {
+    try {
+      await apiJson(`${apiUrl}/remolques/${id}/resguardo`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resguardo: resguardo ? 1 : 0, fecha_cita: fecha_cita || null }),
+      });
+      await refreshRemolques();
+      return true;
+    } catch (err) {
+      alert(err.message || 'No se pudo actualizar el resguardo');
+      return false;
+    }
+  };
+
   const abrirClienteModal = (cliente = null) => {
     setClienteEditando(cliente);
     setFormCliente(cliente ? {
@@ -1916,6 +1931,8 @@ export default function useGersDashboard() {
     const vehicleName = vehiculos.find(v => String(v.id) === String(vehicleId))?.name || '';
     remolques.forEach(r => {
       const miembros = obtenerMiembrosFull(r);
+      const grupoMiembros = miembros.length > 1 ? miembros : [r];
+      if (grupoMiembros.some(m => Number(m.resguardo) === 1)) return;
       if (miembros.length > 1) {
         const grupo = String(r.grupo_full);
         if (!gruposIncluidos.has(grupo)) {
@@ -3895,6 +3912,7 @@ export default function useGersDashboard() {
     crearRemolque,
     cerrarRemolqueModal,
     eliminarRemolque,
+    setResguardoRemolque,
     abrirClienteModal,
     cerrarClienteModal,
     guardarCliente,

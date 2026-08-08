@@ -342,7 +342,7 @@ textarea:focus-visible {
   min-width: 0;
 }
 
-.mapas-form,
+.mapas-import-card,
 .mapas-viewer,
 .mapa-card {
   border: 1px solid #1a3d1a;
@@ -350,27 +350,33 @@ textarea:focus-visible {
   border-radius: 12px;
 }
 
-.mapas-form {
+.mapas-import-card {
   display: grid;
   gap: 0.85rem;
   padding: 1rem;
 }
 
-.mapas-form label {
+.mapas-import-hint {
+  margin: 0;
+  color: #6a9b6a;
+  font-size: 0.78rem;
+}
+
+.mapas-import-card label {
   display: grid;
   gap: 0.3rem;
   min-width: 0;
 }
 
-.mapas-form label > span {
+.mapas-import-card label > span {
   color: #6a9b6a;
   font-size: 0.78rem;
   font-weight: 600;
 }
 
-.mapas-form input,
-.mapas-form select,
-.mapas-form textarea {
+.mapas-import-card input,
+.mapas-import-card select,
+.mapas-import-card textarea {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
@@ -382,7 +388,7 @@ textarea:focus-visible {
   font: inherit;
 }
 
-.mapas-form textarea {
+.mapas-import-card textarea {
   resize: vertical;
 }
 
@@ -404,6 +410,25 @@ textarea:focus-visible {
   min-width: 0;
 }
 
+.mapas-import-card > button[type="button"] {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 0.85rem;
+  padding: 0.6rem 0.75rem;
+}
+
+.mapa-card-actions {
+  justify-content: flex-start;
+}
+
+.mapa-card-actions button {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  font-size: 0.82rem;
+  padding: 0.45rem 0.7rem;
+}
+
 .mapas-list-section {
   grid-column: 1 / -1;
   min-width: 0;
@@ -421,7 +446,7 @@ textarea:focus-visible {
 }
 
 .mapa-card {
-  padding: 0.9rem;
+  padding: 0.5rem 0.65rem;
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
 }
@@ -434,7 +459,8 @@ textarea:focus-visible {
 
 .mapa-card-title {
   color: #e5e7eb;
-  font-weight: 700;
+  font-weight: 600;
+  font-size: 0.81rem;
 }
 
 .mapa-card-route {
@@ -448,11 +474,23 @@ textarea:focus-visible {
 }
 
 .mapa-card p {
-  margin: 0.55rem 0 0.75rem;
+  margin: 0.35rem 0 0.45rem;
   color: #9ca3af;
-  font-size: 0.8rem;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
+  font-size: 0.7rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
+}
+
+.mapa-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-top: 0.2rem;
 }
 
 .mapas-search {
@@ -649,7 +687,7 @@ textarea:focus-visible {
   position: relative;
   width: 100%;
   flex: 1 1 auto;
-  min-height: 0;
+  min-height: 520px;
   overflow: hidden;
   border-radius: 9px;
   background: #0a0a0a;
@@ -666,7 +704,7 @@ textarea:focus-visible {
   display: grid;
   place-items: center;
   flex: 1 1 auto;
-  min-height: 0;
+  min-height: 520px;
   padding: 2rem;
   text-align: center;
   color: #6a9b6a;

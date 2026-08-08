@@ -6,6 +6,7 @@ const {
   mapTrailerLocation,
   mapTrailerTemp,
 } = require('../services/samsara');
+const { setRemolqueResguardo } = require('../models/remolques');
 
 const router = express.Router();
 
@@ -53,7 +54,7 @@ router.post('/remolques/full/asignar', async (req, res) => {
   try {
     const full = await withTransaction(async tx => {
       const tanks = await tx.all(
-        'SELECT id, numero, categoria, status FROM remolques WHERE id IN (?, ?) ORDER BY id',
+        'SELECT id, numero, categoria, status, resguardo FROM remolques WHERE id IN (?, ?) ORDER BY id',
         ids
       );
       if (tanks.length !== 2) {
@@ -64,6 +65,11 @@ router.post('/remolques/full/asignar', async (req, res) => {
       if (tanks.some(tank => String(tank.categoria || '').trim().toLowerCase() !== 'tanque')) {
         const error = new Error('Full requiere exactamente dos remolques de categoría Tanque');
         error.status = 400;
+        throw error;
+      }
+      if (tanks.some(tank => Number(tank.resguardo))) {
+        const error = new Error('No se puede armar un full con remolques en resguardo');
+        error.status = 409;
         throw error;
       }
       const activeElsewhere = await tx.get(
@@ -156,12 +162,30 @@ router.put('/remolques/:id', (req, res) => {
     const has = (key) => Object.prototype.hasOwnProperty.call(req.body || {}, key);
     const numero = has('numero') ? req.body.numero : row.numero;
     const categoria = has('categoria') ? req.body.categoria : row.categoria;
+    const resguardo = has('resguardo') ? (req.body.resguardo ? 1 : 0) : row.resguardo;
+    const fecha_cita = has('fecha_cita') ? (req.body.fecha_cita || null) : row.fecha_cita;
     if (!numero) return res.status(400).json({ error: 'numero es requerido' });
-    db.run('UPDATE remolques SET numero = ?, categoria = ? WHERE id = ?', [String(numero).trim(), categoria || 'Caja Seca', req.params.id], function (runErr) {
-      if (runErr) return res.status(500).json({ error: runErr.message });
-      res.json({ changes: this.changes });
-    });
+    db.run(
+      'UPDATE remolques SET numero = ?, categoria = ?, resguardo = ?, fecha_cita = ? WHERE id = ?',
+      [String(numero).trim(), categoria || 'Caja Seca', resguardo, fecha_cita, req.params.id],
+      function (runErr) {
+        if (runErr) return res.status(500).json({ error: runErr.message });
+        res.json({ changes: this.changes });
+      }
+    );
   });
+});
+
+router.put('/remolques/:id/resguardo', async (req, res) => {
+  const { resguardo, fecha_cita } = req.body || {};
+  try {
+    const row = await getQuery('SELECT id FROM remolques WHERE id = ?', [req.params.id]);
+    if (!row) return res.status(404).json({ error: 'Remolque no encontrado' });
+    const result = await setRemolqueResguardo(req.params.id, { resguardo, fecha_cita });
+    res.json({ changes: result.changes });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.post('/remolques/:id/asignar', async (req, res) => {
@@ -169,10 +193,15 @@ router.post('/remolques/:id/asignar', async (req, res) => {
   if (!vehicle_id) return res.status(400).json({ error: 'vehicle_id es requerido' });
   try {
     const id = await withTransaction(async tx => {
-      const trailer = await tx.get('SELECT id FROM remolques WHERE id = ?', [req.params.id]);
+      const trailer = await tx.get('SELECT id, resguardo FROM remolques WHERE id = ?', [req.params.id]);
       if (!trailer) {
         const error = new Error('Remolque no encontrado');
         error.status = 404;
+        throw error;
+      }
+      if (trailer.resguardo) {
+        const error = new Error('No se puede asignar un remolque en resguardo');
+        error.status = 409;
         throw error;
       }
       const current = await tx.get(

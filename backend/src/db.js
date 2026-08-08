@@ -367,9 +367,13 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
     numero TEXT NOT NULL UNIQUE,
     categoria TEXT DEFAULT 'Caja Seca',
     status TEXT DEFAULT 'disponible',
+    resguardo INTEGER DEFAULT 0,
+    fecha_cita DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
   db.run("ALTER TABLE remolques ADD COLUMN categoria TEXT DEFAULT 'Caja Seca'", [], () => {});
+  db.run("ALTER TABLE remolques ADD COLUMN resguardo INTEGER DEFAULT 0", [], () => {});
+  db.run("ALTER TABLE remolques ADD COLUMN fecha_cita DATETIME", [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS remolque_asignaciones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -423,6 +427,7 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
           ON remolque_asignaciones(vehicle_id) WHERE activa = 1 AND grupo_full IS NULL`);
   db.run(`UPDATE remolques SET status = CASE
             WHEN EXISTS (SELECT 1 FROM remolque_asignaciones ra WHERE ra.remolque_id = remolques.id AND ra.activa = 1) THEN 'asignado'
+            WHEN COALESCE(resguardo, 0) = 1 THEN 'resguardo'
             ELSE 'disponible' END`);
 
   db.run(`CREATE TABLE IF NOT EXISTS seguimiento (

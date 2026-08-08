@@ -905,19 +905,15 @@ export function MonitoreoSection({
 
 export function NotasSection({
   abrirReporteDirecto,
-  crearComentario,
   eliminarComentario,
   loadAll,
   notasBitacora,
   notasIncidencias,
   notasTab,
-  nuevoComentario,
-  obtenerRemolqueAsignadoUnidad,
   parseFecha,
   resetNotaForm,
   s,
   setNotasTab,
-  setNuevoComentario,
   setVehicleFilter,
   vehicleFilter,
   vehiculos,
@@ -941,74 +937,6 @@ export function NotasSection({
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem' }}>
-              <div style={s.card}>
-                <h3 style={{ marginTop: 0, marginBottom: '1rem', fontSize: '1rem' }}>{notasTab === 'bitacora' ? 'Agregar Bitácora' : 'Agregar Incidencia'}</h3>
-                <form onSubmit={crearComentario}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                    <div>
-                      <label style={s.label}>Unidad *</label>
-                      <select style={s.select} value={nuevoComentario.vehicle_id} onChange={(e) => {
-                        const v = vehiculos.find(vh => String(vh.id) === e.target.value);
-                        const remolque = obtenerRemolqueAsignadoUnidad(e.target.value, v?.name || '');
-                        setNuevoComentario({ ...nuevoComentario, vehicle_id: e.target.value, vehicle_name: v?.name || '', remolque });
-                      }} required>
-                        <option value="">Seleccionar unidad...</option>
-                        {vehiculos.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label style={s.label}>Remolque</label>
-                      <input style={s.input} placeholder="Núm. remolque" value={nuevoComentario.remolque} onChange={(e) => setNuevoComentario({ ...nuevoComentario, remolque: e.target.value })} />
-                    </div>
-                  </div>
-                  {notasTab === 'bitacora' ? (
-                    <>
-                      <div style={{ marginBottom: '0.75rem' }}>
-                        <label style={s.label}>Nota *</label>
-                        <textarea
-                          style={{ ...s.input, minHeight: '110px', resize: 'vertical', fontFamily: 'inherit' }}
-                          placeholder="Escribe una observación corta de la bitácora..."
-                          value={nuevoComentario.contenido}
-                          onChange={(e) => setNuevoComentario({ ...nuevoComentario, contenido: e.target.value, tipo: 'bitacora' })}
-                          required
-                        />
-                      </div>
-                      <button type="submit" style={{ ...s.button('#10b981'), width: '100%' }}>Guardar Bitácora</button>
-                    </>
-                  ) : (
-                    <>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                        <div>
-                          <label style={s.label}>Tipo de Incidencia</label>
-                          <input style={s.input} placeholder="Ej: retraso, falla, cliente" value={nuevoComentario.titulo} onChange={(e) => setNuevoComentario({ ...nuevoComentario, titulo: e.target.value, tipo: 'incidencia' })} />
-                        </div>
-                        <div>
-                          <label style={s.label}>Severidad</label>
-                          <select style={s.select} value={nuevoComentario.estatus} onChange={(e) => setNuevoComentario({ ...nuevoComentario, estatus: e.target.value, tipo: 'incidencia' })}>
-                            <option value="">Seleccionar...</option>
-                            <option value="Baja">Baja</option>
-                            <option value="Media">Media</option>
-                            <option value="Alta">Alta</option>
-                            <option value="Crítica">Crítica</option>
-                          </select>
-                        </div>
-                      </div>
-                      <div style={{ marginBottom: '0.75rem' }}>
-                        <label style={s.label}>Descripción *</label>
-                        <textarea
-                          style={{ ...s.input, minHeight: '110px', resize: 'vertical', fontFamily: 'inherit' }}
-                          placeholder="Describe la incidencia..."
-                          value={nuevoComentario.contenido}
-                          onChange={(e) => setNuevoComentario({ ...nuevoComentario, contenido: e.target.value, tipo: 'incidencia' })}
-                          required
-                        />
-                      </div>
-                      <button type="submit" style={{ ...s.button('#10b981'), width: '100%' }}>Guardar Incidencia</button>
-                    </>
-                  )}
-                </form>
-              </div>
-
               <div style={{ ...s.card, overflow: 'auto', maxHeight: 'calc(100vh - 200px)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                     <h3 style={{ margin: 0, fontSize: '1rem' }}>{notasTab === 'bitacora' ? `Bitácora (${notasBitacora.length})` : `Incidencias (${notasIncidencias.length})`}</h3>
@@ -1804,6 +1732,7 @@ export function RemolquesSection({
   desasignarRemolque,
   displayRemolque,
   eliminarRemolque,
+  setResguardoRemolque,
   historialRemolque,
   historialRemolqueError,
   historialRemolqueLoading,
@@ -1856,6 +1785,30 @@ export function RemolquesSection({
                           </div>
                         </div>
                         <div style={{ fontSize: '0.75rem', color: '#f59e0b', textTransform: 'uppercase' }}>{r.categoria || 'Caja Seca'}</div>
+                        {Number(r.resguardo) === 1 && (
+                          <div style={{ fontSize: '0.72rem', color: '#f59e0b', background: '#1a1100', padding: '0.2rem 0.5rem', borderRadius: '6px', alignSelf: 'flex-start' }}>
+                            En resguardo{r.fecha_cita ? ` · cita: ${new Date(r.fecha_cita).toLocaleDateString('es-MX', { day: 'numeric', month: 'short' })}` : ''}
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                          <label style={{ fontSize: '0.72rem', color: '#8b5cf6', display: 'inline-flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={Number(r.resguardo) === 1}
+                              onChange={async (e) => { const v = e.target.checked; await setResguardoRemolque(r.id, { resguardo: v, fecha_cita: r.fecha_cita || '' }); }}
+                              onClick={ev => ev.stopPropagation()}
+                            />
+                            Resguardo
+                          </label>
+                          {Number(r.resguardo) === 1 && (
+                            <input
+                              type="date"
+                              value={(r.fecha_cita || '').slice(0, 10)}
+                              onChange={async (e) => { e.stopPropagation(); await setResguardoRemolque(r.id, { resguardo: true, fecha_cita: e.target.value }); }}
+                              style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', border: '1px solid #444', borderRadius: '6px', background: '#111', color: '#e0e0e0' }}
+                            />
+                          )}
+                        </div>
                         {r.temperatura?.returnC != null && (
                           <div style={{ fontSize: '0.78rem', fontWeight: 700, color: tempColor(r.temperatura) }}>
                             Temperatura: {r.temperatura.returnC}°C · ajuste {r.temperatura.setPointC ?? '—'}°C · {r.temperatura.state || 'Sin estado'}
@@ -1891,14 +1844,16 @@ export function RemolquesSection({
                         })()}
                         <button
                           type="button"
+                          disabled={Number(r.resguardo) === 1}
                           onClick={(e) => {
                             e.stopPropagation();
+                            if (Number(r.resguardo) === 1) return;
                             if (r.vehicle_id_asignado || r.unidad_asignada) desasignarRemolque(r.id);
                             else abrirRemolqueDashboard(r);
                           }}
-                          style={{ ...s.button((r.vehicle_id_asignado || r.unidad_asignada) ? '#ef4444' : '#3b82f6'), marginTop: '0.25rem', width: '100%' }}
+                          style={{ ...s.button((r.vehicle_id_asignado || r.unidad_asignada) ? '#ef4444' : '#3b82f6'), marginTop: '0.25rem', width: '100%', opacity: Number(r.resguardo) === 1 ? 0.55 : 1, cursor: Number(r.resguardo) === 1 ? 'default' : 'pointer' }}
                         >
-                          {(r.vehicle_id_asignado || r.unidad_asignada) ? 'Desasignar' : 'Asignar a unidad'}
+                          {Number(r.resguardo) === 1 ? 'En resguardo' : (r.vehicle_id_asignado || r.unidad_asignada) ? 'Desasignar' : 'Asignar a unidad'}
                         </button>
                       </div>
                     ))}
@@ -2598,65 +2553,84 @@ export function GeocercasSection({
 }
 
 export function MapasSection({
-  cancelarEdicionMapa,
   detectarMapasLinks,
-  editarMapa,
   eliminarMapa,
-  formMapa,
-  geofenceOptions,
   googleMyMapsEmbedUrl,
   googleUrlSeguro,
-  guardarMapa,
   guardarMapaDetectado,
-  mapaEditando,
-  mapaSaving,
   mapaUrl,
   mapas,
   mapasError,
   refreshMapas,
   s,
   selectedMapa,
-  setFormMapa,
   setSelectedMapa,
 }) {
   const [mapaBusqueda, setMapaBusqueda] = useState('');
   const [importLinks, setImportLinks] = useState('');
   const [importDetectando, setImportDetectando] = useState(false);
-  const [importResult, setImportResult] = useState(null);
   const [importGuardando, setImportGuardando] = useState(false);
+  const [importResult, setImportResult] = useState(null);
   const [importSaveError, setImportSaveError] = useState('');
   const [importSaveOk, setImportSaveOk] = useState('');
-  const [importEdiciones, setImportEdiciones] = useState({});
-  const importResultCount = Array.isArray(importResult?.mapas) ? importResult.mapas.length : 0;
   const importErrorCount = Array.isArray(importResult?.errores) ? importResult.errores.length : 0;
+  const importGeocercasCreadas = [...new Set((importResult?.mapas || []).flatMap(m => m.geocercas_creadas || []))];
+  const importDuplicados = importResult?.duplicados || [];
   const normalizarBusqueda = value => String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const mapasFiltrados = normalizarBusqueda(mapaBusqueda)
     ? mapas.filter(mapa => [mapa.nombre, mapa.origen, mapa.destino, ...parseDestinos(mapa.destinos_json || mapa.destinos)]
         .some(campo => normalizarBusqueda(campo).includes(normalizarBusqueda(mapaBusqueda))))
     : mapas;
-  const detectarImport = async () => {
+  const detectarYGuardar = async () => {
     const urls = importLinks.split(/\r?\n|,/).map(u => u.trim()).filter(Boolean);
     if (!urls.length) return;
     setImportDetectando(true);
+    setImportGuardando(false);
+    setImportSaveError('');
+    setImportSaveOk('');
     setImportResult(null);
-    setImportEdiciones({});
     try {
       const result = await detectarMapasLinks(urls);
       setImportResult(result);
       if (result.errores?.length && !result.mapas?.length) {
-        setImportSaveError(result.errores.map(e => e.error).join(' '));
+        setImportSaveError(result.errores.map(e => e.error || 'No se pudo procesar').join(' '));
+        return;
+      }
+      const mapasDetectados = result.mapas || [];
+      if (!mapasDetectados.length) {
+        const dupMsg = importDuplicados.length ? ` ${importDuplicados.length} ruta(s) ya estaban guardadas.` : '';
+        setImportSaveOk(`No se detectaron rutas nuevas.${dupMsg}`);
+        return;
+      }
+      setImportGuardando(true);
+      let ok = 0;
+      const fallos = [];
+      const resultados = await Promise.allSettled(
+        mapasDetectados.map(mapa => guardarMapaDetectado(mapa))
+      );
+      resultados.forEach((res, i) => {
+        if (res.status === 'fulfilled') {
+          ok += 1;
+        } else {
+          const err = res.reason;
+          fallos.push({ nombre: mapasDetectados[i]?.nombre || `ruta ${i + 1}`, error: (err && err.message) || 'No se pudo guardar' });
+        }
+      });
+      await refreshMapas();
+      if (fallos.length === 0) {
+        const geo = importGeocercasCreadas.length ? ` · ${importGeocercasCreadas.length} geocerca(s) creada(s)` : '';
+        const dup = importDuplicados.length ? `. ${importDuplicados.length} ruta(s) ya estaban guardadas` : '';
+        setImportSaveOk(`Se guardaron ${ok} ruta(s)${geo}${dup}.`);
+        setImportLinks('');
       } else {
-        setImportSaveError('');
+        setImportSaveError(`Guardadas ${ok} de ${mapasDetectados.length} rutas. Falló: ${fallos.map(f => `'${f.nombre}': ${f.error}`).join('; ')}`);
       }
     } catch (err) {
-      setImportSaveError(err.message || 'No se pudieron detectar los links');
-      setImportResult(null);
+      setImportSaveError(err.message || 'No se pudieron detectar/guardar los links');
     } finally {
       setImportDetectando(false);
+      setImportGuardando(false);
     }
-  };
-  const setImportCampo = (index, campo, value) => {
-    setImportEdiciones(prev => ({ ...prev, [index]: { ...(prev[index] || {}), [campo]: value } }));
   };
   const copiarTexto = async (texto) => {
     if (navigator.clipboard?.writeText) {
@@ -2679,48 +2653,6 @@ export function MapasSection({
     document.body.removeChild(textarea);
     return ok;
   };
-  const importValue = (index, campo, fallback) => importEdiciones[index]?.[campo] ?? fallback ?? '';
-  const guardarDetectados = async () => {
-    const mapasDetectados = (importResult?.mapas || []).map((mapa, index) => ({
-      ...mapa,
-      nombre: importValue(index, 'nombre', mapa.nombre),
-      origen: importValue(index, 'origen', mapa.origen),
-      destino: importValue(index, 'destino', mapa.destinos?.at(-1)),
-      destinos: importValue(index, 'destinos', mapa.destinos),
-      tipo_entrega: importValue(index, 'tipo_entrega', mapa.tipo_entrega),
-    }));
-    setImportGuardando(true);
-    setImportSaveError('');
-    setImportSaveOk('');
-    let ok = 0;
-    const fallos = [];
-    try {
-      const resultados = await Promise.allSettled(
-        mapasDetectados.map(mapa => guardarMapaDetectado(mapa))
-      );
-      resultados.forEach((res, i) => {
-        if (res.status === 'fulfilled') {
-          ok += 1;
-        } else {
-          const err = res.reason;
-          fallos.push({ nombre: mapasDetectados[i].nombre || mapasDetectados[i].tipo_entrega, error: (err && err.message) || 'No se pudo guardar' });
-        }
-      });
-      await refreshMapas();
-      if (fallos.length === 0) {
-        setImportSaveOk(`Se guardaron ${ok} ruta(s) correctamente.`);
-        setImportResult(null);
-        setImportLinks('');
-        setImportEdiciones({});
-      } else {
-        setImportSaveError(`Guardadas ${ok} de ${mapasDetectados.length} rutas. Falló: ${fallos.map(f => `'${f.nombre}': ${f.error}`).join('; ')}`);
-      }
-    } catch (err) {
-      setImportSaveError(err.message || 'No se pudieron guardar las rutas detectadas');
-    } finally {
-      setImportGuardando(false);
-    }
-  };
   return (<div className="mapas-page">
             <div className="mapas-header">
               <div>
@@ -2734,120 +2666,26 @@ export function MapasSection({
 
             <div className="mapas-layout">
               <aside className="mapas-sidebar">
-                <form className="mapas-form" onSubmit={guardarMapa}>
-                  <h3>{mapaEditando ? 'Editar mapa' : 'Nuevo mapa'}</h3>
+                <div className="mapas-import-card">
+                  <h3>Importar rutas</h3>
+                  <p className="mapas-import-hint">Pega links de Google My Maps (uno por línea). Se detecta origen, destino y paradas y se guarda directamente.</p>
                   <label>
-                    <span>Nombre</span>
-                    <input required value={formMapa.nombre} onChange={e => setFormMapa({ ...formMapa, nombre: e.target.value })} placeholder="Ruta Bajío" />
+                    <span>Links de Google My Maps</span>
+                    <textarea rows="4" value={importLinks} onChange={e => setImportLinks(e.target.value)} placeholder={"https://www.google.com/maps/d/viewer?mid=...\nhttps://www.google.com/maps/d/viewer?mid=..."} />
                   </label>
-                  <div className="mapas-form-route">
-                    <label>
-                      <span>Origen</span>
-                       <select value={formMapa.origen} onChange={e => setFormMapa({ ...formMapa, origen: e.target.value })}>{geofenceOptions(formMapa.origen)}</select>
-                    </label>
-                    <label>
-                      <span>Destino</span>
-                       <select value={formMapa.destino} onChange={e => setFormMapa({ ...formMapa, destino: e.target.value })}>{geofenceOptions(formMapa.destino)}</select>
-                    </label>
-                  </div>
-                  <div className="trip-delivery-type" role="group" aria-label="Tipo de entrega">
-                    <button type="button" className={formMapa.tipo_entrega !== 'reparto' ? 'active' : ''} onClick={() => setFormMapa(prev => ({ ...prev, tipo_entrega: 'directo', destino: parseDestinos(prev.destinos).at(-1) || prev.destino }))}>Destino único</button>
-                    <button type="button" className={formMapa.tipo_entrega === 'reparto' ? 'active' : ''} onClick={() => setFormMapa(prev => ({ ...prev, tipo_entrega: 'reparto', destinos: parseDestinos(prev.destinos).length >= 2 ? prev.destinos : [prev.destino || '', ''] }))}>Reparto</button>
-                  </div>
-                  {formMapa.tipo_entrega === 'reparto' ? (
-                    <div className="trip-stops-editor">
-                      <label><span>Destinos en orden</span></label>
-                      {formMapa.destinos.map((destino, index) => (
-                        <div className="trip-stop-input" key={index}>
-                          <span>{index + 1}</span>
-                           <select aria-label={`Destino ${index + 1}`} value={destino} onChange={(e) => setFormMapa(prev => ({ ...prev, destinos: prev.destinos.map((item, itemIndex) => itemIndex === index ? e.target.value : item) }))}>{geofenceOptions(destino)}</select>
-                          <button type="button" disabled={formMapa.destinos.length <= 2} onClick={() => setFormMapa(prev => ({ ...prev, destinos: prev.destinos.filter((_, itemIndex) => itemIndex !== index) }))} aria-label={`Eliminar destino ${index + 1}`}>Quitar</button>
-                        </div>
-                      ))}
-                      <button type="button" className="trip-add-stop" onClick={() => setFormMapa(prev => ({ ...prev, destinos: [...prev.destinos, ''] }))}>+ Agregar destino</button>
-                    </div>
-                  ) : null}
-                  <label>
-                    <span>Descripción</span>
-                    <textarea rows="3" value={formMapa.descripcion} onChange={e => setFormMapa({ ...formMapa, descripcion: e.target.value })} placeholder="Paradas, restricciones y referencias de la ruta" />
-                  </label>
-                  <label>
-                    <span>URL Google My Maps</span>
-                    <input
-                      required
-                      type="url"
-                      value={formMapa.url}
-                      onChange={e => setFormMapa({ ...formMapa, url: e.target.value })}
-                      onBlur={() => {
-                        const embedUrl = googleMyMapsEmbedUrl(formMapa.url);
-                        if (embedUrl) setFormMapa(prev => ({ ...prev, url: embedUrl }));
-                      }}
-                      placeholder="https://www.google.com/maps/d/viewer?mid=..."
-                    />
-                  </label>
-                  <details className="mapas-import">
-                    <summary>Importar varios links</summary>
-                    <div className="mapas-import-body">
-                      <label>
-                        <span>Links de Google My Maps (uno por línea)</span>
-                        <textarea rows="3" value={importLinks} onChange={e => setImportLinks(e.target.value)} placeholder={"https://www.google.com/maps/d/viewer?mid=...\nhttps://www.google.com/maps/d/viewer?mid=..."} />
-                      </label>
-                      <button type="button" disabled={importDetectando || !importLinks.trim()} onClick={detectarImport} style={s.button()}>{importDetectando ? 'Detectando...' : 'Detectar rutas'}</button>
-                    </div>
-                  </details>
-                  {importResult && importResultCount > 0 && (
-                    <div className="mapas-import-results">
-                      <h4>Rutas detectadas ({importResultCount})</h4>
-                      {importResult.mapas.map((mapa, index) => (
-                        <div className="mapas-import-item" key={`${mapa.mid}-${index}`}>
-                          <label>
-                            <span>Nombre</span>
-                            <input value={importValue(index, 'nombre', mapa.nombre)} onChange={e => setImportCampo(index, 'nombre', e.target.value)} />
-                          </label>
-                          <div className="mapas-form-route">
-                            <label>
-                              <span>Origen</span>
-                              <select value={importValue(index, 'origen', mapa.origen)} onChange={e => setImportCampo(index, 'origen', e.target.value)}>{geofenceOptions(importValue(index, 'origen', mapa.origen))}</select>
-                            </label>
-                            <label>
-                              <span>Tipo</span>
-                              <select value={importValue(index, 'tipo_entrega', mapa.tipo_entrega)} onChange={e => setImportCampo(index, 'tipo_entrega', e.target.value)}>
-                                <option value="directo">Destino único</option>
-                                <option value="reparto">Reparto</option>
-                              </select>
-                            </label>
-                          </div>
-                          {importValue(index, 'tipo_entrega', mapa.tipo_entrega) === 'reparto' ? (
-                            <label>
-                              <span>Destinos en orden (separados por comas)</span>
-                              <input value={importValue(index, 'destinos', mapa.destinos).join(', ')} onChange={e => setImportCampo(index, 'destinos', e.target.value.split(',').map(v => v.trim()))} />
-                            </label>
-                          ) : (
-                            <label>
-                              <span>Destino</span>
-                              <select value={importValue(index, 'destino', mapa.destinos?.at(-1))} onChange={e => setImportCampo(index, 'destino', e.target.value)}>{geofenceOptions(importValue(index, 'destino', mapa.destinos?.at(-1)))}</select>
-                            </label>
-                          )}
-                          {mapa.geocercas_creadas?.length > 0 && (
-                            <p className="mapas-import-created">📍 Geocercas nuevas: {mapa.geocercas_creadas.join(', ')}</p>
-                          )}
-                        </div>
-                      ))}
-                      <div className="mapas-form-actions">
-                        <button type="button" onClick={guardarDetectados} disabled={importGuardando} style={s.button()}>{importGuardando ? 'Guardando...' : `Guardar ${importResultCount} rutas`}</button>
-                        {importSaveOk && <p className="mapas-import-ok" role="status">{importSaveOk}</p>}
-                        {importSaveError && <p className="mapas-import-error" role="alert">{importSaveError}</p>}
-                      </div>
-                    </div>
+                  <button type="button" disabled={importDetectando || importGuardando || !importLinks.trim()} onClick={detectarYGuardar} style={s.button()}>{importDetectando ? 'Detectando...' : importGuardando ? 'Guardando...' : 'Detectar y guardar rutas'}</button>
+                  {importGeocercasCreadas.length > 0 && (
+                    <p className="mapas-import-created">📍 Geocercas nuevas: {importGeocercasCreadas.join(', ')}</p>
+                  )}
+                  {importDuplicados.length > 0 && (
+                    <p className="mapas-import-ok">ℹ️ {importDuplicados.length} ruta(s) ya estaban guardadas: {importDuplicados.map(m => m.nombre).join(', ')}</p>
                   )}
                   {importResult && importErrorCount > 0 && (
                     <p className="mapas-import-errors">⚠️ No se pudo procesar: {importResult.errores.map(e => e.url).join(', ')}</p>
                   )}
-                  <div className="mapas-form-actions">
-                    {mapaEditando && <button type="button" onClick={cancelarEdicionMapa} style={s.button('#9ca3af')}>Cancelar</button>}
-                    <button type="submit" disabled={mapaSaving} style={s.button()}>{mapaSaving ? 'Guardando...' : mapaEditando ? 'Actualizar' : 'Guardar mapa'}</button>
-                  </div>
-                </form>
+                  {importSaveOk && <p className="mapas-import-ok" role="status">{importSaveOk}</p>}
+                  {importSaveError && <p className="mapas-import-error" role="alert">{importSaveError}</p>}
+                </div>
               </aside>
 
               <section className="mapas-viewer">
@@ -2923,17 +2761,8 @@ export function MapasSection({
                       onKeyDown={e => activarConTeclado(e, () => setSelectedMapa(mapa))}
                     >
                       <div className="mapa-card-title">{mapa.nombre}{mapa.tipo_entrega === 'reparto' && <span className="trip-reparto-badge">Reparto</span>}</div>
-                      {mapa.tipo_entrega === 'reparto' ? (
-                        <div className="mapa-card-route">
-                          <div>{mapa.origen || 'Origen sin definir'} <span>→</span></div>
-                          <div className="trip-stops-display">{parseDestinos(mapa.destinos_json || mapa.destinos).map((destino, stopIndex) => <div key={`${mapa.id}-map-stop-${stopIndex}`}><span>{stopIndex + 1}</span>{destino}</div>)}</div>
-                        </div>
-                      ) : (
-                        <div className="mapa-card-route">{mapa.origen || 'Origen sin definir'} <span>→</span> {mapa.destino || 'Destino sin definir'}</div>
-                      )}
                       {mapa.descripcion && <p>{mapa.descripcion}</p>}
                       <div className="mapa-card-actions">
-                        <button type="button" onClick={e => { e.stopPropagation(); editarMapa(mapa); }} style={s.button('#60a5fa')}>Editar</button>
                         <button type="button" onClick={e => { e.stopPropagation(); eliminarMapa(mapa); }} style={s.button('#ef4444')}>Eliminar</button>
                       </div>
                     </article>

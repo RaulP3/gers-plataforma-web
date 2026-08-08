@@ -15,7 +15,20 @@ router.post('/mapas/detectar', async (req, res) => {
     if (!midFromUrl(url)) return res.status(400).json({ error: `Link sin parámetro mid: ${url}` });
   }
   try {
-    res.json(await detectMapasFromUrls(urls));
+    const data = await detectMapasFromUrls(urls);
+    const existentes = await allQuery('SELECT nombre, url FROM mapas_mymaps');
+    const midsExistentes = new Set((existentes || []).map(r => midFromUrl(r.url)).filter(Boolean));
+    const mapas = [];
+    const duplicados = [];
+    for (const m of data.mapas || []) {
+      if (m.mid && midsExistentes.has(m.mid)) {
+        duplicados.push({ nombre: m.nombre, url: m.url, mid: m.mid });
+      } else {
+        mapas.push(m);
+      }
+    }
+    const geocercas_creadas = [...new Set((data.mapas || []).flatMap(m => m.geocercas_creadas || []))];
+    res.json({ mapas, geocercas_creadas, errores: data.errores || [], duplicados });
   } catch (err) {
     console.error('Error al detectar mapas:', err);
     res.status(500).json({ error: 'No se pudieron detectar las rutas', details: err.message });
@@ -36,11 +49,21 @@ router.post('/mapas', async (req, res) => {
   const url = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
   if (!nombre) return res.status(400).json({ error: 'nombre es requerido' });
   if (!validMyMapsUrl(url)) return res.status(400).json({ error: 'url debe ser HTTP(S) de google.com o googleusercontent.com' });
-  let delivery;
+   let delivery;
   try {
     delivery = normalizeTripDelivery(req.body);
   } catch (err) {
     return res.status(400).json({ error: err.message });
+  }
+  const newMid = midFromUrl(url);
+  if (newMid) {
+    try {
+      const existentes = await allQuery('SELECT nombre, url FROM mapas_mymaps');
+      const duplicado = (existentes || []).find(r => midFromUrl(r.url) === newMid);
+      if (duplicado) return res.status(409).json({ error: 'La ruta ya está guardada', nombre: duplicado.nombre, url });
+    } catch (err) {
+      console.error('Error al validar duplicado de mapa:', err);
+    }
   }
   try {
     const result = await runQuery(

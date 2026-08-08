@@ -602,15 +602,6 @@ export function DetalleUnidadModal({
   estadoColors,
   parseFechaProgramada,
   velocidadKmh,
-  comentarioRapido,
-  setComentarioRapido,
-  destinoInput,
-  setDestinoInput,
-  geofenceOptions,
-  calculandoEta,
-  etaError,
-  etaData,
-  guardarComentarioRapido,
 }) {
   return (<div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
           onClick={() => setSelectedVehicle(null)}>
@@ -719,19 +710,20 @@ export function DetalleUnidadModal({
                         style={{ flex: 1, padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem', background: '#ffffff', color: '#000000' }}
                       >
                         <option value="">Sin remolque</option>
-                        {remolques.filter(r => !r.vehicle_id_asignado || String(r.vehicle_id_asignado) === String(selectedVehicle.id)).map(r => (
-                          <option key={r.id} value={String(r.id)}>{numeroRemolque(r.numero)}{r.unidad_asignada ? ` (${r.unidad_asignada})` : ''}</option>
+                        {remolques.filter(r => !Number(r.resguardo) && (!r.vehicle_id_asignado || String(r.vehicle_id_asignado) === String(selectedVehicle.id))).map(r => (
+                          <option key={r.id} value={String(r.id)}>{numeroRemolque(r.numero)}{r.unidad_asignada ? ` (${r.unidad_asignada})` : ''}{Number(r.resguardo) ? ' (resguardo)' : ''}</option>
                         ))}
                       </select>
                     </>
                   ) : [0, 1].map(index => (
                     <select key={index} aria-label={`Tanque ${index + 1}`} value={remolquesFullDraft[index]} onChange={e => setRemolquesFullDraft(draft => draft.map((id, i) => i === index ? e.target.value : id))} style={{ ...s.select, flex: 1 }}>
                       <option value="">Tanque {index + 1}</option>
-                      {remolques.filter(r => String(r.categoria || '').toLowerCase() === 'tanque'
-                        && (!r.vehicle_id_asignado || String(r.vehicle_id_asignado) === String(selectedVehicle.id) || String(r.unidad_asignada || '').toLowerCase() === String(selectedVehicle.name || '').toLowerCase())
-                        && String(r.id) !== String(remolquesFullDraft[index === 0 ? 1 : 0])).map(r => (
-                          <option key={r.id} value={String(r.id)}>{numeroRemolque(r.numero)}</option>
-                        ))}
+                       {remolques.filter(r => !Number(r.resguardo)
+                         && String(r.categoria || '').toLowerCase() === 'tanque'
+                         && (!r.vehicle_id_asignado || String(r.vehicle_id_asignado) === String(selectedVehicle.id) || String(r.unidad_asignada || '').toLowerCase() === String(selectedVehicle.name || '').toLowerCase())
+                         && String(r.id) !== String(remolquesFullDraft[index === 0 ? 1 : 0])).map(r => (
+                           <option key={r.id} value={String(r.id)}>{numeroRemolque(r.numero)}</option>
+                         ))}
                     </select>
                   ))}
                   <button
@@ -817,61 +809,6 @@ export function DetalleUnidadModal({
                   </div>
                 </div>
               )}
-
-              <div style={{ borderTop: '1px solid #1a3d1a', paddingTop: '1.25rem' }}>
-                <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem', color: '#e0e0e0' }}>Agregar Comentario</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                  <select value={comentarioRapido.tipo} onChange={e => setComentarioRapido({...comentarioRapido, tipo: e.target.value})}
-                    style={{ padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem', background: '#ffffff', color: '#000000' }}>
-                    <option value="seguimiento">Seguimiento</option>
-                    <option value="mantenimiento">Mantenimiento</option>
-                    <option value="alerta">Alerta</option>
-                    <option value="general">General</option>
-                  </select>
-                </div>
-                <div style={{ marginBottom: '0.75rem' }}>
-                  <label style={{ ...s.label, display: 'block', marginBottom: '0.3rem' }}>Destino</label>
-                  <select value={destinoInput} onChange={e => setDestinoInput(e.target.value)}
-                    style={{ width: '100%', padding: '0.55rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem', background: '#ffffff', color: '#000000' }}>{geofenceOptions(destinoInput)}</select>
-                </div>
-                {calculandoEta && (
-                  <div style={{ padding: '0.6rem 0.75rem', background: '#1a1a1a', borderRadius: '8px', marginBottom: '0.75rem', fontSize: '0.85rem', color: '#f59e0b', border: '1px solid #f59e0b33' }}>
-                    Calculando ruta...
-                  </div>
-                )}
-                {etaError && !calculandoEta && (
-                  <div role="alert" style={{ padding: '0.6rem 0.75rem', background: '#2a1111', borderRadius: '8px', marginBottom: '0.75rem', fontSize: '0.82rem', color: '#fca5a5', border: '1px solid #ef444455' }}>
-                    {etaError}
-                  </div>
-                )}
-                {etaData && !calculandoEta && (
-                  <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', marginBottom: '0.75rem', border: '1px solid #10b98133' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-around', textAlign: 'center' }}>
-                      <div>
-                        <div style={{ fontSize: '0.65rem', color: '#4a8a4a', textTransform: 'uppercase' }}>ETA</div>
-                        <div style={{ fontSize: '1.1rem', fontWeight: '700', color: '#10b981' }}>{etaData.fechaLlegada || etaData.horaLlegada}</div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: '0.65rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Tiempo</div>
-                        <div style={{ fontSize: '1rem', fontWeight: '600' }}>{etaData.duracion}</div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: '0.65rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Distancia</div>
-                        <div style={{ fontSize: '1rem', fontWeight: '600' }}>{etaData.distancia}</div>
-                      </div>
-                    </div>
-                    <div style={{ fontSize: '0.7rem', color: '#4a8a4a', marginTop: '0.5rem', textAlign: 'center' }}>{etaData.destinoNombre}</div>
-                  </div>
-                )}
-                <textarea placeholder="Escribe el mensaje de seguimiento..." value={comentarioRapido.contenido} onChange={e => setComentarioRapido({...comentarioRapido, contenido: e.target.value})}
-                  style={{ width: '100%', padding: '0.6rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '8px', fontSize: '0.85rem', minHeight: '80px', resize: 'vertical', boxSizing: 'border-box', background: '#ffffff', color: '#000000' }} />
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.75rem' }}>
-                  <button onClick={guardarComentarioRapido}
-                    style={{ background: '#3b82f6', color: 'white', border: 'none', padding: '0.55rem 1.25rem', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600' }}>
-                    Guardar Comentario
-                  </button>
-                </div>
-              </div>
             </div>
           </div>
         </div>);

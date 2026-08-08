@@ -14,16 +14,34 @@ function listRemolques() {
   });
 }
 
-function createRemolque({ numero, categoria }) {
-  return runQuery('INSERT INTO remolques (numero, categoria) VALUES (?, ?)', [String(numero).trim(), categoria || 'Caja Seca']);
+function createRemolque({ numero, categoria, resguardo, fecha_cita }) {
+  return runQuery(
+    'INSERT INTO remolques (numero, categoria, resguardo, fecha_cita) VALUES (?, ?, ?, ?)',
+    [String(numero).trim(), categoria || 'Caja Seca', resguardo ? 1 : 0, fecha_cita || null]
+  );
 }
 
 function getRemolque(id) {
   return getQuery('SELECT * FROM remolques WHERE id = ?', [id]);
 }
 
-function updateRemolque(id, { numero, categoria }) {
-  return runQuery('UPDATE remolques SET numero = ?, categoria = ? WHERE id = ?', [String(numero).trim(), categoria || 'Caja Seca', id]);
+function updateRemolque(id, { numero, categoria, resguardo, fecha_cita }) {
+  return runQuery(
+    `UPDATE remolques SET numero = ?, categoria = ?,
+       resguardo = COALESCE(?, resguardo), fecha_cita = COALESCE(?, fecha_cita)
+     WHERE id = ?`,
+    [String(numero).trim(), categoria || 'Caja Seca', resguardo === undefined ? null : (resguardo ? 1 : 0), fecha_cita ?? null, id]
+  );
+}
+
+function setRemolqueResguardo(id, { resguardo, fecha_cita }) {
+  return runQuery(
+    `UPDATE remolques SET resguardo = ?, fecha_cita = COALESCE(?, fecha_cita),
+       status = CASE WHEN EXISTS (SELECT 1 FROM remolque_asignaciones ra WHERE ra.remolque_id = remolques.id AND ra.activa = 1) THEN 'asignado'
+                     WHEN COALESCE(?, 0) = 1 THEN 'resguardo' ELSE 'disponible' END
+     WHERE id = ?`,
+    [resguardo ? 1 : 0, fecha_cita ?? null, resguardo ? 1 : 0, id]
+  );
 }
 
 function deleteRemolque(id) {
@@ -151,9 +169,13 @@ function listActiveAsignaciones() {
 function listRemolquesByIds(ids) {
   const placeholders = ids.map(() => '?').join(',');
   return allQuery(
-    'SELECT id, numero, categoria, status FROM remolques WHERE id IN (?, ?) ORDER BY id',
+    `SELECT id, numero, categoria, status, resguardo FROM remolques WHERE id IN (${placeholders}) ORDER BY id`,
     ids
   );
+}
+
+async function getRemolqueResguardo(id) {
+  return getQuery('SELECT id, numero, categoria, status, resguardo, fecha_cita FROM remolques WHERE id = ?', [id]);
 }
 
 module.exports = {
@@ -181,4 +203,6 @@ module.exports = {
   listAsignacionesHistorial,
   listActiveAsignaciones,
   listRemolquesByIds,
+  setRemolqueResguardo,
+  getRemolqueResguardo,
 };
