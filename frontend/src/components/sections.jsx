@@ -903,87 +903,6 @@ export function MonitoreoSection({
         })());
 }
 
-export function NotasSection({
-  abrirReporteDirecto,
-  eliminarComentario,
-  loadAll,
-  notasBitacora,
-  notasIncidencias,
-  notasTab,
-  parseFecha,
-  resetNotaForm,
-  s,
-  setNotasTab,
-  setVehicleFilter,
-  vehicleFilter,
-  vehiculos,
-}) {
-  return (<div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
-              <div>
-                <h2 style={{ margin: 0, fontSize: '1.5rem' }}>Notas por Unidad</h2>
-                <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>Bitácora interna e incidencias separadas</p>
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <button onClick={() => abrirReporteDirecto('bitacora')} style={s.button('#3b82f6')}>Reporte bitácora</button>
-                <button onClick={() => abrirReporteDirecto('incidencias')} style={s.button('#f59e0b')}>Reporte incidencias</button>
-                <button onClick={loadAll} style={s.button()}>Actualizar</button>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
-              <button onClick={() => { setNotasTab('bitacora'); resetNotaForm('bitacora'); }} style={notasTab === 'bitacora' ? s.button('#00ff41') : s.button('#6b7280')}>Bitácora interna</button>
-              <button onClick={() => { setNotasTab('incidencias'); resetNotaForm('incidencias'); }} style={notasTab === 'incidencias' ? s.button('#00ff41') : s.button('#6b7280')}>Incidencias</button>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem' }}>
-              <div style={{ ...s.card, overflow: 'auto', maxHeight: 'calc(100vh - 200px)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                    <h3 style={{ margin: 0, fontSize: '1rem' }}>{notasTab === 'bitacora' ? `Bitácora (${notasBitacora.length})` : `Incidencias (${notasIncidencias.length})`}</h3>
-                  <select style={{ ...s.select, width: 'auto' }} value={vehicleFilter} onChange={(e) => setVehicleFilter(e.target.value)}>
-                    <option value="">Todas las unidades</option>
-                    {vehiculos.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                  </select>
-                </div>
-                {(notasTab === 'bitacora' ? notasBitacora : notasIncidencias)
-                  .filter(c => !vehicleFilter || c.vehicle_id === vehicleFilter)
-                  .length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '2rem', color: '#4a8a4a' }}>
-                    <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>{notasTab === 'bitacora' ? '📒' : '🚨'}</div>
-                    <p>No hay {notasTab === 'bitacora' ? 'bitácoras' : 'incidencias'} registradas</p>
-                  </div>
-                ) : (
-                  (notasTab === 'bitacora' ? notasBitacora : notasIncidencias)
-                    .filter(c => !vehicleFilter || c.vehicle_id === vehicleFilter)
-                    .map((c) => (
-                      <div key={c.id} style={{ padding: '1rem', borderBottom: '1px solid #0d1f0d' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
-                        <div>
-                            <strong style={{ fontSize: '0.9rem' }}>{c.vehicle_name || c.vehicle_id}</strong>
-                            <span style={{ ...s.badge(
-                              notasTab === 'bitacora' ? '#3b82f6' : (c.estatus === 'Crítica' ? '#ef4444' : c.estatus === 'Alta' ? '#f59e0b' : c.estatus === 'Media' ? '#3b82f6' : '#6b7280')
-                            ), marginLeft: '0.5rem' }}>{notasTab === 'bitacora' ? 'Bitácora' : (c.estatus || 'Incidencia')}</span>
-                          </div>
-                          <button onClick={() => eliminarComentario(c.id)} style={{ ...s.button('#ef4444'), padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}>X</button>
-                        </div>
-                        {notasTab === 'incidencias' && c.titulo && <div style={{ fontWeight: '600', fontSize: '0.85rem', marginBottom: '0.25rem' }}>{c.titulo}</div>}
-                        <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
-                          {notasTab === 'incidencias' && c.estatus && <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: '#003311', color: '#00ff41', border: '1px solid #00ff4133' }}>{c.estatus}</span>}
-                          {((c.remolque || obtenerRemolqueAsignadoUnidad(c.vehicle_id, c.vehicle_name)) || '') && <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: '#332200', color: '#f59e0b', border: '1px solid #f59e0b33' }}>🚛 {c.remolque || obtenerRemolqueAsignadoUnidad(c.vehicle_id, c.vehicle_name)}</span>}
-                        </div>
-                        <div style={{ fontSize: '0.85rem', color: '#c0c0c0', marginBottom: '0.5rem', whiteSpace: 'pre-wrap' }}>{c.contenido}</div>
-                        <div style={{ fontSize: '0.75rem', color: '#4a8a4a', display: 'flex', gap: '1rem' }}>
-                          <span>{c.autor}</span>
-                          <span>{parseFecha(c.created_at)?.toLocaleString()}</span>
-                        </div>
-                      </div>
-                    ))
-                )}
-              </div>
-            </div>
-          </div>);
-}
-
 export function AlertasSection({
   alertas,
   alertasArchivadas,
@@ -2310,7 +2229,6 @@ export function SeguimientoSection({
             )}
 
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <button onClick={() => setActiveTab('notas')} style={s.button('#00ff41')}>Ir a Notas</button>
               <button onClick={loadAll} style={s.button()}>Actualizar</button>
             </div>
           </div>);

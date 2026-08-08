@@ -59,15 +59,12 @@ export default function useGersDashboard() {
   const [reportes, setReportes] = useState([]);
   const [reporteLoading, setReporteLoading] = useState(false);
   const [reporteError, setReporteError] = useState('');
-  const [comentarios, setComentarios] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const [filtroReporte, setFiltroReporte] = useState({ tipo: 'pendientes', fecha_inicio: '', fecha_fin: '', vehicle_id: '' });
   const [formViaje, setFormViaje] = useState(VIAJE_DEFAULT);
   const [pendienteSaving, setPendienteSaving] = useState(false);
   const [viajeSaving, setViajeSaving] = useState(false);
-  const [vehicleFilter, setVehicleFilter] = useState('');
-  const [nuevoComentario, setNuevoComentario] = useState({ vehicle_id: '', vehicle_name: '', tipo: 'seguimiento', titulo: '', contenido: '', estatus: '', remolque: '', grupo: '', origen: '', destino: '' });
   const [remolques, setRemolques] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [clienteSearch, setClienteSearch] = useState('');
@@ -186,9 +183,6 @@ export default function useGersDashboard() {
     return clientes.filter(cliente => !search || [cliente.nombre, cliente.contacto, cliente.telefono, cliente.email]
       .some(value => String(value || '').toLowerCase().includes(search)));
   }, [clientes, clienteSearch]);
-  const notasBitacora = comentarios.filter(c => ['bitacora', 'seguimiento', 'mantenimiento'].includes((c.tipo || '').toLowerCase()));
-  const notasIncidencias = comentarios.filter(c => ['incidencia', 'incidente'].includes((c.tipo || '').toLowerCase()));
-  const [notasTab, setNotasTab] = useState('bitacora');
   const [selectedVehicle, setSelectedVehicle] = useState(null);
   const [comentarioRapido, setComentarioRapido] = useState({ tipo: 'seguimiento', titulo: '', contenido: '' });
   const [destinoInput, setDestinoInput] = useState('');
@@ -1035,9 +1029,9 @@ export default function useGersDashboard() {
     const pendientesVersion = pendientesVersionRef.current;
     const run = async () => {
       setLoading(true);
-      const [statsRes, pendientesRes, viajesRes, alertasRes, vehiculosRes, comentariosRes, operadoresRes, driversRes, geofencesRes, eventsRes, riskZonesRes, samsaraAddrRes, remolquesRes, seguimientoRes, unidadesRes, mapasRes, clientesRes, geofenceLinksRes, kpisRes] = await Promise.allSettled([
+      const [statsRes, pendientesRes, viajesRes, alertasRes, vehiculosRes, operadoresRes, driversRes, geofencesRes, eventsRes, riskZonesRes, samsaraAddrRes, remolquesRes, seguimientoRes, unidadesRes, mapasRes, clientesRes, geofenceLinksRes, kpisRes] = await Promise.allSettled([
         requestJson(`${apiUrl}/reportes/resumen`), requestJson(`${apiUrl}/pendientes`), requestJson(`${apiUrl}/viajes`),
-        requestJson(`${apiUrl}/alertas`), requestJson(`${apiUrl}/samsara/vehicles`), requestJson(`${apiUrl}/comentarios`),
+        requestJson(`${apiUrl}/alertas`), requestJson(`${apiUrl}/samsara/vehicles`),
         requestJson(`${apiUrl}/vehicle-operators`), requestJson(`${apiUrl}/samsara/drivers`), requestJson(`${apiUrl}/geofences`),
         requestJson(`${apiUrl}/geofence-events?limit=100`), requestJson(`${apiUrl}/risk-zones`), requestJson(`${apiUrl}/samsara/addresses`),
         requestJson(`${apiUrl}/remolques`), requestJson(`${apiUrl}/seguimiento`), requestJson(`${apiUrl}/unidades`), requestJson(`${apiUrl}/mapas`), requestJson(`${apiUrl}/clientes`), requestJson(`${apiUrl}/clientes/geofence-links`), requestJson(`${apiUrl}/kpis`),
@@ -1048,7 +1042,6 @@ export default function useGersDashboard() {
       if (pendientesRes.status === 'fulfilled' && Array.isArray(pendientesRes.value) && pendientesVersion === pendientesVersionRef.current) setPendientes(pendientesRes.value);
       if (viajesRes.status === 'fulfilled' && Array.isArray(viajesRes.value)) setViajes(normalizarViajes(viajesRes.value));
       if (alertasRes.status === 'fulfilled' && Array.isArray(alertasRes.value)) setAlertas(alertasRes.value);
-      if (comentariosRes.status === 'fulfilled' && Array.isArray(comentariosRes.value)) setComentarios(comentariosRes.value);
       if (driversRes.status === 'fulfilled' && Array.isArray(driversRes.value)) setSamsaraDrivers(driversRes.value);
       if (geofencesRes.status === 'fulfilled' && Array.isArray(geofencesRes.value)) setGeofences(geofencesRes.value);
       if (eventsRes.status === 'fulfilled' && Array.isArray(eventsRes.value)) setGeofenceEvents(eventsRes.value);
@@ -1840,21 +1833,6 @@ export default function useGersDashboard() {
     }
   };
 
-  const resetNotaForm = (tab = notasTab) => {
-    setNuevoComentario({
-      vehicle_id: '',
-      vehicle_name: '',
-      tipo: tab === 'incidencias' ? 'incidencia' : 'bitacora',
-      titulo: '',
-      contenido: '',
-      estatus: tab === 'incidencias' ? 'alta' : '',
-      remolque: '',
-      grupo: '',
-      origen: '',
-      destino: '',
-    });
-  };
-
   const abrirRemolqueDashboard = (remolque) => {
     const miembros = obtenerMiembrosFull(remolque);
     const segundo = miembros.find(item => item.id !== remolque.id);
@@ -2310,32 +2288,6 @@ export default function useGersDashboard() {
       await refreshSeguimiento();
     } catch (err) {
       alert(err.message || 'No se pudo eliminar el seguimiento');
-    }
-  };
-
-  const crearComentario = async (e) => {
-    e.preventDefault();
-    try {
-      await apiJson(`${apiUrl}/comentarios`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(nuevoComentario),
-      });
-      resetNotaForm();
-      await fetch(`${apiUrl}/comentarios`).then(r => r.json()).then(setComentarios).catch(() => {});
-    } catch (err) {
-      alert(err.message || 'No se pudo guardar el comentario');
-    }
-  };
-
-  const eliminarComentario = async (id) => {
-    if (confirm('Eliminar este comentario?')) {
-      try {
-        await apiJson(`${apiUrl}/comentarios/${id}`, { method: 'DELETE' });
-        await fetch(`${apiUrl}/comentarios`).then(r => r.json()).then(setComentarios).catch(() => {});
-      } catch (err) {
-        alert(err.message || 'No se pudo eliminar el comentario');
-      }
     }
   };
 
@@ -3382,7 +3334,6 @@ export default function useGersDashboard() {
     { key: 'dashboard', label: 'Dashboard', icon: '📊' },
     { key: 'monitoreo', label: 'Monitoreo', icon: '🗺️' },
     { key: 'seguimiento', label: 'Seguimiento', icon: '📊' },
-    { key: 'notas', label: 'Notas', icon: '📝' },
     { key: 'operaciones', label: 'Pendientes', icon: '📋' },
     { key: 'viajes', label: 'Viajes', icon: '🚚' },
     { key: 'citas', label: 'Citas', icon: '📅' },
@@ -3503,8 +3454,6 @@ export default function useGersDashboard() {
     setReporteLoading,
     reporteError,
     setReporteError,
-    comentarios,
-    setComentarios,
     loading,
     setLoading,
     filtroReporte,
@@ -3515,10 +3464,6 @@ export default function useGersDashboard() {
     setPendienteSaving,
     viajeSaving,
     setViajeSaving,
-    vehicleFilter,
-    setVehicleFilter,
-    nuevoComentario,
-    setNuevoComentario,
     remolques,
     setRemolques,
     clientes,
@@ -3646,10 +3591,6 @@ export default function useGersDashboard() {
     seguimientoEstados,
     remolqueCategorias,
     clientesFiltrados,
-    notasBitacora,
-    notasIncidencias,
-    notasTab,
-    setNotasTab,
     selectedVehicle,
     setSelectedVehicle,
     comentarioRapido,
@@ -3921,7 +3862,6 @@ export default function useGersDashboard() {
     asignarFull,
     desasignarRemolque,
     cargarHistorialRemolque,
-    resetNotaForm,
     abrirRemolqueDashboard,
     asignarRemolqueDesdeDashboard,
     numeroRemolque,
@@ -3951,8 +3891,6 @@ export default function useGersDashboard() {
     editarSeguimiento,
     cargarHistorialSeguimiento,
     eliminarSeguimiento,
-    crearComentario,
-    eliminarComentario,
     guardarUnidad,
     haversineKm,
     pointInsideGeofence,

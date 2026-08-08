@@ -6,7 +6,6 @@ import {
   DashboardSection,
   UnidadesSection,
   MonitoreoSection,
-  NotasSection,
   AlertasSection,
   OperacionesSection,
   ViajesSection,
@@ -76,8 +75,6 @@ export default function Home() {
         {activeTab === 'unidades' && <UnidadesSection {...d} />}
 
         {activeTab === 'monitoreo' && <MonitoreoSection {...d} />}
-
-        {activeTab === 'notas' && <NotasSection {...d} />}
 
         {activeTab === 'alertas' && <AlertasSection {...d} />}
 
