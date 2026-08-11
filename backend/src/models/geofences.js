@@ -1,4 +1,5 @@
 const { db, getQuery, allQuery, runQuery } = require('../db');
+const { localTimestampISO } = require('../utils');
 
 function listLocalGeofences(clienteId) {
   const query = clienteId
@@ -114,7 +115,7 @@ function insertGeofenceEvent({ vehicle_id, vehicle_name, geofence_id, geofence_n
   return runQuery(
     `INSERT OR IGNORE INTO geofence_events (vehicle_id, vehicle_name, geofence_id, geofence_nombre, tipo, latitud, longitud, source, event_uid, raw_payload, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [String(vehicle_id || ''), vehicle_name || '', geofence_id, geofence_nombre, tipo, latitud, longitud, source, event_uid || null, raw_payload || null, created_at]
+    [String(vehicle_id || ''), vehicle_name || '', geofence_id, geofence_nombre, tipo, latitud, longitud, source, event_uid || null, raw_payload || null, created_at || localTimestampISO(new Date())]
   );
 }
 

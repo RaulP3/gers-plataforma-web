@@ -416,7 +416,13 @@ export default function useGersDashboard() {
       remolque: row.remolque || '',
       estatus: normalizeStatus(row.estatus),
     }));
-    return [...viajeItems, ...seguimientoSinViaje].sort((a, b) => {
+    return [...viajeItems, ...seguimientoSinViaje].filter(item => {
+      const date = parseCitaDate(item.cita_descarga || item.cita_carga || '');
+      if (!date) return false;
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      return date.getTime() >= startOfToday.getTime();
+    }).sort((a, b) => {
       const aDate = parseCitaDate(a.cita_descarga || a.cita_carga)?.getTime() || Number.MAX_SAFE_INTEGER;
       const bDate = parseCitaDate(b.cita_descarga || b.cita_carga)?.getTime() || Number.MAX_SAFE_INTEGER;
       return aDate - bDate;
@@ -998,8 +1004,10 @@ export default function useGersDashboard() {
 
   const parseFecha = (str) => {
     if (!str) return null;
-    if (str.endsWith('Z') || str.includes('+')) return new Date(str);
-    return new Date(str + 'Z');
+    const value = String(str).trim();
+    if (value.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(value)) return new Date(value);
+    if (value.includes('T')) return new Date(value);
+    return new Date(value.replace(' ', 'T') + 'Z');
   };
 
   const parseFechaProgramada = (str) => {
@@ -2714,6 +2722,21 @@ export default function useGersDashboard() {
     }
   };
 
+  const renombrarGeofence = async (id, nombre) => {
+    const nuevoNombre = String(nombre || '').trim();
+    if (!nuevoNombre) return;
+    try {
+      await apiJson(`${apiUrl}/geofences/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nombre: nuevoNombre }),
+      });
+      await refreshGeofences();
+    } catch (err) {
+      alert(err.message || 'No se pudo renombrar la geocerca');
+    }
+  };
+
   const toggleGeofencesBulk = async (ids, activa) => {
     if (!ids.length) return;
     try {
@@ -3913,6 +3936,7 @@ export default function useGersDashboard() {
     desvincularClienteGeofence,
     eliminarGeofence,
     toggleGeofence,
+    renombrarGeofence,
     toggleGeofencesBulk,
     toggleGeofencesByCategory,
     ejecutarCheckGeofences,

@@ -2253,6 +2253,7 @@ export function GeocercasSection({
   loadAll,
   parseFecha,
   placingZone,
+  renombrarGeofence,
   s,
   selectedGeofenceHistory,
   setBusquedaGeofence,
@@ -2266,6 +2267,8 @@ export function GeocercasSection({
   verHistorialGeneralGeocercas,
   verHistorialGeocerca,
 }) {
+  const [renombrandoId, setRenombrandoId] = useState(null);
+  const [renombrandoNombre, setRenombrandoNombre] = useState('');
   return (<div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <div>
@@ -2345,7 +2348,26 @@ export function GeocercasSection({
                         <div style={{ flex: 1 }}>
                           <div style={{ fontWeight: '600', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: g.color, display: 'inline-block', boxShadow: g.activa ? `0 0 6px ${g.color}` : 'none' }}></span>
-                            {g.nombre}
+                            {renombrandoId === g.id ? (
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flex: 1, minWidth: 0 }}>
+                                <input
+                                  autoFocus
+                                  value={renombrandoNombre}
+                                  onChange={e => setRenombrandoNombre(e.target.value)}
+                                  onKeyDown={e => { if (e.key === 'Enter') { renombrarGeofence(g.id, renombrandoNombre); setRenombrandoId(null); } if (e.key === 'Escape') setRenombrandoId(null); }}
+                                  style={{ ...s.input, flex: 1, minWidth: 0, padding: '4px 8px', fontSize: '0.85rem' }}
+                                />
+                                <button onClick={() => { renombrarGeofence(g.id, renombrandoNombre); setRenombrandoId(null); }} style={{ background: 'none', border: '1px solid #10b981', color: '#10b981', cursor: 'pointer', fontSize: '0.75rem', padding: '2px 8px', borderRadius: '4px' }}>✓</button>
+                                <button onClick={() => setRenombrandoId(null)} style={{ background: 'none', border: '1px solid #6b7280', color: '#6b7280', cursor: 'pointer', fontSize: '0.75rem', padding: '2px 8px', borderRadius: '4px' }}>✕</button>
+                              </span>
+                            ) : (
+                              <span style={{ flex: 1, minWidth: 0 }}>
+                                {g.nombre}
+                                {g.source !== 'samsara' && (
+                                  <button onClick={() => { setRenombrandoId(g.id); setRenombrandoNombre(g.nombre); }} title="Renombrar geocerca" style={{ background: 'none', border: 'none', color: '#6a9b6a', cursor: 'pointer', fontSize: '0.8rem', marginLeft: '0.4rem', padding: '0 2px' }}>✎</button>
+                                )}
+                              </span>
+                            )}
                           </div>
                           <div style={{ fontSize: '0.7rem', color: '#4a8a4a', marginTop: '0.2rem' }}>
                             {g.latitud.toFixed(5)}, {g.longitud.toFixed(5)} · {g.radio_metros}m
