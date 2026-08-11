@@ -462,7 +462,7 @@ export default function useGersDashboard() {
       const etaLinea = etaInfo?.eta && etaInfo?.arrival
         ? ` | ETA: ${etaInfo.arrival.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })} (${cumplimiento})`
         : ` | ${cumplimiento}`;
-      lineas.push(`• ${item.unidad || '-'} -> ${destino} (${horaCita})`);
+      lineas.push(`• ${unidadCitaLabel(item) || '-'} -> ${destino} (${horaCita})`);
       lineas.push(`   Estado: ${estadoVeh.label}${etaLinea}${item.remolque ? ` | Remolque: ${item.remolque}` : ''}`);
     });
     return lineas.join('\n');
@@ -1903,6 +1903,24 @@ export default function useGersDashboard() {
   const displayRemolque = (remolque) => {
     const miembros = obtenerMiembrosFull(remolque);
     return miembros.length > 1 ? miembros.map(r => numeroRemolque(r.numero)).join(' + ') : (remolque?.numero || '');
+  };
+
+  const trailerNumeros = (value) => {
+    const set = new Set();
+    String(value || '').trim().toLowerCase().split(/[+,\s;]+/).forEach(t => {
+      const n = (t.match(/\d+/g) || []).join('').replace(/^0+/, '');
+      if (n) set.add(n);
+    });
+    return set;
+  };
+  const remolqueEnResguardoSinAsignar = (remolqueStr) => {
+    const nums = trailerNumeros(remolqueStr);
+    if (!nums.size) return false;
+    return remolques.some(r => Number(r.resguardo) === 1 && !r.vehicle_id_asignado && !r.unidad_asignada && [...trailerNumeros(r.numero)].some(n => nums.has(n)));
+  };
+  const unidadCitaLabel = (item) => {
+    if (!item) return '';
+    return remolqueEnResguardoSinAsignar(item.remolque) ? numeroRemolque(item.remolque) : item.unidad || '';
   };
 
   const obtenerRemolqueAsignadoUnidad = (vehicleId, vehicleName = '') => {
@@ -3683,6 +3701,7 @@ export default function useGersDashboard() {
     citasOperativas,
     vehiculoDeCita,
     estadoVehiculoCita,
+    unidadCitaLabel,
     diaEntregaCita,
     labelDiaEntrega,
     generarReporteWppCliente,

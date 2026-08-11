@@ -90,6 +90,7 @@ export function ModalsRoot({
   enviarWhatsApp,
   estadoColors,
   estadoVehiculoCita,
+  unidadCitaLabel,
   etaData,
   etaError,
   existingGeofenceSaving,
@@ -456,6 +457,7 @@ export function ModalsRoot({
   geocercasCoincidentes={geocercasCoincidentes}
   vehiculoDeCita={vehiculoDeCita}
   estadoVehiculoCita={estadoVehiculoCita}
+  unidadCitaLabel={unidadCitaLabel}
   parseCitaDate={parseCitaDate}
   s={s}
   velocidadKmh={velocidadKmh}

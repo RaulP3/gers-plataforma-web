@@ -2831,6 +2831,7 @@ export function CitasSection({
   s,
   setCitaSeleccionada,
   setCitasEtaRefresh,
+  unidadCitaLabel,
 }) {
   return (<div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
@@ -2916,7 +2917,7 @@ export function CitasSection({
                               const estadoVeh = estadoVehiculoCita(item);
                               return (
                               <tr key={item.id} onClick={() => setCitaSeleccionada(item)} style={{ background: etaInfo?.status === 'delayed' ? '#2a1111' : etaInfo?.status === 'on_time' ? '#0d2418' : undefined, cursor: 'pointer' }}>
-                                <td style={s.td}><strong style={{ color: '#00ff41' }}>{item.unidad || '-'}</strong></td>
+                                <td style={s.td}><strong style={{ color: '#00ff41' }}>{unidadCitaLabel(item) || '-'}</strong></td>
                                 <td style={s.td}><span style={s.badge(estadoVeh.color)}>{estadoVeh.label}</span></td>
                                 <td style={{ ...s.td, color: '#60a5fa' }}>📍 {findGeofence(item.destino)?.nombre || geocercasCoincidentes(item.destino)[0] || item.destino || '-'}</td>
                                 <td style={s.td}>{appointment ? appointment.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '-'}</td>

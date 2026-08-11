@@ -269,6 +269,7 @@ export function CitaDetalleModal({
   geocercasCoincidentes,
   vehiculoDeCita,
   estadoVehiculoCita,
+  unidadCitaLabel,
   parseCitaDate,
   s,
   velocidadKmh,
@@ -279,11 +280,11 @@ export function CitaDetalleModal({
 }) {
   return (<div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2100 }}
             onClick={() => setCitaSeleccionada(null)}>
-            <div className="modal-panel" role="dialog" aria-modal="true" aria-label={`Detalle de cita de ${citaSeleccionada.unidad}`} style={{ background: '#0d0d0d', borderRadius: '16px', width: '560px', maxHeight: '88vh', overflow: 'auto', boxShadow: '0 25px 50px rgba(0,0,0,0.5), 0 0 30px rgba(0,255,65,0.1)', border: '1px solid #1a3d1a' }}
+            <div className="modal-panel" role="dialog" aria-modal="true" aria-label={`Detalle de cita de ${unidadCitaLabel(citaSeleccionada) || citaSeleccionada.unidad}`} style={{ background: '#0d0d0d', borderRadius: '16px', width: '560px', maxHeight: '88vh', overflow: 'auto', boxShadow: '0 25px 50px rgba(0,0,0,0.5), 0 0 30px rgba(0,255,65,0.1)', border: '1px solid #1a3d1a' }}
               onClick={e => e.stopPropagation()}>
               <div style={{ padding: '1.5rem', borderBottom: '1px solid #1a3d1a', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
-                  <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#e0e0e0' }}>📍 Cita de {citaSeleccionada.unidad || 'unidad'}</h3>
+                  <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#e0e0e0' }}>📍 Cita de {unidadCitaLabel(citaSeleccionada) || citaSeleccionada.unidad || 'unidad'}</h3>
                   <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.85rem' }}>
                     {findGeofence(citaSeleccionada.destino)?.nombre || geocercasCoincidentes(citaSeleccionada.destino)[0] || citaSeleccionada.destino || 'Sin destino'}
                   </p>
