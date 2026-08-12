@@ -1397,6 +1397,12 @@ export function PendienteModal({
                 <label style={s.label}>Asignado a</label>
                 <input style={s.input} placeholder="Nombre del monitorista" value={formPendiente.asignado_a} onChange={(e) => setFormPendiente({ ...formPendiente, asignado_a: e.target.value })} readOnly={!!pendienteEditando} />
               </div>
+              {pendienteEditando && pendienteEditando.fecha_creacion && (
+                <div style={{ marginBottom: '1rem', padding: '0.6rem 0.8rem', background: '#102510', border: '1px solid #1a3d1a', borderRadius: '8px', color: '#6a9b6a', fontSize: '0.8rem' }}>
+                  📅 Creado el {parseFecha(pendienteEditando.fecha_creacion)?.toLocaleString('es-MX', { dateStyle: 'long', timeStyle: 'short' }) || '-'}
+                  {' por '}{pendienteEditando.created_by_username || pendienteEditando.creado_por || 'Sistema'}
+                </div>
+              )}
               {pendienteEditando && <div style={{ marginBottom: '1rem', color: '#6a9b6a', fontSize: '0.8rem' }}>Solo se puede modificar la prioridad.</div>}
               <div className="modal-actions" style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
                 {pendienteEditando && <button type="button" onClick={async () => { const ok = await eliminarPendiente(pendienteEditando.id); if (ok) cerrarPendiente(); }} style={s.button('#ef4444')}>Eliminar</button>}
