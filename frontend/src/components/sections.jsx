@@ -2902,7 +2902,7 @@ export function CitasSection({
                               <th style={s.th}>Estado</th>
                               <th style={s.th}>Destino</th>
                               <th style={s.th}>Cita descarga</th>
-                              <th style={s.th}>ETA GPS</th>
+                              <th style={s.th}>ETA / Llegada</th>
                               <th style={s.th}>Cumplimiento</th>
                               <th style={s.th}>Remolque</th>
                               <th style={s.th}>Estatus</th>
@@ -2922,7 +2922,12 @@ export function CitasSection({
                                 <td style={{ ...s.td, color: '#60a5fa' }}>📍 {findGeofence(item.destino)?.nombre || geocercasCoincidentes(item.destino)[0] || item.destino || '-'}</td>
                                 <td style={s.td}>{appointment ? appointment.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '-'}</td>
                                 <td style={s.td}>
-                                  {etaInfo?.eta ? (
+                                  {etaInfo?.status === 'arrived' ? (
+                                    <div>
+                                      <strong style={{ color: etaColor }}>{etaInfo.arrival.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })}</strong>
+                                      <div style={{ color: '#6a9b6a', fontSize: '0.7rem' }}>{etaInfo.realArrival ? 'Llegada real' : 'Llegada (GPS)'}</div>
+                                    </div>
+                                  ) : etaInfo?.eta ? (
                                     <div><strong style={{ color: etaColor }}>{etaInfo.arrival.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })}</strong><div style={{ color: '#6a9b6a', fontSize: '0.7rem' }}>{etaInfo.eta.duracion} · {etaInfo.eta.distancia}</div></div>
                                   ) : citasEtaLoading && !etaInfo ? <span style={{ color: '#f59e0b' }}>Calculando...</span> : '-'}
                                 </td>

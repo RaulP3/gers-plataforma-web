@@ -294,6 +294,14 @@ export default function useGersDashboard() {
     }
     return [...mapa.values()];
   };
+  const geofencesCandidatas = (destino) => {
+    const mapa = new Map();
+    const agregar = g => { if (g && g.activa !== 0) mapa.set(String(g.id || g.nombre), g); };
+    geofencesEnDestino(destino).forEach(agregar);
+    const viaCoincidentes = findGeofence(geocercasCoincidentes(destino)[0]);
+    agregar(viaCoincidentes);
+    return [...mapa.values()];
+  };
   const geofenceOptions = (currentValue = '') => {
     const current = String(currentValue || '').trim();
     const isLegacyValue = current && !findGeofence(current);
@@ -429,11 +437,47 @@ export default function useGersDashboard() {
     });
   }, [viajes, seguimiento, vehiculos]);
   const vehiculoDeCita = (item) => item ? findVehicleForUnit(item.unidad, item.vehicle_id) : null;
+  const horaLlegadaRealCita = (item) => {
+    if (!item) return null;
+    if (item.tipo === 'Viaje' && item.sourceId) {
+      const viaje = viajes.find(v => Number(v.id) === Number(item.sourceId));
+      if (viaje) {
+        const paradas = Array.isArray(viaje.paradas) ? viaje.paradas : [];
+        const destinoNorm = normalizeGeofenceName(item.destino);
+        const candidata = paradas.find(p => normalizeGeofenceName(p.destino) === destinoNorm)
+          || paradas.find(p => ['llego', 'completada'].includes(String(p.estado).toLowerCase()) && p.hora_llegada)
+          || paradas[0];
+        const porParada = parseFecha(candidata?.hora_llegada);
+        if (porParada) return porParada;
+        if (viaje.tipo_entrega !== 'reparto') {
+          const directo = parseFecha(viaje.hora_llegada);
+          if (directo) return directo;
+        }
+      }
+    }
+    if (item.tipo === 'Seguimiento' && item.sourceId) {
+      const row = seguimiento.find(r => Number(r.id) === Number(item.sourceId));
+      const rowLlegada = parseFecha(row?.hora_llegada);
+      if (rowLlegada) return rowLlegada;
+    }
+    const vehicle = findVehicleForUnit(item.unidad, item.vehicle_id);
+    if (vehicle) {
+      const nombres = new Set(geofencesCandidatas(item.destino).map(g => normalizeGeofenceName(g.nombre)).filter(Boolean));
+      if (nombres.size) {
+        const entrada = (geofenceEvents || []).find(ev => ev.tipo === 'entrada'
+          && String(ev.vehicle_id) === String(vehicle.id)
+          && nombres.has(normalizeGeofenceName(ev.geofence_nombre)));
+        const llegada = parseFecha(entrada?.created_at);
+        if (llegada) return llegada;
+      }
+    }
+    return null;
+  };
   const estadoVehiculoCita = (item) => {
     const vehicle = vehiculoDeCita(item);
     if (!vehicle?.location) return { label: 'Sin GPS', color: '#6b7280' };
     if (!vehicle.isOnline) return { label: 'Sin señal', color: '#6b7280' };
-    if (geofencesEnDestino(item.destino).some(g => pointInsideGeofence(vehicle.location.latitude, vehicle.location.longitude, g))) {
+    if (geofencesCandidatas(item.destino).some(g => pointInsideGeofence(vehicle.location.latitude, vehicle.location.longitude, g))) {
       return { label: 'En destino', color: '#00ff41' };
     }
     return estaEnMovimiento(vehicle.location.speed)
@@ -459,9 +503,11 @@ export default function useGersDashboard() {
       const destino = findGeofence(item.destino)?.nombre || geocercasCoincidentes(item.destino)[0] || item.destino || '-';
       const etaInfo = citasEta[item.id];
       const cumplimiento = etaInfo?.label || (citasEtaLoading ? 'Calculando...' : 'Sin ETA');
-      const etaLinea = etaInfo?.eta && etaInfo?.arrival
-        ? ` | ETA: ${etaInfo.arrival.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })} (${cumplimiento})`
-        : ` | ${cumplimiento}`;
+      const etaLinea = etaInfo?.status === 'arrived'
+        ? (etaInfo?.arrival ? ` | Llegó: ${etaInfo.arrival.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })} (En destino)` : ' | En destino')
+        : (etaInfo?.eta && etaInfo?.arrival
+          ? ` | ETA: ${etaInfo.arrival.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })} (${cumplimiento})`
+          : ` | ${cumplimiento}`);
       lineas.push(`• ${unidadCitaLabel(item) || '-'} -> ${destino} (${horaCita})`);
       lineas.push(`   Estado: ${estadoVeh.label}${etaLinea}${item.remolque ? ` | Remolque: ${item.remolque}` : ''}`);
     });
@@ -2903,16 +2949,23 @@ export default function useGersDashboard() {
       const vehicle = findVehicleForUnit(item.unidad, item.vehicle_id);
       const geofenceDestino = findGeofence(item.destino);
       const geofenceName = geofenceDestino?.nombre || geocercasCoincidentes(item.destino)[0];
+      if (vehicle?.location && geofencesCandidatas(item.destino).some(g => pointInsideGeofence(vehicle.location.latitude, vehicle.location.longitude, g))) {
+        const llegadaReal = horaLlegadaRealCita(item);
+        initial[item.id] = {
+          status: 'arrived',
+          label: 'En destino',
+          eta: { duracion: 'Llegada', distancia: '0 km' },
+          arrival: llegadaReal || new Date(),
+          realArrival: !!llegadaReal,
+        };
+        continue;
+      }
       if (!vehicle?.location) {
         initial[item.id] = { status: 'unavailable', label: 'Sin GPS' };
         continue;
       }
       if (!geofenceName) {
         initial[item.id] = { status: 'unavailable', label: 'Destino sin geocerca' };
-        continue;
-      }
-      if (geofenceDestino && pointInsideGeofence(vehicle.location.latitude, vehicle.location.longitude, geofenceDestino)) {
-        initial[item.id] = { status: 'arrived', label: 'En destino', eta: { duracion: 'Llegada', distancia: '0 km' }, arrival: new Date() };
         continue;
       }
       if (vehicle.lastSeen != null && vehicle.lastSeen >= CITAS_GPS_STALE_MIN) {
@@ -2966,6 +3019,8 @@ export default function useGersDashboard() {
 
   useEffect(() => {
     if (!citaSeleccionada) { setCitaLlegada(null); return; }
+    const conocida = horaLlegadaRealCita(citaSeleccionada);
+    if (conocida) { setCitaLlegada(conocida); return; }
     const vehicle = vehiculoDeCita(citaSeleccionada);
     const geofenceDestino = findGeofence(citaSeleccionada.destino);
     const geofenceName = geofenceDestino?.nombre || geocercasCoincidentes(citaSeleccionada.destino)[0];
@@ -3700,6 +3755,7 @@ export default function useGersDashboard() {
     findVehicleForUnit,
     citasOperativas,
     vehiculoDeCita,
+    horaLlegadaRealCita,
     estadoVehiculoCita,
     unidadCitaLabel,
     diaEntregaCita,
