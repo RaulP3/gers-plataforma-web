@@ -24,7 +24,7 @@ const GEOCODE_CACHE_TTL_MS = 60 * 60 * 1000;
 const TRIP_ROUTE_STATES = new Set(['programado', 'en_ruta_vacio', 'en_ruta_cargado']);
 const TRIP_TRAILER_ACTIVE_STATES = new Set(['en_ruta_vacio', 'en_ruta_cargado', 'proceso_carga', 'proceso_descarga', 'proceso_liberacion', 'espera_ingreso', 'en_resguardo']);
 
-const GEOFENCE_EXIT_GRACE_MIN = Number(process.env.GEOFENCE_EXIT_GRACE_MIN) || 30;
+const GEOFENCE_EXIT_GRACE_MIN = Number(process.env.GEOFENCE_EXIT_GRACE_MIN) || 60;
 
 module.exports = {
   backendRoot,

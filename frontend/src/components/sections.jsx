@@ -1133,6 +1133,7 @@ export function ViajesSection({
   obtenerOpcionesRemolque,
   obtenerRemolqueAsignadoUnidad,
   operadores,
+  parseFecha,
   s,
   samsaraDrivers,
   setDragOverViajeColumn,
@@ -1262,6 +1263,12 @@ export function ViajesSection({
                              const paradas = paradasViaje(v);
                              const completadas = paradas.filter(parada => parada.estado === 'completada').length;
                              return <div style={{ color: completadas === paradas.length ? '#00ff41' : '#f59e0b', fontSize: '0.65rem', fontWeight: 700 }}>{completadas} de {paradas.length} paradas completadas</div>;
+                           })()}
+                           {v.estado === 'espera_ingreso' && v.hora_salida && (() => {
+                             const salida = parseFecha(v.hora_salida);
+                             if (!salida) return null;
+                             const mins = Math.max(0, Math.floor((Date.now() - salida.getTime()) / 60000));
+                             return <div style={{ color: '#f59e0b', fontSize: '0.62rem', fontWeight: 700 }}>Salió del sitio · hace {mins} min</div>;
                            })()}
                          </div>
                       ))}
