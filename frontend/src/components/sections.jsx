@@ -1001,6 +1001,7 @@ export function OperacionesSection({
   handleDragOver,
   handleDragStart,
   handleDrop,
+  parseFecha,
   pendientes,
   s,
   setFiltroTurno,
