@@ -565,6 +565,25 @@ async function run() {
   await request(`/viajes/${geofenceTrip.id}`, { method: 'DELETE' });
   await request(`/geofences/${destinoGeofence.id}`, { method: 'DELETE' });
 
+  const manualCompleteTrip = await request('/viajes', {
+    method: 'POST',
+    body: JSON.stringify({
+      vehicle_id: 'smoke-manual',
+      vehicle_name: 'Smoke Manual Unit',
+      origen: 'Monterrey',
+      destino: 'Saltillo',
+      tipo_entrega: 'directo',
+    }),
+  });
+  await request(`/viajes/${manualCompleteTrip.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ estado: 'completado' }),
+  });
+  let manualRow = (await request('/viajes')).find(row => row.id === manualCompleteTrip.id);
+  assert.ok(manualRow.fecha_fin, 'completar manualmente un viaje debe registrar fecha_fin');
+  assert.equal(manualRow.estado, 'completado');
+  await request(`/viajes/${manualCompleteTrip.id}`, { method: 'DELETE' });
+
   const progGeofence = await request('/geofences', {
     method: 'POST',
     body: JSON.stringify({ nombre: 'Smoke Programado Destino', latitud: 17.5, longitud: -92.0, radio_metros: 500 }),

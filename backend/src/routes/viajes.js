@@ -93,13 +93,17 @@ router.put('/viajes/:id', async (req, res) => {
       remolque: has('remolque') ? req.body.remolque : row.remolque,
     };
 
+    const nuevoEstado = String(next.estado || '').toLowerCase();
+    if ((nuevoEstado === 'completado' || nuevoEstado === 'cancelado') && !next.fecha_fin) {
+      next.fecha_fin = localTimestampISO(new Date());
+    }
+
     const result = await runQuery(
       'UPDATE viajes SET vehicle_id = ?, vehicle_name = ?, origen = ?, destino = ?, tipo_entrega = ?, destinos_json = ?, conductor = ?, telefono = ?, fecha_inicio = ?, fecha_fin = ?, cita_programada = ?, notas = ?, estado = ?, remolque = ? WHERE id = ?',
       [next.vehicle_id, next.vehicle_name, next.origen, next.destino, next.tipo_entrega, next.destinos_json, next.conductor, next.telefono, next.fecha_inicio, next.fecha_fin, next.cita_programada, next.notas, next.estado, next.remolque, req.params.id]
     );
     const paradas = await syncTripStops({ id: Number(req.params.id), ...next }, has('tipo_entrega') || has('destinos') || has('destino'));
     let trailerSync = null;
-    const nuevoEstado = String(next.estado || '').toLowerCase();
     if (TRIP_ROUTE_STATES.has(nuevoEstado)) {
       await resetTripGeofenceState(next);
     }
