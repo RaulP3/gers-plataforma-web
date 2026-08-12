@@ -119,6 +119,18 @@ function insertGeofenceEvent({ vehicle_id, vehicle_name, geofence_id, geofence_n
   );
 }
 
+function getLastGeofenceExitForDestination({ vehicle_id, vehicle_name, destino }) {
+  return getQuery(
+    `SELECT tipo, created_at
+       FROM geofence_events
+      WHERE (CAST(vehicle_id AS TEXT) = ? OR LOWER(COALESCE(vehicle_name, '')) = LOWER(?))
+        AND LOWER(TRIM(geofence_nombre)) = LOWER(?)
+        AND created_at IS NOT NULL
+      ORDER BY created_at DESC, id DESC LIMIT 1`,
+    [String(vehicle_id || ''), String(vehicle_name || ''), String(destino || '').trim()]
+  );
+}
+
 function getVehicleGeofenceState(vehicleId, geofenceId) {
   return getQuery('SELECT * FROM vehicle_geofence_state WHERE vehicle_id = ? AND geofence_id = ?', [vehicleId, geofenceId]);
 }
@@ -219,6 +231,7 @@ module.exports = {
   clearAllGeofenceEvents,
   clearVehicleGeofenceState,
   insertGeofenceEvent,
+  getLastGeofenceExitForDestination,
   getVehicleGeofenceState,
   upsertVehicleGeofenceState,
   resetGeofenceState,

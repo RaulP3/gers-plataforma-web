@@ -270,7 +270,7 @@ async function run() {
     method: 'PUT',
     body: JSON.stringify({ estado: 'completada' }),
   });
-  assert.notEqual(stopUpdate.paradas[0].hora_salida, firstDeparture);
+  assert.equal(stopUpdate.paradas[0].hora_salida, firstDeparture, 'completar de nuevo una parada no debe sobrescribir la hora de salida registrada');
   assert.equal(stopUpdate.paradas[1].estado, 'en_camino');
 
   await request(`/viajes/${directTrip.id}`, {
@@ -583,6 +583,44 @@ async function run() {
   assert.ok(manualRow.fecha_fin, 'completar manualmente un viaje debe registrar fecha_fin');
   assert.equal(manualRow.estado, 'completado');
   await request(`/viajes/${manualCompleteTrip.id}`, { method: 'DELETE' });
+
+  const manualExitGeofence = await request('/geofences', {
+    method: 'POST',
+    body: JSON.stringify({ nombre: 'Smoke Salida Destino', latitud: 20, longitud: -100, radio_metros: 500 }),
+  });
+  const manualExitTrip = await request('/viajes', {
+    method: 'POST',
+    body: JSON.stringify({
+      vehicle_id: 'smoke-circle-unit',
+      vehicle_name: 'Smoke Circle Unit',
+      origen: 'Monterrey',
+      destino: 'Smoke Salida Destino',
+      tipo_entrega: 'directo',
+    }),
+  });
+  await request(`/viajes/${manualExitTrip.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ estado: 'en_ruta_cargado' }),
+  });
+  mockLocations = mockLocations.map(v => v.id === 'smoke-circle-unit' ? { ...v, location: { latitude: 20, longitude: -100 } } : v);
+  await request('/check-geofences', { method: 'POST' });
+  mockLocations = mockLocations.map(v => v.id === 'smoke-circle-unit' ? { ...v, location: { latitude: 30, longitude: -110 } } : v);
+  await request('/check-geofences', { method: 'POST' });
+  let exitTrip = (await request('/viajes')).find(row => row.id === manualExitTrip.id);
+  assert.ok(exitTrip.hora_salida, 'salir del destino debe registrar hora_salida antes de completar manualmente');
+  const exitEvent = (await request('/geofence-events?limit=50')).find(event =>
+    event.vehicle_name === 'Smoke Circle Unit' && event.geofence_nombre === 'Smoke Salida Destino' && event.tipo === 'salida'
+  );
+  assert.ok(exitEvent, 'debe existir evento de salida de la geocerca destino');
+  await request(`/viajes/${manualExitTrip.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ estado: 'completado' }),
+  });
+  exitTrip = (await request('/viajes')).find(row => row.id === manualExitTrip.id);
+  assert.equal(exitTrip.estado, 'completado');
+  assert.equal(exitTrip.fecha_fin, exitEvent.created_at, 'fecha_fin debe ser la última salida de la geocerca, no el momento de completado manual');
+  await request(`/viajes/${manualExitTrip.id}`, { method: 'DELETE' });
+  await request(`/geofences/${manualExitGeofence.id}`, { method: 'DELETE' });
 
   const progGeofence = await request('/geofences', {
     method: 'POST',

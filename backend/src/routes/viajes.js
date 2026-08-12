@@ -9,7 +9,7 @@ const {
   attachTripStops,
   syncTripTrailer,
 } = require('../services/viajes');
-const { resetTripGeofenceState, markInitialGeofenceContact, haversineDistance } = require('../services/geofences');
+const { resetTripGeofenceState, markInitialGeofenceContact, haversineDistance, resolveTripFechaFin } = require('../services/geofences');
 
 const router = express.Router();
 
@@ -95,7 +95,19 @@ router.put('/viajes/:id', async (req, res) => {
 
     const nuevoEstado = String(next.estado || '').toLowerCase();
     if ((nuevoEstado === 'completado' || nuevoEstado === 'cancelado') && !next.fecha_fin) {
-      next.fecha_fin = localTimestampISO(new Date());
+      if (nuevoEstado === 'completado') {
+        const resolved = await resolveTripFechaFin({
+          id: Number(req.params.id),
+          vehicle_id: next.vehicle_id || row.vehicle_id,
+          vehicle_name: next.vehicle_name || row.vehicle_name,
+          destino: next.destino || row.destino,
+          tipo_entrega: next.tipo_entrega,
+          hora_salida: row.hora_salida,
+        });
+        next.fecha_fin = resolved || localTimestampISO(new Date());
+      } else {
+        next.fecha_fin = localTimestampISO(new Date());
+      }
     }
 
     const result = await runQuery(
@@ -134,7 +146,7 @@ router.put('/viajes/:id/paradas/:paradaId', async (req, res) => {
       if (!stop) throw Object.assign(new Error('Parada no encontrada'), { status: 404 });
       const now = localTimestampISO(new Date());
       const arrival = ['llego', 'completada'].includes(estado) ? (stop.hora_llegada || now) : stop.hora_llegada;
-      const departure = ['completada', 'omitida'].includes(estado) ? now : stop.hora_salida;
+      const departure = ['completada', 'omitida'].includes(estado) ? (stop.hora_salida || now) : stop.hora_salida;
       await tx.run(
         'UPDATE viaje_paradas SET estado = ?, hora_llegada = ?, hora_salida = ?, updated_at = datetime(\'now\') WHERE id = ?',
         [estado, arrival || null, departure || null, stop.id]

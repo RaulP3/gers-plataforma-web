@@ -13,6 +13,7 @@ const {
   getRestantesNotCompleted,
   getActiveTripsForVehicle,
   getCandidateStopsForVehicle,
+  listParadas,
 } = require('../models/viajes');
 const {
   listActiveLocalGeofences,
@@ -20,6 +21,7 @@ const {
   upsertVehicleGeofenceState,
   resetGeofenceState,
   insertGeofenceEvent,
+  getLastGeofenceExitForDestination,
   findSamsaraGeofenceClient,
   listClienteGeofenceLinks,
 } = require('../models/geofences');
@@ -172,6 +174,24 @@ function vehicleOutsideAllMatching(insideMap, vehicleId, destino, geofences) {
     const state = insideMap[`${vehicleId}_${g.stateId}`];
     return !state || state.inside !== 1;
   });
+}
+
+async function resolveTripFechaFin(trip) {
+  if (!trip?.destino) return null;
+  const last = await getLastGeofenceExitForDestination({
+    vehicle_id: trip.vehicle_id,
+    vehicle_name: trip.vehicle_name,
+    destino: trip.destino,
+  });
+  if (last?.tipo === 'salida' && last.created_at) return last.created_at;
+  if (String(trip.tipo_entrega || '').toLowerCase() === 'reparto' && trip.id) {
+    const stops = await listParadas(trip.id);
+    const lastStop = stops[stops.length - 1];
+    if (lastStop?.hora_salida) return lastStop.hora_salida;
+  } else if (trip.hora_salida) {
+    return trip.hora_salida;
+  }
+  return null;
 }
 
 async function finalizeDepartedAfterGrace(geofences, now = new Date()) {
@@ -494,6 +514,7 @@ module.exports = {
   updateTripStopFromGeofence,
   vehicleOutsideAllMatching,
   finalizeDepartedAfterGrace,
+  resolveTripFechaFin,
   resetTripGeofenceState,
   markInitialGeofenceContact,
   validWebhookSignature,
