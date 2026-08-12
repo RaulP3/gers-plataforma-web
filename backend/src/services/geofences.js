@@ -1,8 +1,8 @@
 const crypto = require('crypto');
-const { IS_PRODUCTION, TRIP_ROUTE_STATES } = require('../config');
+const { IS_PRODUCTION, TRIP_ROUTE_STATES, GEOFENCE_EXIT_GRACE_MIN } = require('../config');
 const { getQuery, allQuery, runQuery } = require('../db');
 const { broadcastLiveUpdate } = require('../cache');
-const { localTimestampISO, normalizeDestination } = require('../utils');
+const { localTimestampISO, normalizeDestination, parseFechaLocal } = require('../utils');
 const { fetchSamsaraVehicleLocations, fetchSamsaraAddresses } = require('./samsara');
 const {
   getViaje,
@@ -142,35 +142,89 @@ async function updateTripStopFromGeofence(vehicle, geofenceName, type, eventTime
         await updateParada(stop.id, {
           estado: 'llego',
           hora_llegada: stop.hora_llegada || eventTime,
-          hora_salida: stop.hora_salida,
+          hora_salida: null,
         });
       }
     }
     if (tripId) {
       if (estadoActual === 'completado') {
-        await runQuery("UPDATE viajes SET estado = 'espera_ingreso', fecha_fin = NULL, estado_previo = NULL, hora_llegada = COALESCE(hora_llegada, ?), updated_at = datetime('now') WHERE id = ?", [eventTime, tripId]);
+        await runQuery("UPDATE viajes SET estado = 'espera_ingreso', fecha_fin = NULL, estado_previo = NULL, hora_llegada = COALESCE(hora_llegada, ?), hora_salida = NULL, updated_at = datetime('now') WHERE id = ?", [eventTime, tripId]);
       } else if (TRIP_ROUTE_STATES.has(estadoActual)) {
-        await runQuery("UPDATE viajes SET estado_previo = ?, estado = 'espera_ingreso', hora_llegada = COALESCE(hora_llegada, ?), updated_at = datetime('now') WHERE id = ?", [estadoActual, eventTime, tripId]);
+        await runQuery("UPDATE viajes SET estado_previo = ?, estado = 'espera_ingreso', hora_llegada = COALESCE(hora_llegada, ?), hora_salida = NULL, updated_at = datetime('now') WHERE id = ?", [estadoActual, eventTime, tripId]);
+      } else if (estadoActual === 'espera_ingreso') {
+        await runQuery("UPDATE viajes SET hora_llegada = COALESCE(hora_llegada, ?), hora_salida = NULL, updated_at = datetime('now') WHERE id = ?", [eventTime, tripId]);
       }
     }
   } else if (type === 'salida' && stop && stop.hora_llegada && stop.estado !== 'omitida') {
-    const wasCompleted = stop.estado === 'completada';
-    await updateParada(stop.id, { estado: 'completada', hora_llegada: stop.hora_llegada, hora_salida: eventTime });
-    if (!wasCompleted) {
-      const nextStop = await getNextPendingStop(stop.viaje_id, stop.orden);
-      if (nextStop) await runQuery("UPDATE viaje_paradas SET estado = 'en_camino', updated_at = datetime('now') WHERE id = ?", [nextStop.id]);
-    }
-    const restantes = await getRestantesNotCompleted(stop.viaje_id);
-    if (restantes.length === 0) {
-      await runQuery("UPDATE viajes SET estado = 'completado', fecha_fin = ?, estado_previo = NULL, updated_at = datetime('now') WHERE id = ?", [eventTime, stop.viaje_id]);
-    } else {
-      const previo = String(trip?.estado_previo || 'en_ruta_cargado');
-      await runQuery("UPDATE viajes SET estado = ?, estado_previo = NULL, updated_at = datetime('now') WHERE id = ?", [previo, stop.viaje_id]);
+    if (stop.estado !== 'completada') {
+      await updateParada(stop.id, { estado: 'llego', hora_llegada: stop.hora_llegada, hora_salida: eventTime });
     }
   } else if (type === 'salida' && directTrip) {
-    await runQuery("UPDATE viajes SET estado = 'completado', fecha_fin = ?, estado_previo = NULL, hora_salida = COALESCE(hora_salida, ?), updated_at = datetime('now') WHERE id = ?", [eventTime, eventTime, directTrip.id]);
+    await runQuery("UPDATE viajes SET hora_salida = COALESCE(hora_salida, ?), updated_at = datetime('now') WHERE id = ?", [eventTime, directTrip.id]);
   }
   return stop ? getParada(stop.id) : null;
+}
+
+function vehicleOutsideAllMatching(insideMap, vehicleId, destino, geofences) {
+  const targets = geofences.filter(g => normalizeDestination(g.nombre) === normalizeDestination(destino));
+  if (!targets.length) return true;
+  return targets.every(g => {
+    const state = insideMap[`${vehicleId}_${g.stateId}`];
+    return !state || state.inside !== 1;
+  });
+}
+
+async function finalizeDepartedAfterGrace(geofences, now = new Date()) {
+  const graceMs = GEOFENCE_EXIT_GRACE_MIN * 60 * 1000;
+  const states = await listAllGeofenceStates();
+  const insideMap = {};
+  for (const s of states) insideMap[`${s.vehicle_id}_${s.geofence_id}`] = s;
+  const finalized = [];
+
+  const stops = await allQuery(
+    `SELECT vp.id, vp.viaje_id, vp.orden, vp.estado, vp.hora_salida, vp.destino,
+            v.vehicle_id, v.vehicle_name, v.estado AS viaje_estado, v.estado_previo
+       FROM viaje_paradas vp JOIN viajes v ON v.id = vp.viaje_id
+      WHERE vp.estado = 'llego' AND vp.hora_salida IS NOT NULL
+        AND v.estado NOT IN ('completado', 'cancelado')`
+  );
+
+  for (const stop of stops) {
+    const salida = parseFechaLocal(stop.hora_salida);
+    if (!salida || (now.getTime() - salida.getTime()) < graceMs) continue;
+    if (!vehicleOutsideAllMatching(insideMap, stop.vehicle_id, stop.destino, geofences)) continue;
+    await runQuery("UPDATE viaje_paradas SET estado = 'completada', updated_at = datetime('now') WHERE id = ?", [stop.id]);
+    if (String(stop.viaje_estado).toLowerCase() === 'espera_ingreso') {
+      const nextStop = await getNextPendingStop(stop.viaje_id, stop.orden);
+      if (nextStop) await runQuery("UPDATE viaje_paradas SET estado = 'en_camino', updated_at = datetime('now') WHERE id = ?", [nextStop.id]);
+      const restantes = await getRestantesNotCompleted(stop.viaje_id);
+      if (restantes.length === 0) {
+        await runQuery("UPDATE viajes SET estado = 'completado', fecha_fin = ?, estado_previo = NULL, updated_at = datetime('now') WHERE id = ?", [stop.hora_salida, stop.viaje_id]);
+      } else {
+        const previo = String(stop.estado_previo || 'en_ruta_cargado');
+        await runQuery("UPDATE viajes SET estado = ?, estado_previo = NULL, updated_at = datetime('now') WHERE id = ?", [previo, stop.viaje_id]);
+      }
+    }
+    finalized.push({ tipo: 'parada', viaje_id: stop.viaje_id, parada_id: stop.id, destino: stop.destino });
+  }
+
+  const directTrips = await allQuery(
+    `SELECT id, vehicle_id, destino, estado, estado_previo, hora_salida
+       FROM viajes
+      WHERE tipo_entrega <> 'reparto' AND estado = 'espera_ingreso' AND hora_salida IS NOT NULL`
+  );
+  for (const trip of directTrips) {
+    const salida = parseFechaLocal(trip.hora_salida);
+    if (!salida || (now.getTime() - salida.getTime()) < graceMs) continue;
+    if (!vehicleOutsideAllMatching(insideMap, trip.vehicle_id, trip.destino, geofences)) continue;
+    await runQuery("UPDATE viajes SET estado = 'completado', fecha_fin = ?, estado_previo = NULL, updated_at = datetime('now') WHERE id = ?", [trip.hora_salida, trip.id]);
+    finalized.push({ tipo: 'viaje', viaje_id: trip.id, destino: trip.destino });
+  }
+
+  if (finalized.length) {
+    console.log(`[geofences] Finalizados tras periodo de gracia (${GEOFENCE_EXIT_GRACE_MIN} min):`, finalized);
+  }
+  return finalized;
 }
 
 async function resetTripGeofenceState(trip) {
@@ -418,6 +472,8 @@ async function performGeofenceCheck() {
       }
     }
 
+    await finalizeDepartedAfterGrace(geofences);
+
     return { checked: vehicles.length, geofences: geofences.length, newAlerts: alerts.length, alerts };
 }
 
@@ -436,6 +492,8 @@ module.exports = {
   loadAllGeofences,
   tripContactIsProgramado,
   updateTripStopFromGeofence,
+  vehicleOutsideAllMatching,
+  finalizeDepartedAfterGrace,
   resetTripGeofenceState,
   markInitialGeofenceContact,
   validWebhookSignature,

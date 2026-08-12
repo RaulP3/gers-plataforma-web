@@ -116,6 +116,15 @@ async function waitForServer() {
   throw new Error(`El backend no inició a tiempo.\n${serverOutput}`);
 }
 
+function runSql(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    const database = new sqlite3.Database(databasePath);
+    database.run(sql, params, function (err) {
+      database.close(closeErr => err || closeErr ? reject(err || closeErr) : resolve(this));
+    });
+  });
+}
+
 function seedRouteHistory(rows) {
   return new Promise((resolve, reject) => {
     const database = new sqlite3.Database(databasePath);
@@ -533,9 +542,26 @@ async function run() {
   mockLocations = mockLocations.map(v => v.id === 'smoke-circle-unit' ? { ...v, location: { latitude: 30, longitude: -110 } } : v);
   await request('/check-geofences', { method: 'POST' });
   viajeGeo = (await request('/viajes')).find(row => row.id === geofenceTrip.id);
-  assert.equal(viajeGeo.estado, 'completado', 'salida de destino debe completar el viaje');
-  assert.ok(viajeGeo.fecha_fin, 'fecha_fin debe quedar registrada al completar');
-  assert.ok(viajeGeo.hora_salida, 'salida de destino debe registrar hora_salida en el viaje directo');
+  assert.equal(viajeGeo.estado, 'espera_ingreso', 'salir del destino NO debe desaparecer la tarjeta durante el periodo de gracia');
+  assert.ok(viajeGeo.hora_salida, 'salida del destino debe registrar hora_salida');
+  assert.equal(viajeGeo.fecha_fin, null, 'no debe completarse aún dentro del periodo de gracia');
+  mockLocations = mockLocations.map(v => v.id === 'smoke-circle-unit' ? { ...v, location: { latitude: 20, longitude: -100 } } : v);
+  await request('/check-geofences', { method: 'POST' });
+  viajeGeo = (await request('/viajes')).find(row => row.id === geofenceTrip.id);
+  assert.equal(viajeGeo.estado, 'espera_ingreso', 'reingreso dentro de la gracia mantiene el viaje activo');
+  assert.equal(viajeGeo.hora_salida, null, 'reingreso dentro de la gracia debe reiniciar el contador');
+  assert.ok(viajeGeo.hora_llegada, 'la hora de llegada real se conserva tras el reingreso');
+  mockLocations = mockLocations.map(v => v.id === 'smoke-circle-unit' ? { ...v, location: { latitude: 30, longitude: -110 } } : v);
+  await request('/check-geofences', { method: 'POST' });
+  viajeGeo = (await request('/viajes')).find(row => row.id === geofenceTrip.id);
+  assert.equal(viajeGeo.estado, 'espera_ingreso', 'aún en espera dentro del periodo de gracia tras salir de nuevo');
+  await runSql(`UPDATE viajes SET hora_salida = datetime('now', 'localtime', '-2 hours') WHERE id = ?`, [geofenceTrip.id]);
+  await request('/check-geofences', { method: 'POST' });
+  viajeGeo = (await request('/viajes')).find(row => row.id === geofenceTrip.id);
+  assert.equal(viajeGeo.estado, 'completado', 'tras el periodo de gracia sin reingreso el viaje se completa');
+  assert.ok(viajeGeo.fecha_fin, 'fecha_fin debe quedar registrada al completar por gracia');
+  assert.ok(viajeGeo.hora_salida, 'hora_salida debe quedar registrada');
+  assert.ok(viajeGeo.hora_llegada, 'la hora de llegada real se conserva al completar por gracia');
   await request(`/viajes/${geofenceTrip.id}`, { method: 'DELETE' });
   await request(`/geofences/${destinoGeofence.id}`, { method: 'DELETE' });
 
