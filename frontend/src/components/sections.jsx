@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 
 import {
@@ -8,6 +8,7 @@ import {
   destinoViajeActual,
   destinosViaje,
   estaEnMovimiento,
+  normalizarMatch,
   ordenarViajesPorUnidad,
   paradaActualViaje,
   paradasViaje,
@@ -1202,7 +1203,13 @@ export function ViajesSection({
   viajeEtaError={viajeEtaError}
 />
 }
-            {viajesView === 'tablero' && (
+            {viajesView === 'tablero' && (() => {
+              const proximosPorUnidad = new Map();
+              for (const oculto of viajesProximosOcultos(viajes)) {
+                const key = String(oculto.vehicle_id || '') || normalizarMatch(oculto.vehicle_name);
+                proximosPorUnidad.set(key, (proximosPorUnidad.get(key) || 0) + 1);
+              }
+              return (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '0.65rem' }}>
               {[
                 { key: 'programado', label: 'Programado', color: '#8b5cf6' },
@@ -1264,20 +1271,37 @@ export function ViajesSection({
                              const completadas = paradas.filter(parada => parada.estado === 'completada').length;
                              return <div style={{ color: completadas === paradas.length ? '#00ff41' : '#f59e0b', fontSize: '0.65rem', fontWeight: 700 }}>{completadas} de {paradas.length} paradas completadas</div>;
                            })()}
+                           {(() => {
+                             const llegadaOrigen = parseFecha(v.hora_llegada_origen);
+                             const salidaOrigen = parseFecha(v.hora_salida_origen);
+                             if (!llegadaOrigen && !salidaOrigen) return null;
+                             if (llegadaOrigen && (!salidaOrigen || llegadaOrigen > salidaOrigen)) {
+                               return <div style={{ color: '#00ff41', fontSize: '0.62rem', fontWeight: 700 }}>📍 En origen · desde {llegadaOrigen.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}</div>;
+                             }
+                             const mins = Math.max(0, Math.floor((Date.now() - salidaOrigen.getTime()) / 60000));
+                             if (mins > 24 * 60) return null;
+                             return <div style={{ color: '#3b82f6', fontSize: '0.62rem', fontWeight: 700 }}>Salió del origen · hace {mins} min</div>;
+                           })()}
                            {v.estado === 'espera_ingreso' && v.hora_salida && (() => {
                              const salida = parseFecha(v.hora_salida);
                              if (!salida) return null;
                              const mins = Math.max(0, Math.floor((Date.now() - salida.getTime()) / 60000));
                              return <div style={{ color: '#f59e0b', fontSize: '0.62rem', fontWeight: 700 }}>Salió del sitio · hace {mins} min</div>;
                            })()}
+                           {(() => {
+                             const extra = proximosPorUnidad.get(String(v.vehicle_id || '') || normalizarMatch(v.vehicle_name)) || 0;
+                             if (!extra) return null;
+                             return <div style={{ color: '#a78bfa', fontSize: '0.62rem', fontWeight: 700 }}>+{extra} viaje{extra > 1 ? 's' : ''} en próximos</div>;
+                           })()}
                          </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            )}
+                       ))}
+                     </div>
+                   </div>
+                 );
+               })}
+             </div>
+              );
+            })()}
 
             {viajesView === 'proximos' && (
               <div>
@@ -1300,7 +1324,7 @@ export function ViajesSection({
                       />
                     </div>
                     <div style={{ overflowX: 'auto' }}>
-                      <table style={{ ...s.table, minWidth: '900px' }}>
+                      <table style={{ ...s.table, minWidth: '1020px' }}>
                         <thead>
                           <tr>
                             <th style={s.th}>Estado</th>
@@ -1310,6 +1334,7 @@ export function ViajesSection({
                             <th style={s.th}>Remolque</th>
                             <th style={s.th}>Inicio</th>
                             <th style={s.th}>Fin</th>
+                            <th style={s.th}>En tablero</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1338,6 +1363,16 @@ export function ViajesSection({
                                   <td style={s.td}>{v.remolque || <span style={{ color: '#4b6b4b' }}>Sin remolque</span>}</td>
                                   <td style={s.td}>{v.fecha_inicio ? formatFechaProgramada(v.fecha_inicio) : '-'}</td>
                                   <td style={s.td}>{v.fecha_fin ? formatFechaProgramada(v.fecha_fin) : '-'}</td>
+                                  <td style={s.td}>{(() => {
+                                    const key = String(v.vehicle_id || '') || normalizarMatch(v.vehicle_name);
+                                    const enTablero = soloPrimerViajeActivoPorUnidad(viajes).find(t => !['completado', 'cancelado'].includes(String(t.estado || '').toLowerCase()) && (String(t.vehicle_id || '') || normalizarMatch(t.vehicle_name)) === key);
+                                    if (!enTablero) return <span style={{ color: '#4b6b4b' }}>-</span>;
+                                    return (
+                                      <button type="button" title={`Ver viaje #${enTablero.id} que ocupa el tablero de esta unidad`} onClick={(e) => { e.stopPropagation(); setViajeDetalle(enTablero); setViajeForm(enTablero); setShowViajeModal(true); setViajeEditando(false); }} style={{ background: 'none', border: '1px solid #1a3d1a', borderRadius: '6px', color: '#00ff41', cursor: 'pointer', padding: '0.15rem 0.45rem', fontSize: '0.72rem', fontWeight: 700 }}>
+                                        #{enTablero.id} · {String(enTablero.estado || '').replace(/_/g, ' ')}
+                                      </button>
+                                    );
+                                  })()}</td>
                                 </tr>
                               );
                             })}
@@ -1436,9 +1471,21 @@ export function ClientesSection({
   selectedCliente,
   selectedClienteGeofences,
   selectedClienteId,
+  selectedClienteUnidades,
   setClienteSearch,
   setSelectedClienteId,
+  vehiculos,
+  vincularClienteUnidad,
+  desvincularClienteUnidad,
 }) {
+  const [unidadSeleccionada, setUnidadSeleccionada] = useState('');
+  const unidadesDisponibles = useMemo(() => {
+    const asignadas = new Set(selectedClienteUnidades.map(u => String(u.vehicle_id)));
+    return vehiculos
+      .filter(v => v.id && !asignadas.has(String(v.id)))
+      .map(v => ({ id: v.id, name: v.name || v.id }))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  }, [vehiculos, selectedClienteUnidades]);
   return (<div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '1rem', flexWrap: 'wrap' }}>
               <div>
@@ -1562,6 +1609,47 @@ export function ClientesSection({
                     ))}
                   </div>
                 )}
+                <div style={{ marginTop: '1.1rem' }}>
+                  <div style={{ color: '#4ade80', fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>Unidades asignadas</div>
+                  {selectedClienteUnidades.length === 0 ? (
+                    <div style={{ color: '#6a9b6a', fontSize: '0.85rem' }}>Sin unidades asignadas. Selecciona una unidad del listado para asignarla a este cliente.</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                      {selectedClienteUnidades.map(unidad => (
+                        <span key={unidad.vehicle_id} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem', padding: '0.4rem 0.75rem', border: '1px solid #1a3d1a', borderRadius: '999px', background: '#0a150a', color: '#e5ffe9', fontSize: '0.82rem' }}>
+                          🚛 {unidad.vehicle_name}
+                          <button type="button" aria-label={`Quitar ${unidad.vehicle_name}`} title="Quitar asignación" onClick={() => desvincularClienteUnidad(unidad.vehicle_id)} style={{ background: 'none', border: 0, color: '#ef4444', cursor: 'pointer', fontSize: '0.85rem', padding: 0, lineHeight: 1 }}>✕</button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.65rem', flexWrap: 'wrap' }}>
+                    <select
+                      value={unidadSeleccionada}
+                      onChange={event => setUnidadSeleccionada(event.target.value)}
+                      style={{ ...s.select, width: 'min(100%, 320px)' }}
+                      aria-label="Seleccionar unidad para asignar"
+                    >
+                      <option value="">Seleccionar unidad...</option>
+                      {unidadesDisponibles.map(v => (
+                        <option key={v.id} value={v.id}>{v.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={!unidadSeleccionada}
+                      onClick={() => {
+                        const seleccion = unidadesDisponibles.find(v => String(v.id) === String(unidadSeleccionada));
+                        if (!seleccion) return;
+                        vincularClienteUnidad(seleccion.id, seleccion.name);
+                        setUnidadSeleccionada('');
+                      }}
+                      style={{ ...s.button('#00ff41'), opacity: unidadSeleccionada ? 1 : 0.45, cursor: unidadSeleccionada ? 'pointer' : 'not-allowed' }}
+                    >
+                      + Asignar unidad
+                    </button>
+                  </div>
+                </div>
                 <div style={{ marginTop: '1.1rem' }}>
                   <div style={{ color: '#4ade80', fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '0.45rem' }}>Grupos de WhatsApp para reportes</div>
                   {(selectedCliente.wpp_groups || []).length === 0 ? (
@@ -1892,9 +1980,10 @@ export function SeguimientoSection({
   seguimientoHistorial,
   seguimientoHistorialError,
   seguimientoHistorialLoading,
-  seguimientoResumen,
-  seguimientoUnidadFilter,
-  selectedSeguimiento,
+   seguimientoResumen,
+   seguimientoUnidadFilter,
+   seleccionarUnidadSeguimiento,
+   selectedSeguimiento,
   setActiveTab,
   setFormSeguimiento,
   setSeguimientoEstatusFilter,
@@ -2177,7 +2266,7 @@ export function SeguimientoSection({
                             <td style={tdStyle}>{parseFecha(row.fecha_actualizacion)?.toLocaleString('es-MX') || '-'}</td>
                             <td style={{ ...tdStyle, textAlign: 'center', whiteSpace: 'nowrap' }}>
                               {esAuto ? (
-                                <button onClick={() => { setSeguimientoModalUnidadId(String(row._unidadObj?.id || '')); setSeguimientoModalError(''); setSeguimientoModalGrupo(''); setSeguimientoModalNota(''); setShowSeguimientoUpdateModal(true); }} style={{ background: 'none', border: '1px solid #1a3d1a', color: '#00ff41', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem', padding: '2px 6px' }}>Actualizar</button>
+                                <button onClick={() => { abrirActualizarSeguimiento(); seleccionarUnidadSeguimiento(String(row._unidadObj?.id || '')); }} style={{ background: 'none', border: '1px solid #1a3d1a', color: '#00ff41', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem', padding: '2px 6px' }}>Actualizar</button>
                               ) : (
                                 <>
                                   <button onClick={() => cargarHistorialSeguimiento(row)} style={{ background: 'none', border: '1px solid #1a3d1a', color: '#00ff41', borderRadius: '4px', cursor: 'pointer', fontSize: '0.7rem', padding: '2px 6px', marginRight: '0.35rem' }}>Historial</button>
@@ -2524,6 +2613,7 @@ export function MapasSection({
   const [importResult, setImportResult] = useState(null);
   const [importSaveError, setImportSaveError] = useState('');
   const [importSaveOk, setImportSaveOk] = useState('');
+  const [importDetectados, setImportDetectados] = useState([]);
   const importErrorCount = Array.isArray(importResult?.errores) ? importResult.errores.length : 0;
   const importGeocercasCreadas = [...new Set((importResult?.mapas || []).flatMap(m => m.geocercas_creadas || []))];
   const importDuplicados = importResult?.duplicados || [];
@@ -2532,7 +2622,7 @@ export function MapasSection({
     ? mapas.filter(mapa => [mapa.nombre, mapa.origen, mapa.destino, ...parseDestinos(mapa.destinos_json || mapa.destinos)]
         .some(campo => normalizarBusqueda(campo).includes(normalizarBusqueda(mapaBusqueda))))
     : mapas;
-  const detectarYGuardar = async () => {
+  const detectarRutas = async () => {
     const urls = importLinks.split(/\r?\n|,/).map(u => u.trim()).filter(Boolean);
     if (!urls.length) return;
     setImportDetectando(true);
@@ -2540,6 +2630,7 @@ export function MapasSection({
     setImportSaveError('');
     setImportSaveOk('');
     setImportResult(null);
+    setImportDetectados([]);
     try {
       const result = await detectarMapasLinks(urls);
       setImportResult(result);
@@ -2547,41 +2638,76 @@ export function MapasSection({
         setImportSaveError(result.errores.map(e => e.error || 'No se pudo procesar').join(' '));
         return;
       }
-      const mapasDetectados = result.mapas || [];
+      const mapasDetectados = (result.mapas || []).map((mapa, index) => ({
+        ...mapa,
+        key: `${Date.now()}-${index}`,
+        destinosEdit: mapa.tipo_entrega === 'reparto' ? parseDestinos(mapa.destinos) : [],
+      }));
       if (!mapasDetectados.length) {
         const dupMsg = importDuplicados.length ? ` ${importDuplicados.length} ruta(s) ya estaban guardadas.` : '';
         setImportSaveOk(`No se detectaron rutas nuevas.${dupMsg}`);
         return;
       }
-      setImportGuardando(true);
-      let ok = 0;
-      const fallos = [];
-      const resultados = await Promise.allSettled(
-        mapasDetectados.map(mapa => guardarMapaDetectado(mapa))
-      );
-      resultados.forEach((res, i) => {
-        if (res.status === 'fulfilled') {
-          ok += 1;
-        } else {
-          const err = res.reason;
-          fallos.push({ nombre: mapasDetectados[i]?.nombre || `ruta ${i + 1}`, error: (err && err.message) || 'No se pudo guardar' });
-        }
-      });
-      await refreshMapas();
-      if (fallos.length === 0) {
-        const geo = importGeocercasCreadas.length ? ` · ${importGeocercasCreadas.length} geocerca(s) creada(s)` : '';
-        const dup = importDuplicados.length ? `. ${importDuplicados.length} ruta(s) ya estaban guardadas` : '';
-        setImportSaveOk(`Se guardaron ${ok} ruta(s)${geo}${dup}.`);
-        setImportLinks('');
-      } else {
-        setImportSaveError(`Guardadas ${ok} de ${mapasDetectados.length} rutas. Falló: ${fallos.map(f => `'${f.nombre}': ${f.error}`).join('; ')}`);
-      }
+      setImportDetectados(mapasDetectados);
     } catch (err) {
-      setImportSaveError(err.message || 'No se pudieron detectar/guardar los links');
+      setImportSaveError(err.message || 'No se pudieron detectar los links');
     } finally {
       setImportDetectando(false);
-      setImportGuardando(false);
     }
+  };
+  const actualizarDetectado = (key, cambios) => {
+    setImportDetectados(prev => prev.map(item => item.key === key ? { ...item, ...cambios } : item));
+  };
+  const cambiarTipoDetectado = (key, tipo) => {
+    setImportDetectados(prev => prev.map(item => {
+      if (item.key !== key || item.tipo_entrega === tipo) return item;
+      if (tipo === 'reparto') {
+        const actuales = item.destinosEdit.length ? item.destinosEdit : [item.destino].filter(Boolean);
+        const destinosEdit = [...actuales];
+        while (destinosEdit.length < 2) destinosEdit.push('');
+        return { ...item, tipo_entrega: 'reparto', destinosEdit };
+      }
+      const ultimo = item.destinosEdit[item.destinosEdit.length - 1] || '';
+      return { ...item, tipo_entrega: 'directo', destino: ultimo || item.destino || '', destinosEdit: [] };
+    }));
+  };
+  const quitarDetectado = (key) => {
+    setImportDetectados(prev => prev.filter(item => item.key !== key));
+  };
+  const guardarDetectadas = async () => {
+    if (!importDetectados.length) return;
+    setImportGuardando(true);
+    setImportSaveError('');
+    setImportSaveOk('');
+    const total = importDetectados.length;
+    let ok = 0;
+    const fallos = [];
+    const resultados = await Promise.allSettled(
+      importDetectados.map(mapa => guardarMapaDetectado({
+        ...mapa,
+        destino: mapa.tipo_entrega === 'reparto' ? (mapa.destinosEdit[mapa.destinosEdit.length - 1] || '') : mapa.destino,
+        destinos: mapa.tipo_entrega === 'reparto' ? mapa.destinosEdit : (String(mapa.destino || '').trim() ? [mapa.destino] : []),
+      }))
+    );
+    resultados.forEach((res, i) => {
+      if (res.status === 'fulfilled') {
+        ok += 1;
+      } else {
+        const err = res.reason;
+        fallos.push({ nombre: importDetectados[i]?.nombre || `ruta ${i + 1}`, error: (err && err.message) || 'No se pudo guardar' });
+      }
+    });
+    await refreshMapas();
+    if (fallos.length === 0) {
+      const geo = importGeocercasCreadas.length ? ` · ${importGeocercasCreadas.length} geocerca(s) creada(s)` : '';
+      const dup = importDuplicados.length ? `. ${importDuplicados.length} ruta(s) ya estaban guardadas` : '';
+      setImportSaveOk(`Se guardaron ${ok} ruta(s)${geo}${dup}.`);
+      setImportDetectados([]);
+      setImportLinks('');
+    } else {
+      setImportSaveError(`Guardadas ${ok} de ${total} rutas. Falló: ${fallos.map(f => `'${f.nombre}': ${f.error}`).join('; ')}`);
+    }
+    setImportGuardando(false);
   };
   const copiarTexto = async (texto) => {
     if (navigator.clipboard?.writeText) {
@@ -2619,12 +2745,67 @@ export function MapasSection({
               <aside className="mapas-sidebar">
                 <div className="mapas-import-card">
                   <h3>Importar rutas</h3>
-                  <p className="mapas-import-hint">Pega links de Google My Maps (uno por línea). Se detecta origen, destino y paradas y se guarda directamente.</p>
+                  <p className="mapas-import-hint">Pega links de Google My Maps (uno por línea). Se detecta origen, destino y paradas; podrás revisarlos y editarlos antes de guardar.</p>
                   <label>
                     <span>Links de Google My Maps</span>
                     <textarea rows="4" value={importLinks} onChange={e => setImportLinks(e.target.value)} placeholder={"https://www.google.com/maps/d/viewer?mid=...\nhttps://www.google.com/maps/d/viewer?mid=..."} />
                   </label>
-                  <button type="button" disabled={importDetectando || importGuardando || !importLinks.trim()} onClick={detectarYGuardar} style={s.button()}>{importDetectando ? 'Detectando...' : importGuardando ? 'Guardando...' : 'Detectar y guardar rutas'}</button>
+                  <button type="button" disabled={importDetectando || !importLinks.trim()} onClick={detectarRutas} style={s.button()}>{importDetectando ? 'Detectando...' : 'Detectar rutas'}</button>
+                  {importDetectados.length > 0 && (
+                    <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#4a8a4a', textTransform: 'uppercase' }}>Rutas detectadas ({importDetectados.length})</span>
+                        <button type="button" onClick={() => setImportDetectados([])} style={{ ...s.button('#ef4444'), padding: '0.2rem 0.5rem', fontSize: '0.65rem' }}>Descartar todo</button>
+                      </div>
+                      {importDetectados.map(mapa => (
+                        <div key={mapa.key} style={{ border: '1px solid #1a3d1a', borderRadius: '8px', padding: '0.55rem', background: '#111', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.4rem' }}>
+                            <div style={{ display: 'flex', gap: '0.3rem' }}>
+                              {[{ v: 'directo', label: 'Directo', color: '#3b82f6' }, { v: 'reparto', label: 'Reparto', color: '#f59e0b' }].map(opt => (
+                                <button key={opt.v} type="button" onClick={() => cambiarTipoDetectado(mapa.key, opt.v)}
+                                  style={mapa.tipo_entrega === opt.v
+                                    ? { ...s.badge(opt.color), border: `1px solid ${opt.color}`, cursor: 'pointer' }
+                                    : { ...s.badge('#4b5563'), cursor: 'pointer', opacity: 0.65 }}>
+                                  {opt.label}{opt.v === 'reparto' && mapa.tipo_entrega === 'reparto' ? ` · ${mapa.destinosEdit.length}` : ''}
+                                </button>
+                              ))}
+                            </div>
+                            <button type="button" onClick={() => quitarDetectado(mapa.key)} title="Quitar de esta importación" style={{ ...s.button('#ef4444'), padding: '0.15rem 0.45rem', fontSize: '0.65rem' }}>✕ Quitar</button>
+                          </div>
+                          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                            <span style={{ fontSize: '0.62rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Nombre</span>
+                            <input value={mapa.nombre} onChange={e => actualizarDetectado(mapa.key, { nombre: e.target.value })} />
+                          </label>
+                          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                            <span style={{ fontSize: '0.62rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Origen</span>
+                            <input value={mapa.origen} onChange={e => actualizarDetectado(mapa.key, { origen: e.target.value })} />
+                          </label>
+                          {mapa.tipo_entrega === 'reparto' ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                              <span style={{ fontSize: '0.62rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Destinos / paradas</span>
+                              {mapa.destinosEdit.map((destino, idx) => (
+                                <div key={`${mapa.key}-dest-${idx}`} style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                                  <span style={{ fontSize: '0.65rem', color: '#94a3b8', minWidth: '1rem' }}>{idx + 1}.</span>
+                                  <input value={destino} onChange={e => actualizarDetectado(mapa.key, { destinosEdit: mapa.destinosEdit.map((d, i) => i === idx ? e.target.value : d) }) } />
+                                  <button type="button" onClick={() => actualizarDetectado(mapa.key, { destinosEdit: mapa.destinosEdit.filter((_, i) => i !== idx) })} title="Eliminar parada" style={{ ...s.button('#ef4444'), padding: '0.15rem 0.4rem', fontSize: '0.65rem' }}>✕</button>
+                                </div>
+                              ))}
+                              <button type="button" onClick={() => actualizarDetectado(mapa.key, { destinosEdit: [...mapa.destinosEdit, ''] })} style={{ ...s.button('#10b981'), padding: '0.25rem 0.5rem', fontSize: '0.68rem' }}>+ Agregar parada</button>
+                            </div>
+                          ) : (
+                            <label style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                              <span style={{ fontSize: '0.62rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Destino</span>
+                              <input value={mapa.destino || ''} onChange={e => actualizarDetectado(mapa.key, { destino: e.target.value })} />
+                            </label>
+                          )}
+                          {(mapa.geocercas_creadas || []).length > 0 && (
+                            <span style={{ fontSize: '0.62rem', color: '#6a9b6a' }}>📍 Geocercas: {mapa.geocercas_creadas.join(', ')}</span>
+                          )}
+                        </div>
+                      ))}
+                      <button type="button" disabled={importGuardando} onClick={guardarDetectadas} style={s.button()}>{importGuardando ? 'Guardando...' : `Guardar ${importDetectados.length} ruta(s)`}</button>
+                    </div>
+                  )}
                   {importGeocercasCreadas.length > 0 && (
                     <p className="mapas-import-created">📍 Geocercas nuevas: {importGeocercasCreadas.join(', ')}</p>
                   )}

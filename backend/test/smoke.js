@@ -370,6 +370,39 @@ async function run() {
     /400.*email no es válido/
   );
 
+  const linkedUnit = await request(`/clientes/${client.id}/unidades/link`, {
+    method: 'POST',
+    body: JSON.stringify({ vehicle_id: 'smoke-client-unit', vehicle_name: 'Smoke Client Unit' }),
+  });
+  assert.equal(linkedUnit.vehicle_id, 'smoke-client-unit');
+  assert.equal(linkedUnit.cliente_id, client.id);
+  const relinkedUnit = await request(`/clientes/${client.id}/unidades/link`, {
+    method: 'POST',
+    body: JSON.stringify({ vehicle_id: 'smoke-client-unit', vehicle_name: 'Smoke Client Unit Renamed' }),
+  });
+  assert.equal(relinkedUnit.vehicle_name, 'Smoke Client Unit Renamed');
+  const client2 = await request('/clientes', { method: 'POST', body: JSON.stringify({ nombre: 'Smoke Cliente Unidades' }) });
+  await assert.rejects(
+    request(`/clientes/${client2.id}/unidades/link`, { method: 'POST', body: JSON.stringify({ vehicle_id: 'smoke-client-unit' }) }),
+    /409.*otro cliente/
+  );
+  await request(`/clientes/${client2.id}`, { method: 'DELETE' });
+  assert.equal((await request('/clientes/unidad-links')).some(link => link.vehicle_id === 'smoke-client-unit' && link.cliente_id === client.id), true);
+  assert.equal((await request(`/clientes/${client.id}/unidades/smoke-client-unit`, { method: 'DELETE' })).unlinked, 1);
+  assert.equal((await request(`/clientes/${client.id}/unidades/smoke-client-unit`, { method: 'DELETE' })).unlinked, 0);
+  await request(`/clientes/${client.id}/unidades/link`, {
+    method: 'POST',
+    body: JSON.stringify({ vehicle_id: 'smoke-client-unit', vehicle_name: 'Smoke Client Unit' }),
+  });
+  await assert.rejects(
+    request('/clientes/999999/unidades/link', { method: 'POST', body: JSON.stringify({ vehicle_id: 'smoke-x' }) }),
+    /404.*Cliente no encontrado/
+  );
+  await assert.rejects(
+    request(`/clientes/${client.id}/unidades/link`, { method: 'POST', body: JSON.stringify({}) }),
+    /400.*vehicle_id es requerido/
+  );
+
   const trailerNumA = `SMOKE-A-${Date.now()}`;
   const trailerNumB = `SMOKE-B-${Date.now()}`;
   const trailerNumC = `SMOKE-C-${Date.now()}`;
@@ -513,6 +546,7 @@ async function run() {
   assert.equal((await request(`/clientes/${client.id}`, { method: 'DELETE' })).deleted, 1);
   assert.equal((await request('/geofences')).find(row => row.id === clientGeofence.id)?.cliente_id, null);
   assert.equal((await request('/clientes/geofence-links')).some(link => link.cliente_id === client.id), false);
+  assert.equal((await request('/clientes/unidad-links')).some(link => link.vehicle_id === 'smoke-client-unit'), false);
   await request(`/geofences/${clientGeofence.id}`, { method: 'DELETE' });
 
   const destinoGeofence = await request('/geofences', {
@@ -621,6 +655,41 @@ async function run() {
   assert.equal(exitTrip.fecha_fin, exitEvent.created_at, 'fecha_fin debe ser la última salida de la geocerca, no el momento de completado manual');
   await request(`/viajes/${manualExitTrip.id}`, { method: 'DELETE' });
   await request(`/geofences/${manualExitGeofence.id}`, { method: 'DELETE' });
+
+  const origenGeofence = await request('/geofences', {
+    method: 'POST',
+    body: JSON.stringify({ nombre: 'Smoke Origen', latitud: 20, longitud: -100, radio_metros: 500 }),
+  });
+  mockLocations = mockLocations.map(v => v.id === 'smoke-circle-unit' ? { ...v, location: { latitude: 30, longitude: -110 } } : v);
+  await request('/check-geofences', { method: 'POST' });
+  const originTrip = await request('/viajes', {
+    method: 'POST',
+    body: JSON.stringify({
+      vehicle_id: 'smoke-circle-unit',
+      vehicle_name: 'Smoke Circle Unit',
+      origen: 'Smoke Origen',
+      destino: 'Saltillo',
+      tipo_entrega: 'directo',
+    }),
+  });
+  await request(`/viajes/${originTrip.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ estado: 'en_ruta_cargado' }),
+  });
+  await request('/check-geofences', { method: 'POST' });
+  let originRow = (await request('/viajes')).find(row => row.id === originTrip.id);
+  assert.equal(originRow.hora_llegada_origen, null, 'estar fuera del origen no debe registrar hora_llegada_origen');
+  mockLocations = mockLocations.map(v => v.id === 'smoke-circle-unit' ? { ...v, location: { latitude: 20, longitude: -100 } } : v);
+  await request('/check-geofences', { method: 'POST' });
+  originRow = (await request('/viajes')).find(row => row.id === originTrip.id);
+  assert.ok(originRow.hora_llegada_origen, 'entrar a la geocerca de origen debe registrar hora_llegada_origen');
+  assert.equal(originRow.estado, 'en_ruta_cargado', 'entrar al origen no debe cambiar el estado del viaje');
+  mockLocations = mockLocations.map(v => v.id === 'smoke-circle-unit' ? { ...v, location: { latitude: 30, longitude: -110 } } : v);
+  await request('/check-geofences', { method: 'POST' });
+  originRow = (await request('/viajes')).find(row => row.id === originTrip.id);
+  assert.ok(originRow.hora_salida_origen, 'salir de la geocerca de origen debe registrar hora_salida_origen');
+  await request(`/viajes/${originTrip.id}`, { method: 'DELETE' });
+  await request(`/geofences/${origenGeofence.id}`, { method: 'DELETE' });
 
   const progGeofence = await request('/geofences', {
     method: 'POST',

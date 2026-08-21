@@ -167,6 +167,24 @@ async function updateTripStopFromGeofence(vehicle, geofenceName, type, eventTime
   return stop ? getParada(stop.id) : null;
 }
 
+async function updateTripOriginFromGeofence(vehicle, geofenceName, type, eventTime = localTimestampISO(new Date())) {
+  const normalizedGeofence = normalizeDestination(geofenceName);
+  if (!normalizedGeofence || (!vehicle?.id && !vehicle?.name)) return null;
+  const activeTrips = await getActiveTripsForVehicle(vehicle.id, vehicle.name);
+  const matches = activeTrips.filter(trip =>
+    normalizeDestination(trip.origen) === normalizedGeofence &&
+    !['completado', 'cancelado'].includes(String(trip.estado || '').toLowerCase())
+  );
+  for (const trip of matches) {
+    if (type === 'entrada') {
+      await runQuery("UPDATE viajes SET hora_llegada_origen = ?, updated_at = datetime('now') WHERE id = ?", [eventTime, trip.id]);
+    } else if (type === 'salida') {
+      await runQuery("UPDATE viajes SET hora_salida_origen = ?, updated_at = datetime('now') WHERE id = ?", [eventTime, trip.id]);
+    }
+  }
+  return matches.length ? matches[0] : null;
+}
+
 function vehicleOutsideAllMatching(insideMap, vehicleId, destino, geofences) {
   const targets = geofences.filter(g => normalizeDestination(g.nombre) === normalizeDestination(destino));
   if (!targets.length) return true;
@@ -330,6 +348,7 @@ async function markInitialGeofenceContact(trip) {
       });
     }
     await updateTripStopFromGeofence(vehicle, geofence.nombre, 'entrada', eventTime, trip?.id);
+    await updateTripOriginFromGeofence(vehicle, geofence.nombre, 'entrada', eventTime);
     await upsertVehicleGeofenceState(vehicle.id, geofence.stateId, true);
     contacts.push({ vehicle: vehicle.name, geofence: geofence.nombre, latitud: vehicle.location.latitude, longitud: vehicle.location.longitud });
   }
@@ -404,6 +423,9 @@ async function handleSamsaraWebhook(req) {
     updateTripStopFromGeofence(vehicle, geofenceName, tipo, createdAt).catch(updateErr => {
       console.error('Error actualizando parada desde webhook:', updateErr.message);
     });
+    updateTripOriginFromGeofence(vehicle, geofenceName, tipo, createdAt).catch(originErr => {
+      console.error('Error actualizando origen del viaje desde webhook:', originErr.message);
+    });
     if (tipo === 'entrada') {
       findSamsaraGeofenceClient(geofenceId, geofenceName)
         .then(client => createCustomerGeofenceAlert(vehicle, client, geofenceName, createdAt))
@@ -460,6 +482,7 @@ async function performGeofenceCheck() {
               });
             }
             await updateTripStopFromGeofence(v, g.nombre, 'entrada');
+            await updateTripOriginFromGeofence(v, g.nombre, 'entrada');
             alerts.push({ vehicle: v.name, geofence: g.nombre, tipo: 'entrada' });
           }
         } else if (!inside && wasInside) {
@@ -482,6 +505,7 @@ async function performGeofenceCheck() {
               severidad: 'info',
             });
             await updateTripStopFromGeofence(v, g.nombre, 'salida');
+            await updateTripOriginFromGeofence(v, g.nombre, 'salida');
             alerts.push({ vehicle: v.name, geofence: g.nombre, tipo: 'salida' });
           }
         }
@@ -512,6 +536,7 @@ module.exports = {
   loadAllGeofences,
   tripContactIsProgramado,
   updateTripStopFromGeofence,
+  updateTripOriginFromGeofence,
   vehicleOutsideAllMatching,
   finalizeDepartedAfterGrace,
   resolveTripFechaFin,

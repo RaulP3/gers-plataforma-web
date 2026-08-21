@@ -77,6 +77,7 @@ export default function useGersDashboard() {
   const [formClienteGeofence, setFormClienteGeofence] = useState(GEOFENCE_DEFAULT);
   const [clienteGeofenceSaving, setClienteGeofenceSaving] = useState(false);
   const [geofenceLinks, setGeofenceLinks] = useState([]);
+  const [clienteUnidadLinks, setClienteUnidadLinks] = useState([]);
   const [showExistingGeofenceModal, setShowExistingGeofenceModal] = useState(false);
   const [existingGeofenceSelections, setExistingGeofenceSelections] = useState([]);
   const [existingGeofenceSearch, setExistingGeofenceSearch] = useState('');
@@ -112,6 +113,7 @@ export default function useGersDashboard() {
   const [seguimientoModalUnidadId, setSeguimientoModalUnidadId] = useState('');
   const [seguimientoModalGrupo, setSeguimientoModalGrupo] = useState('');
   const [seguimientoModalNota, setSeguimientoModalNota] = useState('');
+  const [seguimientoModalEstatus, setSeguimientoModalEstatus] = useState('Disponible');
   const [seguimientoModalSaving, setSeguimientoModalSaving] = useState(false);
   const [seguimientoModalError, setSeguimientoModalError] = useState('');
   const [seguimientoFormAvanzado, setSeguimientoFormAvanzado] = useState(false);
@@ -229,6 +231,16 @@ export default function useGersDashboard() {
   const selectedClienteGeofences = selectedCliente
     ? allGeofences.filter(geofence => String(geofenceOwnerId(geofence) || '') === String(selectedCliente.id))
     : [];
+  const selectedClienteUnidades = useMemo(() => {
+    if (!selectedCliente) return [];
+    return clienteUnidadLinks
+      .filter(link => String(link.cliente_id) === String(selectedCliente.id))
+      .map(link => {
+        const vehiculo = vehiculos.find(v => String(v.id) === String(link.vehicle_id));
+        return { vehicle_id: link.vehicle_id, vehicle_name: vehiculo?.name || link.vehicle_name || link.vehicle_id };
+      })
+      .sort((a, b) => String(a.vehicle_name).localeCompare(String(b.vehicle_name)));
+  }, [selectedCliente, clienteUnidadLinks, vehiculos]);
   const geofenceNames = useMemo(() => {
     return [...new Set(allGeofences.filter(g => g.activa !== 0).map(g => g.nombre).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   }, [allGeofences]);
@@ -1083,12 +1095,12 @@ export default function useGersDashboard() {
     const pendientesVersion = pendientesVersionRef.current;
     const run = async () => {
       setLoading(true);
-      const [statsRes, pendientesRes, viajesRes, alertasRes, vehiculosRes, operadoresRes, driversRes, geofencesRes, eventsRes, riskZonesRes, samsaraAddrRes, remolquesRes, seguimientoRes, unidadesRes, mapasRes, clientesRes, geofenceLinksRes, kpisRes] = await Promise.allSettled([
+      const [statsRes, pendientesRes, viajesRes, alertasRes, vehiculosRes, operadoresRes, driversRes, geofencesRes, eventsRes, riskZonesRes, samsaraAddrRes, remolquesRes, seguimientoRes, unidadesRes, mapasRes, clientesRes, geofenceLinksRes, unidadLinksRes, kpisRes] = await Promise.allSettled([
         requestJson(`${apiUrl}/reportes/resumen`), requestJson(`${apiUrl}/pendientes`), requestJson(`${apiUrl}/viajes`),
         requestJson(`${apiUrl}/alertas`), requestJson(`${apiUrl}/samsara/vehicles`),
         requestJson(`${apiUrl}/vehicle-operators`), requestJson(`${apiUrl}/samsara/drivers`), requestJson(`${apiUrl}/geofences`),
         requestJson(`${apiUrl}/geofence-events?limit=100`), requestJson(`${apiUrl}/risk-zones`), requestJson(`${apiUrl}/samsara/addresses`),
-        requestJson(`${apiUrl}/remolques`), requestJson(`${apiUrl}/seguimiento`), requestJson(`${apiUrl}/unidades`), requestJson(`${apiUrl}/mapas`), requestJson(`${apiUrl}/clientes`), requestJson(`${apiUrl}/clientes/geofence-links`), requestJson(`${apiUrl}/kpis`),
+        requestJson(`${apiUrl}/remolques`), requestJson(`${apiUrl}/seguimiento`), requestJson(`${apiUrl}/unidades`), requestJson(`${apiUrl}/mapas`), requestJson(`${apiUrl}/clientes`), requestJson(`${apiUrl}/clientes/geofence-links`), requestJson(`${apiUrl}/clientes/unidad-links`), requestJson(`${apiUrl}/kpis`),
       ]);
 
       if (statsRes.status === 'fulfilled' && statsRes.value && !Array.isArray(statsRes.value)) setStats(statsRes.value);
@@ -1106,6 +1118,7 @@ export default function useGersDashboard() {
       if (unidadesRes.status === 'fulfilled' && Array.isArray(unidadesRes.value)) setUnidadesLocales(unidadesRes.value);
       if (clientesRes.status === 'fulfilled' && Array.isArray(clientesRes.value)) setClientes(clientesRes.value);
       if (geofenceLinksRes.status === 'fulfilled' && Array.isArray(geofenceLinksRes.value)) setGeofenceLinks(geofenceLinksRes.value);
+      if (unidadLinksRes.status === 'fulfilled' && Array.isArray(unidadLinksRes.value)) setClienteUnidadLinks(unidadLinksRes.value);
       if (mapasRes.status === 'fulfilled' && Array.isArray(mapasRes.value)) {
         setMapas(mapasRes.value);
         setSelectedMapa(prev => mapasRes.value.find(mapa => String(mapa.id) === String(prev?.id)) || mapasRes.value[0] || null);
@@ -1169,6 +1182,11 @@ export default function useGersDashboard() {
   const refreshGeofenceLinks = async () => {
     const rows = await apiJson(`${apiUrl}/clientes/geofence-links`);
     setGeofenceLinks(Array.isArray(rows) ? rows : []);
+  };
+
+  const refreshClienteUnidadLinks = async () => {
+    const rows = await apiJson(`${apiUrl}/clientes/unidad-links`).catch(() => []);
+    setClienteUnidadLinks(Array.isArray(rows) ? rows : []);
   };
 
   const refreshSeguimiento = async () => {
@@ -2155,16 +2173,18 @@ export default function useGersDashboard() {
     setShowSeguimientoUpdateModal(true);
   };
 
-  const seleccionarUnidadSeguimiento = (unidadId) => {
+  const seleccionarUnidadSeguimiento = (unidadId, opts = {}) => {
     setSeguimientoModalUnidadId(unidadId);
     setSeguimientoModalError('');
+    setSeguimientoModalNota('');
     const unidad = todasLasUnidades.find(v => String(v.id) === String(unidadId));
     const fila = obtenerSeguimientoUnidad(unidad?.name || unidad?.nombre || '');
-    setSeguimientoModalGrupo(fila?.grupo || '');
-    setSeguimientoModalNota(fila?.comentarios_monitoreo || fila?.comentarios_cliente || '');
+    const grupoFallback = typeof opts.grupoFallback === 'string' ? opts.grupoFallback : '';
+    setSeguimientoModalGrupo(fila?.grupo || grupoFallback || '');
+    setSeguimientoModalEstatus(normalizarEstatusSeguimiento(fila?.estatus || 'Disponible'));
   };
 
-  const construirActualizacionSeguimiento = (unidad, fila, grupo, comentario) => {
+  const construirActualizacionSeguimiento = (unidad, fila, grupo, comentario, estatusOverride) => {
     const nombreUnidad = unidad.name || unidad.nombre || '';
     const viajesVigentes = obtenerViajesUnidad(nombreUnidad, unidad.id)
       .filter(viaje => !['completado', 'cancelado'].includes(String(viaje.estado || '').toLowerCase()));
@@ -2184,7 +2204,7 @@ export default function useGersDashboard() {
       cita_descarga: viajeActual?.fecha_fin || fila?.cita_descarga || '',
       hora_llegada: fila?.hora_llegada || '',
       hora_liberacion: fila?.hora_liberacion || '',
-      estatus: normalizarEstatusSeguimiento(viajeActual?.estado || fila?.estatus || unidad.estatus || 'Disponible'),
+      estatus: normalizarEstatusSeguimiento(estatusOverride || viajeActual?.estado || fila?.estatus || unidad.estatus || 'Disponible'),
       comentarios_cliente: fila?.comentarios_cliente || '',
       comentarios_monitoreo: comentario,
       grupo,
@@ -2206,15 +2226,11 @@ export default function useGersDashboard() {
       return;
     }
     const notaNueva = seguimientoModalNota.trim();
-    if (!notaNueva) {
-      setSeguimientoModalError('Escribe una observación');
-      return;
-    }
 
     setSeguimientoModalSaving(true);
     setSeguimientoModalError('');
     try {
-      const payload = construirActualizacionSeguimiento(unidad, fila, grupo, notaNueva);
+      const payload = construirActualizacionSeguimiento(unidad, fila, grupo, notaNueva, seguimientoModalEstatus);
       if (fila) {
         await apiJson(`${apiUrl}/seguimiento/${fila.id}`, {
           method: 'PUT',
@@ -2228,12 +2244,19 @@ export default function useGersDashboard() {
           body: JSON.stringify(payload),
         });
       }
-      setSeguimientoModalNota('');
       await refreshSeguimiento();
+      const indice = todasLasUnidades.findIndex(v => String(v.id) === String(seguimientoModalUnidadId));
+      const siguiente = todasLasUnidades[indice + 1] || null;
+      setSeguimientoModalSaving(false);
+      if (siguiente) {
+        seleccionarUnidadSeguimiento(siguiente.id, { grupoFallback: grupo });
+      } else {
+        setShowSeguimientoUpdateModal(false);
+      }
     } catch (err) {
       setSeguimientoModalError('No se pudo guardar la actualización');
+      setSeguimientoModalSaving(false);
     }
-    setSeguimientoModalSaving(false);
   };
 
   const limpiarSeguimientoForm = () => {
@@ -2759,6 +2782,30 @@ export default function useGersDashboard() {
       await Promise.all([refreshGeofences(), refreshGeofenceLinks()]);
     } catch (err) {
       alert(err.message || 'No se pudo desvincular la geocerca');
+    }
+  };
+
+  const vincularClienteUnidad = async (vehicleId, vehicleName) => {
+    if (!selectedCliente || !vehicleId) return;
+    try {
+      await apiJson(`${apiUrl}/clientes/${selectedCliente.id}/unidades/link`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vehicle_id: vehicleId, vehicle_name: vehicleName || '' }),
+      });
+      await refreshClienteUnidadLinks();
+    } catch (err) {
+      alert(err.message || 'No se pudo asignar la unidad');
+    }
+  };
+
+  const desvincularClienteUnidad = async vehicleId => {
+    if (!selectedCliente || !confirm('¿Quitar la asignación de esta unidad?')) return;
+    try {
+      await apiJson(`${apiUrl}/clientes/${selectedCliente.id}/unidades/${encodeURIComponent(vehicleId)}`, { method: 'DELETE' });
+      await refreshClienteUnidadLinks();
+    } catch (err) {
+      alert(err.message || 'No se pudo quitar la asignación');
     }
   };
 
@@ -3583,6 +3630,7 @@ export default function useGersDashboard() {
     clienteGeofenceSaving,
     setClienteGeofenceSaving,
     geofenceLinks,
+    clienteUnidadLinks,
     setGeofenceLinks,
     showExistingGeofenceModal,
     setShowExistingGeofenceModal,
@@ -3646,6 +3694,8 @@ export default function useGersDashboard() {
     setSeguimientoModalGrupo,
     seguimientoModalNota,
     setSeguimientoModalNota,
+    seguimientoModalEstatus,
+    setSeguimientoModalEstatus,
     seguimientoModalSaving,
     setSeguimientoModalSaving,
     seguimientoModalError,
@@ -3741,6 +3791,9 @@ export default function useGersDashboard() {
     selectedCliente,
     geofenceOwnerId,
     selectedClienteGeofences,
+    selectedClienteUnidades,
+    vincularClienteUnidad,
+    desvincularClienteUnidad,
     geofenceNames,
     normalizeGeofenceName,
     findGeofence,

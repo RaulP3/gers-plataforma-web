@@ -998,6 +998,12 @@ export function ViajeModal({
                     <div>
                       <div style={{ fontSize: '0.75rem', color: '#6a9b6a', marginBottom: '0.2rem' }}>Origen</div>
                       <div style={{ fontSize: '0.9rem', fontWeight: '600' }}>{viajeDetalle.origen || '-'}</div>
+                      {(viajeDetalle.hora_llegada_origen || viajeDetalle.hora_salida_origen) && (
+                        <div style={{ marginTop: '0.35rem', color: '#94a3b8', fontSize: '0.65rem', lineHeight: 1.45 }}>
+                          {viajeDetalle.hora_llegada_origen && <div>Entró al origen: {parseFecha(viajeDetalle.hora_llegada_origen)?.toLocaleString('es-MX')}</div>}
+                          {viajeDetalle.hora_salida_origen && <div>Salió del origen: {parseFecha(viajeDetalle.hora_salida_origen)?.toLocaleString('es-MX')}</div>}
+                        </div>
+                      )}
                     </div>
                     <div style={{ fontSize: '1.5rem', color: '#00ff41' }}>→</div>
                     <div>
@@ -1137,10 +1143,13 @@ export function SeguimientoUpdateModal({
   seleccionarUnidadSeguimiento,
   obtenerViajesUnidad,
   operadores,
+  seguimientoEstados,
   seguimientoModalGrupo,
   setSeguimientoModalGrupo,
   seguimientoModalNota,
   setSeguimientoModalNota,
+  seguimientoModalEstatus,
+  setSeguimientoModalEstatus,
   seguimientoModalError,
   guardarActualizacionSeguimiento,
   seguimientoModalSaving,
@@ -1260,6 +1269,19 @@ export function SeguimientoUpdateModal({
                         </div>
 
                         <div style={{ padding: '1rem', background: '#111111', border: '1px solid #1a3d1a', borderRadius: '12px' }}>
+                          <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.5rem' }}>Estatus *</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '0.85rem' }}>
+                            {seguimientoEstados.map(est => {
+                              const activo = seguimientoModalEstatus === est;
+                              const estColor = est === 'Disponible' ? '#6b7280' : est === 'Programado' ? '#8b5cf6' : est.includes('carga') ? '#f59e0b' : est.includes('descarga') ? '#ec4899' : est === 'En resguardo' ? '#f97316' : '#10b981';
+                              return (
+                                <button key={est} type="button" onClick={() => setSeguimientoModalEstatus(est)}
+                                  style={{ padding: '0.45rem 0.7rem', borderRadius: '8px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, background: activo ? estColor : 'transparent', color: activo ? '#0d0d0d' : '#9ca3af', border: activo ? `1px solid ${estColor}` : '1px solid #1f1f1f' }}>
+                                  {est}
+                                </button>
+                              );
+                            })}
+                          </div>
                           <div style={{ marginBottom: '0.85rem' }}>
                             <label htmlFor="seguimiento-modal-grupo" style={{ ...s.label, display: 'block', marginBottom: '0.35rem' }}>Grupo a reportar *</label>
                             <input
@@ -1282,7 +1304,7 @@ export function SeguimientoUpdateModal({
                           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.75rem' }}>
                             <button onClick={() => setShowSeguimientoUpdateModal(false)} style={s.button('#6b7280')}>Cancelar</button>
                             <button onClick={guardarActualizacionSeguimiento} disabled={seguimientoModalSaving} style={s.button('#10b981')}>
-                              {seguimientoModalSaving ? 'Guardando...' : 'Guardar Observación'}
+                              {seguimientoModalSaving ? 'Guardando...' : 'Guardar y siguiente'}
                             </button>
                           </div>
                         </div>

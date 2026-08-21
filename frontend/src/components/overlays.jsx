@@ -149,14 +149,16 @@ export function ModalsRoot({
   remolques,
   remolquesFullDraft,
   s,
-  samsaraDrivers,
-  seguimientoModalError,
-  seguimientoModalGrupo,
-  seguimientoModalNota,
-  seguimientoModalSaving,
-  seguimientoModalUnidadId,
-  seleccionarUnidadSeguimiento,
-  selectedCliente,
+   samsaraDrivers,
+   seguimientoEstados,
+   seguimientoModalError,
+   seguimientoModalEstatus,
+   seguimientoModalGrupo,
+   seguimientoModalNota,
+   seguimientoModalSaving,
+   seguimientoModalUnidadId,
+   seleccionarUnidadSeguimiento,
+   selectedCliente,
   selectedVehicle,
   setCitaSeleccionada,
   setComentarioRapido,
@@ -175,8 +177,9 @@ export function ModalsRoot({
   setRemolqueDraft,
   setRemolqueModo,
   setRemolquesFullDraft,
-  setSeguimientoModalGrupo,
-  setSeguimientoModalNota,
+   setSeguimientoModalGrupo,
+   setSeguimientoModalEstatus,
+   setSeguimientoModalNota,
   setSelectedVehicle,
   setShowHistorialModal,
   setShowMensajeModal,
@@ -330,10 +333,13 @@ export function ModalsRoot({
   seleccionarUnidadSeguimiento={seleccionarUnidadSeguimiento}
   obtenerViajesUnidad={obtenerViajesUnidad}
   operadores={operadores}
+  seguimientoEstados={seguimientoEstados}
   seguimientoModalGrupo={seguimientoModalGrupo}
   setSeguimientoModalGrupo={setSeguimientoModalGrupo}
   seguimientoModalNota={seguimientoModalNota}
   setSeguimientoModalNota={setSeguimientoModalNota}
+  seguimientoModalEstatus={seguimientoModalEstatus}
+  setSeguimientoModalEstatus={setSeguimientoModalEstatus}
   seguimientoModalError={seguimientoModalError}
   guardarActualizacionSeguimiento={guardarActualizacionSeguimiento}
   seguimientoModalSaving={seguimientoModalSaving}

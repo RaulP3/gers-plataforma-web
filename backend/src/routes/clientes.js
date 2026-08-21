@@ -78,6 +78,51 @@ router.get('/clientes/geofence-links', (req, res) => {
   });
 });
 
+router.get('/clientes/unidad-links', (req, res) => {
+  db.all('SELECT * FROM cliente_unidad_links ORDER BY vehicle_name ASC, id ASC', [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows || []);
+  });
+});
+
+router.post('/clientes/:id/unidades/link', async (req, res) => {
+  const vehicleId = String(req.body?.vehicle_id ?? '').trim();
+  const vehicleName = String(req.body?.vehicle_name ?? '').trim();
+  if (!vehicleId) return res.status(400).json({ error: 'vehicle_id es requerido' });
+  if (vehicleName.length > 150) return res.status(400).json({ error: 'vehicle_name no puede exceder 150 caracteres' });
+  try {
+    const client = await getQuery('SELECT id FROM clientes WHERE id = ?', [req.params.id]);
+    if (!client) return res.status(404).json({ error: 'Cliente no encontrado' });
+    const existing = await getQuery('SELECT * FROM cliente_unidad_links WHERE vehicle_id = ?', [vehicleId]);
+    if (existing && String(existing.cliente_id) !== String(client.id)) {
+      return res.status(409).json({ error: 'La unidad ya está asignada a otro cliente' });
+    }
+    if (existing) {
+      await runQuery('UPDATE cliente_unidad_links SET vehicle_name = ? WHERE vehicle_id = ?', [vehicleName, vehicleId]);
+    } else {
+      await runQuery(
+        'INSERT INTO cliente_unidad_links (cliente_id, vehicle_id, vehicle_name) VALUES (?, ?, ?)',
+        [client.id, vehicleId, vehicleName]
+      );
+    }
+    res.json(await getQuery('SELECT * FROM cliente_unidad_links WHERE vehicle_id = ?', [vehicleId]));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/clientes/:id/unidades/:vehicleId', async (req, res) => {
+  try {
+    const result = await runQuery(
+      'DELETE FROM cliente_unidad_links WHERE cliente_id = ? AND vehicle_id = ?',
+      [req.params.id, req.params.vehicleId]
+    );
+    res.json({ unlinked: result.changes });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/clientes/:id', (req, res) => {
   db.get('SELECT * FROM clientes WHERE id = ?', [req.params.id], (err, row) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -187,6 +232,7 @@ router.delete('/clientes/:id', (req, res) => {
   withTransaction(async tx => {
     await tx.run('UPDATE geofences SET cliente_id = NULL WHERE cliente_id = ?', [req.params.id]);
     await tx.run('DELETE FROM cliente_geofence_links WHERE cliente_id = ?', [req.params.id]);
+    await tx.run('DELETE FROM cliente_unidad_links WHERE cliente_id = ?', [req.params.id]);
     return tx.run('DELETE FROM clientes WHERE id = ?', [req.params.id]);
   }).then(result => {
     if (!result.changes) return res.status(404).json({ error: 'Cliente no encontrado' });

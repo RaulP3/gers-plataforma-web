@@ -103,6 +103,8 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
   db.run('UPDATE viajes SET cita_programada = fecha_fin WHERE cita_programada IS NULL AND fecha_fin IS NOT NULL', [], () => {});
   db.run("ALTER TABLE viajes ADD COLUMN hora_llegada DATETIME", [], () => {});
   db.run("ALTER TABLE viajes ADD COLUMN hora_salida DATETIME", [], () => {});
+  db.run("ALTER TABLE viajes ADD COLUMN hora_llegada_origen DATETIME", [], () => {});
+  db.run("ALTER TABLE viajes ADD COLUMN hora_salida_origen DATETIME", [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS viaje_paradas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -399,6 +401,17 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
     FOREIGN KEY (cliente_id) REFERENCES clientes(id) ON DELETE CASCADE
   )`);
   db.run('CREATE INDEX IF NOT EXISTS idx_cliente_geofence_links_cliente ON cliente_geofence_links(cliente_id)', [], () => {});
+
+  db.run(`CREATE TABLE IF NOT EXISTS cliente_unidad_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cliente_id INTEGER NOT NULL,
+    vehicle_id TEXT NOT NULL,
+    vehicle_name TEXT DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(vehicle_id),
+    FOREIGN KEY (cliente_id) REFERENCES clientes(id) ON DELETE CASCADE
+  )`);
+  db.run('CREATE INDEX IF NOT EXISTS idx_cliente_unidad_links_cliente ON cliente_unidad_links(cliente_id)', [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS mapas_mymaps (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
