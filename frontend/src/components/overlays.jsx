@@ -11,8 +11,10 @@ import {
   DetalleUnidadModal,
   ExistingGeofenceModal,
   HistorialModal,
+  ImportarSeguimientoModal,
   MensajeModal,
   PendienteModal,
+  RemolqueAsignarModal,
   RemolqueModal,
   SeguimientoUpdateModal,
   TurnoModal,
@@ -56,12 +58,14 @@ export function ModalsRoot({
   actualizarViaje,
   agregarComentarioPendiente,
   allGeofences,
+  asignarRemolqueDesdeDashboard,
   calculandoEta,
   cerrarClienteGeofenceModal,
   cerrarClienteModal,
   cerrarExistingGeofenceModal,
   cerrarPendiente,
   cerrarRemolqueModal,
+  cerrarRemolqueAsignarModal,
   citaLlegada,
   citaSeleccionada,
   citasOperativas,
@@ -80,6 +84,7 @@ export function ModalsRoot({
   currentUser,
   descargarPdfTurno,
   destinoInput,
+  desasignarRemolque,
   diaEntregaCita,
   displayRemolque,
   driverPhoneOverrides,
@@ -99,6 +104,9 @@ export function ModalsRoot({
   findGeofence,
   formCliente,
   formClienteGeofence,
+  historialRemolque,
+  historialRemolqueError,
+  historialRemolqueLoading,
   formPendiente,
   formRemolque,
   formUnidad,
@@ -149,16 +157,32 @@ export function ModalsRoot({
   remolques,
   remolquesFullDraft,
   s,
-   samsaraDrivers,
-   seguimientoEstados,
-   seguimientoModalError,
-   seguimientoModalEstatus,
-   seguimientoModalGrupo,
-   seguimientoModalNota,
-   seguimientoModalSaving,
-   seguimientoModalUnidadId,
-   seleccionarUnidadSeguimiento,
-   selectedCliente,
+  samsaraDrivers,
+  showRemolqueAsignarModal,
+  setShowRemolqueAsignarModal,
+  remolqueAsignarActual,
+  setRemolqueAsignarActual,
+  remolqueDashModo,
+  setRemolqueDashModo,
+  remolqueDashVehicleId,
+  setRemolqueDashVehicleId,
+  remolqueDashSegundoId,
+  setRemolqueDashSegundoId,
+  remolqueDashSaving,
+  setRemolqueDashSaving,
+  seguimientoEstados,
+  seguimientoModalError,
+  seguimientoModalEstatus,
+  seguimientoModalGrupo,
+  seguimientoModalNota,
+  seguimientoModalSaving,
+  seguimientoModalUnidadId,
+  seleccionarUnidadSeguimiento,
+  showImportarSeguimientoModal,
+  setShowImportarSeguimientoModal,
+  importarSeguimientoLoading,
+  importarSeguimientoDesdeCsv,
+  selectedCliente,
   selectedVehicle,
   setCitaSeleccionada,
   setComentarioRapido,
@@ -438,6 +462,32 @@ export function ModalsRoot({
 />
 }
 
+      {showRemolqueAsignarModal &&
+  <RemolqueAsignarModal
+  cerrar={cerrarRemolqueAsignarModal}
+  remolque={remolqueAsignarActual}
+  vehiculos={vehiculos}
+  remolques={remolques}
+  s={s}
+  remolqueDashModo={remolqueDashModo}
+  setRemolqueDashModo={setRemolqueDashModo}
+  remolqueDashVehicleId={remolqueDashVehicleId}
+  setRemolqueDashVehicleId={setRemolqueDashVehicleId}
+  remolqueDashSegundoId={remolqueDashSegundoId}
+  setRemolqueDashSegundoId={setRemolqueDashSegundoId}
+  asignarRemolqueDesdeDashboard={asignarRemolqueDesdeDashboard}
+  desasignarRemolque={desasignarRemolque}
+  historialRemolque={historialRemolque}
+  historialRemolqueLoading={historialRemolqueLoading}
+  historialRemolqueError={historialRemolqueError}
+  numeroRemolque={numeroRemolque}
+  obtenerMiembrosFull={obtenerMiembrosFull}
+  displayRemolque={displayRemolque}
+  parseFecha={parseFecha}
+  remolqueDashSaving={remolqueDashSaving}
+/>
+}
+
       {showTurnoModal &&
   <TurnoModal
   setShowTurnoModal={setShowTurnoModal}
@@ -490,6 +540,13 @@ export function ModalsRoot({
   copiarReporteWpp={copiarReporteWpp}
   setWppReporteGrupos={setWppReporteGrupos}
   setWppReporteTextos={setWppReporteTextos}
+/>}
+
+{showImportarSeguimientoModal && <ImportarSeguimientoModal
+  cerrar={() => setShowImportarSeguimientoModal(false)}
+  importarSeguimientoDesdeCsv={importarSeguimientoDesdeCsv}
+  importarSeguimientoLoading={importarSeguimientoLoading}
+  s={s}
 />}
     </>
   );

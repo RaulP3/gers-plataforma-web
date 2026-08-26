@@ -83,6 +83,8 @@ export default function useGersDashboard() {
   const [existingGeofenceSearch, setExistingGeofenceSearch] = useState('');
   const [existingGeofenceSaving, setExistingGeofenceSaving] = useState(false);
   const [showRemolqueModal, setShowRemolqueModal] = useState(false);
+  const [showRemolqueAsignarModal, setShowRemolqueAsignarModal] = useState(false);
+  const [remolqueAsignarActual, setRemolqueAsignarActual] = useState(null);
   const [formRemolque, setFormRemolque] = useState({ numero: '', categoria: 'Caja Seca' });
   const [remolqueEditando, setRemolqueEditando] = useState(null);
   const [historialRemolque, setHistorialRemolque] = useState([]);
@@ -117,6 +119,8 @@ export default function useGersDashboard() {
   const [seguimientoModalSaving, setSeguimientoModalSaving] = useState(false);
   const [seguimientoModalError, setSeguimientoModalError] = useState('');
   const [seguimientoFormAvanzado, setSeguimientoFormAvanzado] = useState(false);
+  const [showImportarSeguimientoModal, setShowImportarSeguimientoModal] = useState(false);
+  const [importarSeguimientoLoading, setImportarSeguimientoLoading] = useState(false);
   const [showMensajeModal, setShowMensajeModal] = useState(false);
   const [mensajeCliente, setMensajeCliente] = useState('');
   const [mensajeTexto, setMensajeTexto] = useState('');
@@ -174,7 +178,7 @@ export default function useGersDashboard() {
   };
 
   const gruposUnicos = [...new Set(seguimiento.map(row => row.grupo).filter(Boolean))];
-  const seguimientoEstados = ['Disponible', 'En ruta cargado', 'En ruta vacio', 'En proceso de carga', 'En proceso de descarga', 'En resguardo', 'Programado', 'No disponible'];
+  const seguimientoEstados = ['Disponible', 'En ruta cargado', 'En ruta vacio', 'En proceso de carga', 'En proceso de descarga', 'En resguardo', 'Programado', 'Completado', 'No disponible'];
   const remolqueCategorias = useMemo(() => {
     const base = ['Thermo Refrigerado', 'Caja Seca', 'Porta Contenedores', 'Tanque'];
     const extras = [...new Set(remolques.map(r => r.categoria || 'Caja Seca').filter(cat => !base.includes(cat)))];
@@ -790,9 +794,11 @@ export default function useGersDashboard() {
       else if (showClienteGeofenceModal) cerrarClienteGeofenceModal();
       else if (showClienteModal) cerrarClienteModal();
       else if (showRemolqueModal) cerrarRemolqueModal();
+      else if (showRemolqueAsignarModal) cerrarRemolqueAsignarModal();
       else if (showHistorialModal) setShowHistorialModal(false);
       else if (showPendienteModal) { pendienteRequestRef.current.controller?.abort(); pendienteRequestRef.current.generation += 1; setShowPendienteModal(false); setPendienteEditando(null); setNuevoComentarioPendiente(''); }
       else if (showMensajeModal) setShowMensajeModal(false);
+      else if (showImportarSeguimientoModal) setShowImportarSeguimientoModal(false);
       else if (showSeguimientoUpdateModal) setShowSeguimientoUpdateModal(false);
       else if (showViajeModal) { setShowViajeModal(false); setViajeEditando(false); }
       else if (showProgramarViajeModal) setShowProgramarViajeModal(false);
@@ -803,7 +809,7 @@ export default function useGersDashboard() {
     };
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
-  }, [selectedVehicle, showClienteGeofenceModal, showClienteModal, showExistingGeofenceModal, showHistorialModal, showMensajeModal, showPendienteModal, showProgramarViajeModal, showRemolqueModal, showSeguimientoUpdateModal, showTurnoModal, showUnidadModal, showViajeModal, showZoneModal, citaSeleccionada]);
+  }, [selectedVehicle, showClienteGeofenceModal, showClienteModal, showExistingGeofenceModal, showHistorialModal, showImportarSeguimientoModal, showMensajeModal, showPendienteModal, showProgramarViajeModal, showRemolqueAsignarModal, showRemolqueModal, showSeguimientoUpdateModal, showTurnoModal, showUnidadModal, showViajeModal, showZoneModal, citaSeleccionada]);
 
   useEffect(() => {
     if (!apiUrl) return;
@@ -1192,6 +1198,27 @@ export default function useGersDashboard() {
   const refreshSeguimiento = async () => {
     const rows = await fetch(`${apiUrl}/seguimiento`).then(r => r.json()).catch(() => []);
     setSeguimiento(normalizarSeguimiento(rows));
+  };
+
+  const importarSeguimientoDesdeCsv = async (url) => {
+    setImportarSeguimientoLoading(true);
+    try {
+      const token = localStorage.getItem('gers_auth_token');
+      const res = await fetch(`${apiUrl}/seguimiento/import-csv`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error al importar');
+      await refreshSeguimiento();
+      setShowImportarSeguimientoModal(false);
+      return data;
+    } catch (err) {
+      throw err;
+    } finally {
+      setImportarSeguimientoLoading(false);
+    }
   };
 
   const refreshGeofences = async () => {
@@ -1911,7 +1938,16 @@ export default function useGersDashboard() {
     setRemolqueDashVehicleId(remolque.vehicle_id_asignado || '');
     setRemolqueDashModo(miembros.length > 1 ? 'full' : 'sencillo');
     setRemolqueDashSegundoId(segundo ? String(segundo.id) : '');
+    setSelectedRemolque(remolque.id);
+    setRemolqueAsignarActual(remolque);
+    setShowRemolqueAsignarModal(true);
     cargarHistorialRemolque(remolque.id);
+  };
+
+  const cerrarRemolqueAsignarModal = () => {
+    setShowRemolqueAsignarModal(false);
+    setRemolqueAsignarActual(null);
+    setSelectedRemolque(null);
   };
 
   const asignarRemolqueDesdeDashboard = async (remolque) => {
@@ -2176,12 +2212,12 @@ export default function useGersDashboard() {
   const seleccionarUnidadSeguimiento = (unidadId, opts = {}) => {
     setSeguimientoModalUnidadId(unidadId);
     setSeguimientoModalError('');
-    setSeguimientoModalNota('');
     const unidad = todasLasUnidades.find(v => String(v.id) === String(unidadId));
     const fila = obtenerSeguimientoUnidad(unidad?.name || unidad?.nombre || '');
     const grupoFallback = typeof opts.grupoFallback === 'string' ? opts.grupoFallback : '';
     setSeguimientoModalGrupo(fila?.grupo || grupoFallback || '');
     setSeguimientoModalEstatus(normalizarEstatusSeguimiento(fila?.estatus || 'Disponible'));
+    setSeguimientoModalNota(fila?.comentarios_monitoreo || '');
   };
 
   const construirActualizacionSeguimiento = (unidad, fila, grupo, comentario, estatusOverride) => {
@@ -3662,6 +3698,11 @@ export default function useGersDashboard() {
     setRemolqueDashSegundoId,
     remolqueDashSaving,
     setRemolqueDashSaving,
+    showRemolqueAsignarModal,
+    setShowRemolqueAsignarModal,
+    remolqueAsignarActual,
+    setRemolqueAsignarActual,
+    cerrarRemolqueAsignarModal,
     seguimiento,
     setSeguimiento,
     seguimientoFilter,
@@ -3702,6 +3743,10 @@ export default function useGersDashboard() {
     setSeguimientoModalError,
     seguimientoFormAvanzado,
     setSeguimientoFormAvanzado,
+    showImportarSeguimientoModal,
+    setShowImportarSeguimientoModal,
+    importarSeguimientoLoading,
+    importarSeguimientoDesdeCsv,
     showMensajeModal,
     setShowMensajeModal,
     mensajeCliente,

@@ -1746,29 +1746,18 @@ export function OperadoresSection({
 
 export function RemolquesSection({
   abrirRemolqueDashboard,
-  asignarRemolqueDesdeDashboard,
   desasignarRemolque,
   displayRemolque,
   eliminarRemolque,
   setResguardoRemolque,
-  historialRemolque,
-  historialRemolqueError,
-  historialRemolqueLoading,
   numeroRemolque,
   obtenerMiembrosFull,
   parseFecha,
   remolqueCategorias,
-  remolqueDashModo,
-  remolqueDashSaving,
-  remolqueDashSegundoId,
-  remolqueDashVehicleId,
   remolques,
   s,
   selectedRemolque,
   setFormRemolque,
-  setRemolqueDashModo,
-  setRemolqueDashSegundoId,
-  setRemolqueDashVehicleId,
   setRemolqueEditando,
   setShowRemolqueModal,
   tempColor,
@@ -1879,77 +1868,6 @@ export function RemolquesSection({
                 </div>
               );
             })}
-
-            {selectedRemolque && (
-              <div style={{ background: '#111', border: '1px solid #1a3d1a', borderRadius: '10px', padding: '1rem' }}>
-                {(() => {
-                  const remolque = remolques.find(item => item.id === selectedRemolque);
-                  if (!remolque) return null;
-                  const asignado = remolque.vehicle_id_asignado || remolque.unidad_asignada;
-                  const esTanque = String(remolque.categoria || '').toLowerCase() === 'tanque';
-                  return (
-                    <div style={{ marginBottom: '1rem', paddingBottom: '1rem', borderBottom: '1px solid #1a3d1a' }}>
-                      <h3 style={{ color: '#00ff41', margin: '0 0 0.75rem 0' }}>Asignación de {numeroRemolque(remolque.numero)}</h3>
-                      {asignado ? (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                          <span style={{ color: '#e0e0e0' }}>
-                            {obtenerMiembrosFull(remolque).length > 1 ? `FULL: ${displayRemolque(remolque)}` : numeroRemolque(remolque.numero)} · {remolque.unidad_asignada || remolque.vehicle_id_asignado}
-                          </span>
-                          <button type="button" onClick={() => desasignarRemolque(remolque.id)} style={s.button('#ef4444')}>Desasignar</button>
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                          {esTanque && (
-                            <div style={{ display: 'flex', gap: '0.5rem' }}>
-                              {['sencillo', 'full'].map(modo => (
-                                <button key={modo} type="button" onClick={() => { setRemolqueDashModo(modo); if (modo === 'sencillo') setRemolqueDashSegundoId(''); }} style={{ ...s.button(remolqueDashModo === modo ? '#f59e0b' : '#6b7280'), flex: 1 }}>
-                                  {modo === 'full' ? 'Armar Full' : 'Sencillo'}
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                          <select value={remolqueDashVehicleId} onChange={e => setRemolqueDashVehicleId(e.target.value)} style={s.select}>
-                            <option value="">Seleccionar unidad...</option>
-                            {vehiculos.map(vehicle => <option key={vehicle.id} value={String(vehicle.id)}>{vehicle.name}</option>)}
-                          </select>
-                          {remolqueDashModo === 'full' && esTanque && (
-                            <select value={remolqueDashSegundoId} onChange={e => setRemolqueDashSegundoId(e.target.value)} style={s.select}>
-                              <option value="">Seleccionar segundo tanque...</option>
-                              {remolques.filter(item => item.id !== remolque.id && String(item.categoria || '').toLowerCase() === 'tanque' && !item.vehicle_id_asignado).map(item => (
-                                <option key={item.id} value={String(item.id)}>{numeroRemolque(item.numero)}</option>
-                              ))}
-                            </select>
-                          )}
-                          <button type="button" disabled={remolqueDashSaving} onClick={() => asignarRemolqueDesdeDashboard(remolque)} style={s.button('#10b981')}>
-                            {remolqueDashSaving ? 'Asignando...' : remolqueDashModo === 'full' && esTanque ? 'Asignar Full' : 'Asignar remolque'}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-                <h3 style={{ color: '#e0e0e0', margin: '0 0 0.75rem 0', fontSize: '0.95rem' }}>Historial de asignaciones</h3>
-                {historialRemolqueLoading && <div style={{ color: '#6a9b6a' }}>Cargando historial...</div>}
-                {historialRemolqueError && <div style={{ color: '#f87171' }}>{historialRemolqueError}</div>}
-                {!historialRemolqueLoading && !historialRemolqueError && historialRemolque.length === 0 && <div style={{ color: '#6a9b6a' }}>Sin asignaciones registradas.</div>}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  {historialRemolque.map((h, i) => (
-                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.6rem 0.75rem', background: h.activa ? '#002200' : '#1a1a1a', borderRadius: '8px', border: `1px solid ${h.activa ? '#00ff4133' : '#333'}` }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
-                        <span style={{ color: h.activa ? '#00ff41' : '#ccc', fontWeight: 600 }}>🚛 {h.vehicle_name || h.vehicle_id}</span>
-                        <span style={{ color: '#888', fontSize: '0.8rem' }}>
-                          {h.fecha_inicio ? `Inicio: ${parseFecha(h.fecha_inicio).toLocaleDateString('es-MX')}` : ''}
-                          {h.fecha_fin ? ` — Fin: ${parseFecha(h.fecha_fin).toLocaleDateString('es-MX')}` : h.activa ? ' — Activa' : ''}
-                        </span>
-                      </div>
-                      {h.activa && (
-                        <button onClick={() => desasignarRemolque(h.remolque_id)} style={{ background: '#ff444433', color: '#ff4444', border: '1px solid #ff444455', padding: '0.3rem 0.75rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>Desasignar</button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>);
 }
 
@@ -1999,6 +1917,7 @@ export function SeguimientoSection({
   setSeguimientoUnidadFilter,
   setSelectedSeguimiento,
   setShowSeguimientoUpdateModal,
+  setShowImportarSeguimientoModal,
   showSeguimientoForm,
   tdStyle,
   thStyle,
@@ -2171,6 +2090,7 @@ export function SeguimientoSection({
                   <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                     <button onClick={abrirNuevoSeguimiento} style={s.button('#00ff41')}>+ Agregar</button>
                     <button onClick={abrirActualizarSeguimiento} style={s.button('#10b981')}>Actualizar Seguimiento</button>
+                    <button onClick={() => setShowImportarSeguimientoModal(true)} style={s.button('#8b5cf6')}>📋 Importar desde Sheets</button>
                     <button onClick={abrirGeneradorMensajes} style={s.button('#8b5cf6')}>📲 Generar Mensaje</button>
                   </div>
                 </div>
@@ -2186,12 +2106,7 @@ export function SeguimientoSection({
                         <th style={{ ...thStyle, width: '120px' }}>Operador</th>
                         <th style={{ ...thStyle, width: '130px' }}>Origen</th>
                         <th style={{ ...thStyle, width: '130px' }}>Destino</th>
-                        <th style={{ ...thStyle, width: '140px' }}>Cita carga</th>
-                        <th style={{ ...thStyle, width: '140px' }}>Cita descarga</th>
-                        <th style={{ ...thStyle, width: '150px' }}>Llegada con cliente</th>
-                        <th style={{ ...thStyle, width: '150px' }}>Liberación</th>
                         <th style={{ ...thStyle, width: '120px' }}>Estatus</th>
-                        <th style={{ ...thStyle, width: '220px' }}>Viaje</th>
                         <th style={{ ...thStyle, width: '260px' }}>Observaciones</th>
                         <th style={{ ...thStyle, width: '130px' }}>Actualizado</th>
                         <th style={{ ...thStyle, width: '170px', textAlign: 'center' }}>Acciones</th>
@@ -2207,8 +2122,6 @@ export function SeguimientoSection({
                         const estatusColor = estatus === 'Disponible' ? '#6b7280' : estatus === 'Programado' ? '#8b5cf6' : estatus.includes('carga') ? '#f59e0b' : estatus.includes('descarga') ? '#ec4899' : estatus === 'En resguardo' ? '#f97316' : '#10b981';
                         const rowBg = idx % 2 === 0 ? '#0d0d0d' : '#111111';
                         const observaciones = row.comentarios_cliente || row.comentarios_monitoreo || '-';
-                        const viajeActual = row._viajeActual || null;
-                        const viajeSiguiente = row._viajeSiguiente || null;
                         const esAuto = !!row._auto;
                         return (
                           <tr key={esAuto ? `auto-${row._unidadObj?.id || row.unidad}` : row.id} style={{ background: selectedSeguimiento?.id === row.id ? '#102010' : rowBg, borderBottom: '1px solid #1a1a1a' }}>
@@ -2233,35 +2146,7 @@ export function SeguimientoSection({
                             <td style={tdStyle}>{row.operador || '-'}</td>
                             <td style={{ ...tdStyle, whiteSpace: 'normal', maxWidth: '160px' }}>{row.origen || '-'}</td>
                             <td style={{ ...tdStyle, whiteSpace: 'normal', maxWidth: '160px' }}>{row.destino || '-'}</td>
-                            <td style={{ ...tdStyle, whiteSpace: 'normal', maxWidth: '150px' }}>{row.cita_carga || '-'}</td>
-                            <td style={{ ...tdStyle, whiteSpace: 'normal', maxWidth: '150px' }}>{row.cita_descarga || '-'}</td>
-                            <td style={{ ...tdStyle, whiteSpace: 'normal', maxWidth: '160px' }}>{row.hora_llegada || '-'}</td>
-                            <td style={{ ...tdStyle, whiteSpace: 'normal', maxWidth: '160px' }}>{row.hora_liberacion || '-'}</td>
                             <td style={tdStyle}><span style={s.badge(estatusColor)}>{estatus}</span></td>
-                            <td style={{ ...tdStyle, whiteSpace: 'normal', maxWidth: '220px' }}>
-                              {viajeActual || viajeSiguiente ? (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                                  {viajeActual && (
-                                    <div>
-                                      <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', marginBottom: '0.15rem', flexWrap: 'wrap' }}>
-                                        <span style={s.badge('#10b981')}>Actual</span>
-                                        <span style={{ color: '#c0c0c0', fontSize: '0.72rem' }}>{String(viajeActual.estado || '').replace(/_/g, ' ')}</span>
-                                      </div>
-                                      <div style={{ color: '#e0e0e0', fontSize: '0.72rem' }}>{viajeActual.origen || '-'} → {viajeActual.destino || '-'}</div>
-                                    </div>
-                                  )}
-                                  {viajeSiguiente && (
-                                    <div>
-                                      <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', marginBottom: '0.15rem', flexWrap: 'wrap' }}>
-                                        <span style={s.badge('#f59e0b')}>Siguiente</span>
-                                        <span style={{ color: '#c0c0c0', fontSize: '0.72rem' }}>{String(viajeSiguiente.estado || '').replace(/_/g, ' ')}</span>
-                                      </div>
-                                      <div style={{ color: '#a3a3a3', fontSize: '0.72rem' }}>{viajeSiguiente.origen || '-'} → {viajeSiguiente.destino || '-'}</div>
-                                    </div>
-                                  )}
-                                </div>
-                              ) : '-'}
-                            </td>
                             <td style={{ ...tdStyle, whiteSpace: 'normal', maxWidth: '320px' }}>{observaciones}</td>
                             <td style={tdStyle}>{parseFecha(row.fecha_actualizacion)?.toLocaleString('es-MX') || '-'}</td>
                             <td style={{ ...tdStyle, textAlign: 'center', whiteSpace: 'nowrap' }}>

@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import dynamic from 'next/dynamic';
 import {
   activarConTeclado,
@@ -1818,6 +1819,167 @@ export function TurnoModal({
                 </div>
               </div>
             )}
+          </div>
+        </div>);
+}
+
+export function RemolqueAsignarModal({
+  cerrar,
+  remolque,
+  vehiculos,
+  remolques,
+  s,
+  remolqueDashModo,
+  setRemolqueDashModo,
+  remolqueDashVehicleId,
+  setRemolqueDashVehicleId,
+  remolqueDashSegundoId,
+  setRemolqueDashSegundoId,
+  asignarRemolqueDesdeDashboard,
+  desasignarRemolque,
+  historialRemolque,
+  historialRemolqueLoading,
+  historialRemolqueError,
+  numeroRemolque,
+  obtenerMiembrosFull,
+  displayRemolque,
+  parseFecha,
+  remolqueDashSaving,
+}) {
+  if (!remolque) return null;
+  const asignado = remolque.vehicle_id_asignado || remolque.unidad_asignada;
+  const esTanque = String(remolque.categoria || '').toLowerCase() === 'tanque';
+
+  return (<div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2200 }} onClick={cerrar}>
+          <div className="modal-panel" role="dialog" aria-modal="true" aria-label="Asignar remolque" style={{ background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '16px', width: '560px', maxWidth: '95vw', maxHeight: '85vh', padding: '1.5rem', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexShrink: 0 }}>
+              <h2 style={{ margin: 0, color: '#00ff41', fontSize: '1.1rem' }}>Asignación de {obtenerMiembrosFull(remolque).length > 1 ? displayRemolque(remolque) : numeroRemolque(remolque.numero)}</h2>
+              <button onClick={cerrar} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {asignado ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', padding: '0.75rem', background: '#002200', border: '1px solid #00ff4133', borderRadius: '8px' }}>
+                  <span style={{ color: '#e0e0e0' }}>
+                    {obtenerMiembrosFull(remolque).length > 1 ? `FULL: ${displayRemolque(remolque)}` : numeroRemolque(remolque.numero)} · {remolque.unidad_asignada || remolque.vehicle_id_asignado}
+                  </span>
+                  <button type="button" onClick={() => desasignarRemolque(remolque.id)} style={s.button('#ef4444')}>Desasignar</button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  {esTanque && (
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      {['sencillo', 'full'].map(modo => (
+                        <button key={modo} type="button" onClick={() => { setRemolqueDashModo(modo); if (modo === 'sencillo') setRemolqueDashSegundoId(''); }} style={{ ...s.button(remolqueDashModo === modo ? '#f59e0b' : '#6b7280'), flex: 1 }}>
+                          {modo === 'full' ? 'Armar Full' : 'Sencillo'}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <select value={remolqueDashVehicleId} onChange={e => setRemolqueDashVehicleId(e.target.value)} style={s.select}>
+                    <option value="">Seleccionar unidad...</option>
+                    {vehiculos.map(vehicle => <option key={vehicle.id} value={String(vehicle.id)}>{vehicle.name}</option>)}
+                  </select>
+                  {remolqueDashModo === 'full' && esTanque && (
+                    <select value={remolqueDashSegundoId} onChange={e => setRemolqueDashSegundoId(e.target.value)} style={s.select}>
+                      <option value="">Seleccionar segundo tanque...</option>
+                      {remolques.filter(item => item.id !== remolque.id && String(item.categoria || '').toLowerCase() === 'tanque' && !item.vehicle_id_asignado).map(item => (
+                        <option key={item.id} value={String(item.id)}>{numeroRemolque(item.numero)}</option>
+                      ))}
+                    </select>
+                  )}
+                  <button type="button" disabled={remolqueDashSaving} onClick={() => asignarRemolqueDesdeDashboard(remolque)} style={s.button('#10b981')}>
+                    {remolqueDashSaving ? 'Asignando...' : remolqueDashModo === 'full' && esTanque ? 'Asignar Full' : 'Asignar remolque'}
+                  </button>
+                </div>
+              )}
+              <div style={{ borderTop: '1px solid #1a3d1a', paddingTop: '0.75rem' }}>
+                <h3 style={{ color: '#e0e0e0', margin: '0 0 0.75rem 0', fontSize: '0.95rem' }}>Historial de asignaciones</h3>
+                {historialRemolqueLoading && <div style={{ color: '#6a9b6a' }}>Cargando historial...</div>}
+                {historialRemolqueError && <div style={{ color: '#f87171' }}>{historialRemolqueError}</div>}
+                {!historialRemolqueLoading && !historialRemolqueError && historialRemolque.length === 0 && <div style={{ color: '#6a9b6a' }}>Sin asignaciones registradas.</div>}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {historialRemolque.map((h, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.6rem 0.75rem', background: h.activa ? '#002200' : '#1a1a1a', borderRadius: '8px', border: `1px solid ${h.activa ? '#00ff4133' : '#333'}` }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                        <span style={{ color: h.activa ? '#00ff41' : '#ccc', fontWeight: 600 }}>🚛 {h.vehicle_name || h.vehicle_id}</span>
+                        <span style={{ color: '#888', fontSize: '0.8rem' }}>
+                          {h.fecha_inicio ? `Inicio: ${parseFecha(h.fecha_inicio).toLocaleDateString('es-MX')}` : ''}
+                          {h.fecha_fin ? ` — Fin: ${parseFecha(h.fecha_fin).toLocaleDateString('es-MX')}` : h.activa ? ' — Activa' : ''}
+                        </span>
+                      </div>
+                      {h.activa && (
+                        <button onClick={() => desasignarRemolque(h.remolque_id)} style={{ background: '#ff444433', color: '#ff4444', border: '1px solid #ff444455', padding: '0.3rem 0.75rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>Desasignar</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>);
+}
+
+export function ImportarSeguimientoModal({
+  cerrar,
+  importarSeguimientoDesdeCsv,
+  importarSeguimientoLoading,
+  s,
+}) {
+  const [url, setUrl] = React.useState('');
+  const [error, setError] = React.useState('');
+  const [exito, setExito] = React.useState('');
+
+  const handleImportar = async () => {
+    if (!url.trim()) { setError('Ingresa una URL'); return; }
+    setError('');
+    setExito('');
+    try {
+      const result = await importarSeguimientoDesdeCsv(url.trim());
+      setExito(`${result.imported} registros importados correctamente`);
+      setTimeout(() => cerrar(), 1500);
+    } catch (err) {
+      const msg = err.message || 'Error al importar';
+      if (msg.includes('HTML')) {
+        setError('La URL devolvió HTML. Use la URL de exportación CSV: Archivo → Compartir → Publicar en la web → CSV');
+      } else if (msg.includes('campos') || msg.includes('fields')) {
+        setError(`Error de formato CSV: ${msg}. Verifique que la hoja tenga columnas con encabezados.`);
+      } else {
+        setError(msg);
+      }
+    }
+  };
+
+  return (<div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2200 }} onClick={cerrar}>
+          <div className="modal-panel" role="dialog" aria-modal="true" aria-label="Importar desde Google Sheets" style={{ background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '16px', width: '520px', maxWidth: '95vw', padding: '1.5rem' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h2 style={{ margin: 0, color: '#00ff41', fontSize: '1.1rem' }}>Importar desde Google Sheets</h2>
+              <button onClick={cerrar} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <div style={{ display: 'grid', gap: '0.85rem' }}>
+              <div style={{ fontSize: '0.8rem', color: '#888', lineHeight: 1.5 }}>
+                En Google Sheets ve a <strong style={{ color: '#e0e0e0' }}>Archivo → Compartir → Publicar en la web</strong>, selecciona la hoja, formato <strong style={{ color: '#e0e0e0' }}>CSV</strong>, y copia la URL generada.
+              </div>
+              <div>
+                <label style={s.label}>URL del CSV publicado</label>
+                <input style={{ ...s.input, fontSize: '0.8rem' }} value={url} onChange={(e) => { setUrl(e.target.value); setError(''); setExito(''); }} placeholder="https://docs.google.com/spreadsheets/d/.../export?format=csv&gid=0" />
+                {url && !url.includes('/export?format=csv') && !url.includes('output=csv') && (
+                  <div style={{ color: '#f59e0b', fontSize: '0.75rem', marginTop: '0.3rem' }}>
+                    ⚠️ La URL parece no ser de exportación CSV. Debe contener <code>/export?format=csv</code> o <code>output=csv</code>
+                  </div>
+                )}
+              </div>
+              {error && <div style={{ color: '#f87171', fontSize: '0.8rem' }}>{error}</div>}
+              {exito && <div style={{ color: '#10b981', fontSize: '0.8rem' }}>{exito}</div>}
+              <div style={{ fontSize: '0.75px', color: '#6a9b6a', background: '#1a1a1a', padding: '0.6rem', borderRadius: '8px', lineHeight: 1.5 }}>
+                <strong style={{ color: '#f59e0b' }}>Nota:</strong> Esta accion reemplazara todos los registros actuales de seguimiento. Se generara un PDF con el historial de la importacion.
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                <button type="button" onClick={cerrar} style={s.button('#6b7280')}>Cancelar</button>
+                <button type="button" onClick={handleImportar} disabled={importarSeguimientoLoading} style={s.button('#00ff41')}>
+                  {importarSeguimientoLoading ? 'Importando...' : 'Importar'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>);
 }
