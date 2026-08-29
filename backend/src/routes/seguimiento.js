@@ -4,12 +4,151 @@ const Papa = require('papaparse');
 const PDFDocument = require('pdfkit');
 const path = require('path');
 const fs = require('fs');
-const { db, withTransaction } = require('../db');
+const { db, getQuery, allQuery, runQuery, withTransaction } = require('../db');
 const { actorFromReq, requireAdmin } = require('../auth');
+const { syncTripStops, normalizeTripDelivery, attachTripStops } = require('../services/viajes');
 
 const router = express.Router();
 
 const HISTORY_DIR = path.join(__dirname, '../../data/seguimiento_history');
+
+const SEGUIMIENTO_TO_VIAJE_ESTADO = {
+  'disponible': 'disponible',
+  'programado': 'programado',
+  'en ruta cargado': 'en_ruta_cargado',
+  'en ruta vacio': 'en_ruta_vacio',
+  'en proceso de carga': 'proceso_carga',
+  'en proceso de descarga': 'proceso_descarga',
+  'en resguardo': 'en_resguardo',
+  'completado': 'completado',
+};
+
+async function syncViajeDesdeSeguimiento(unidad, estatus) {
+  const targetEstado = SEGUIMIENTO_TO_VIAJE_ESTADO[String(estatus || '').trim().toLowerCase()];
+  if (!targetEstado || !unidad) return null;
+  const viajes = await allQuery(
+    `SELECT * FROM viajes WHERE vehicle_name = ? AND estado NOT IN ('completado', 'cancelado') ORDER BY
+     CASE LOWER(COALESCE(estado, '')) WHEN 'programado' THEN 1 ELSE 0 END,
+     COALESCE(fecha_inicio, created_at) ASC`,
+    [unidad]
+  );
+  const viaje = viajes[0];
+  if (!viaje) return null;
+  const previo = String(viaje.estado || '').toLowerCase();
+  if (previo === targetEstado) return null;
+  if (previo === 'completado' || previo === 'cancelado') return null;
+  const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  if (targetEstado === 'completado') {
+    await runQuery(
+      "UPDATE viajes SET estado = 'completado', fecha_fin = COALESCE(fecha_fin, ?), updated_at = datetime('now') WHERE id = ?",
+      [now, viaje.id]
+    );
+  } else if (targetEstado === 'disponible' || targetEstado === 'programado') {
+    if (previo !== 'disponible' && previo !== 'programado') {
+      await runQuery(
+        "UPDATE viajes SET estado_previo = ?, estado = ?, updated_at = datetime('now') WHERE id = ?",
+        [previo, targetEstado, viaje.id]
+      );
+    }
+  } else {
+    await runQuery(
+      "UPDATE viajes SET estado = ?, updated_at = datetime('now') WHERE id = ?",
+      [targetEstado, viaje.id]
+    );
+  }
+  return { id: viaje.id, estado: targetEstado, unidad };
+}
+
+async function obtenerViajeCompleto(id) {
+  const row = await getQuery('SELECT * FROM viajes WHERE id = ?', [id]);
+  if (!row) return null;
+  const [completo] = await attachTripStops([row]);
+  return completo;
+}
+
+async function crearOActualizarViajeDesdeSeguimiento(data, usuario) {
+  const unidad = String(data.unidad || '').trim();
+  const origen = String(data.origen || '').trim();
+  const destino = String(data.destino || '').trim();
+  if (!unidad) return null;
+
+  const viajes = await allQuery(
+    `SELECT * FROM viajes WHERE vehicle_name = ? AND estado NOT IN ('completado', 'cancelado') ORDER BY
+     CASE LOWER(COALESCE(estado, '')) WHEN 'programado' THEN 1 ELSE 0 END,
+     COALESCE(fecha_inicio, created_at) ASC`,
+    [unidad]
+  );
+  let viaje = viajes[0] || null;
+
+  const fechaInicio = normalizarFechaCita(data.cita_carga) || null;
+  const fechaFin = normalizarFechaCita(data.cita_descarga) || null;
+
+  if (!viaje) {
+    if (!origen && !destino) {
+      await syncViajeDesdeSeguimiento(unidad, data.estatus);
+      return { creado: false, motivo: 'sin-origen-destino', estado: 'estatus-solo' };
+    }
+    const nuevo = {
+      vehicle_id: null,
+      vehicle_name: unidad,
+      origen: origen || 'Por definir',
+      destino: destino || 'Por definir',
+      conductor: data.operador || '',
+      remolque: data.remolque || '',
+      fecha_inicio: fechaInicio,
+      fecha_fin: fechaFin,
+      cita_programada: fechaFin,
+    };
+    const norm = normalizeTripDelivery(nuevo);
+    const result = await runQuery(
+      `INSERT INTO viajes (vehicle_id, vehicle_name, origen, destino, tipo_entrega, destinos_json, conductor, telefono, remolque, fecha_inicio, fecha_fin, cita_programada, notas, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [nuevo.vehicle_id, unidad, nuevo.origen, norm.destino, norm.tipo_entrega, norm.destinos_json, nuevo.conductor, nuevo.remolque, nuevo.fecha_inicio, nuevo.fecha_fin, nuevo.cita_programada]
+    );
+    viaje = { id: result.lastID, ...nuevo };
+    try {
+      await syncTripStops(viaje);
+    } catch (stopsErr) {
+      console.error('Error creando paradas del viaje importado:', stopsErr.message);
+    }
+    const syncResult = await syncViajeDesdeSeguimiento(unidad, data.estatus);
+    const viajeCompleto = await obtenerViajeCompleto(result.lastID);
+    return { creado: true, id: result.lastID, estado: syncResult?.estado || null, viaje: viajeCompleto };
+  }
+
+  const syncResult = await syncViajeDesdeSeguimiento(unidad, data.estatus);
+  const camposActualizar = [];
+  const valoresActualizar = [];
+  if (origen && viaje.origen !== origen) { camposActualizar.push('origen = ?'); valoresActualizar.push(origen); }
+  if (destino && viaje.destino !== destino) { camposActualizar.push('destino = ?'); valoresActualizar.push(destino); }
+  if (fechaInicio && String(viaje.fecha_inicio || '') !== String(fechaInicio)) { camposActualizar.push('fecha_inicio = ?'); valoresActualizar.push(fechaInicio); }
+  if (fechaFin && String(viaje.fecha_fin || '') !== String(fechaFin)) { camposActualizar.push('fecha_fin = ?'); valoresActualizar.push(fechaFin); }
+  if (fechaFin && String(viaje.cita_programada || '') !== String(fechaFin)) { camposActualizar.push('cita_programada = ?'); valoresActualizar.push(fechaFin); }
+  if (camposActualizar.length) {
+    try {
+      camposActualizar.push("updated_at = datetime('now')");
+      await runQuery(`UPDATE viajes SET ${camposActualizar.join(', ')} WHERE id = ?`, [...valoresActualizar, viaje.id]);
+    } catch (updErr) {
+      console.error('Error actualizando viaje existente desde seguimiento:', updErr.message);
+    }
+  }
+  const viajeCompleto = await obtenerViajeCompleto(viaje.id);
+  return { creado: false, id: viaje.id, estado: syncResult?.estado || null, viaje: viajeCompleto };
+}
+
+async function sincronizarViajesDesdeImport(rows) {
+  const resultados = [];
+  for (const data of rows) {
+    try {
+      const r = await crearOActualizarViajeDesdeSeguimiento(data);
+      if (r) resultados.push({ unidad: data.unidad || '', ...r });
+    } catch (err) {
+      console.error('Error en sincronización de viajes desde import:', err.message);
+      resultados.push({ unidad: data.unidad || '', error: err.message });
+    }
+  }
+  return resultados;
+}
 
 router.get('/seguimiento', (req, res) => {
   db.all('SELECT * FROM seguimiento ORDER BY id ASC', [], (err, rows) => {
@@ -28,9 +167,15 @@ router.post('/seguimiento', (req, res) => {
   data.fecha_actualizacion = new Date().toISOString().replace('T', ' ').substring(0, 19);
   const cols = Object.keys(data).join(', ');
   const placeholders = Object.keys(data).map(() => '?').join(', ');
-  db.run(`INSERT INTO seguimiento (${cols}) VALUES (${placeholders})`, Object.values(data), function (err) {
+  db.run(`INSERT INTO seguimiento (${cols}) VALUES (${placeholders})`, Object.values(data), async function (err) {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ id: this.lastID });
+    let viajeSync = null;
+    try {
+      viajeSync = await syncViajeDesdeSeguimiento(data.unidad, data.estatus);
+    } catch (syncErr) {
+      console.error('Error sincronizando viaje desde seguimiento (POST):', syncErr.message);
+    }
+    res.json({ id: this.lastID, viajeSync });
   });
 });
 
@@ -52,9 +197,17 @@ router.put('/seguimiento/:id', (req, res) => {
     });
     updates.push("fecha_actualizacion = datetime('now')");
     values.push(req.params.id);
-    db.run(`UPDATE seguimiento SET ${updates.join(', ')} WHERE id = ?`, values, function (err2) {
+    db.run(`UPDATE seguimiento SET ${updates.join(', ')} WHERE id = ?`, values, async function (err2) {
       if (err2) return res.status(500).json({ error: err2.message });
-      res.json({ changes: this.changes });
+      let viajeSync = null;
+      try {
+        const nuevoEstatus = req.body.estatus !== undefined ? req.body.estatus : row.estatus;
+        const nuevaUnidad = req.body.unidad !== undefined ? req.body.unidad : row.unidad;
+        viajeSync = await syncViajeDesdeSeguimiento(nuevaUnidad, nuevoEstatus);
+      } catch (syncErr) {
+        console.error('Error sincronizando viaje desde seguimiento:', syncErr.message);
+      }
+      res.json({ changes: this.changes, viajeSync });
     });
   });
 });
@@ -95,6 +248,7 @@ router.post('/seguimiento/import', requireAdmin, async (req, res) => {
   const userName = actorFromReq(req);
   const userId = req.user?.id || null;
   try {
+    const importedRows = [];
     const imported = await withTransaction(async tx => {
       await tx.run('DELETE FROM seguimiento');
       for (const item of items) {
@@ -117,13 +271,20 @@ router.post('/seguimiento/import', requireAdmin, async (req, res) => {
           created_by_username: userName,
           fecha_actualizacion: item['HORA ACTUALIZACION'] || new Date().toISOString().replace('T', ' ').substring(0, 19),
         };
+        importedRows.push(data);
         const cols = Object.keys(data).join(', ');
         const placeholders = Object.keys(data).map(() => '?').join(', ');
         await tx.run(`INSERT INTO seguimiento (${cols}) VALUES (${placeholders})`, Object.values(data));
       }
       return items.length;
     });
-    res.json({ imported });
+    let viajesSync = [];
+    try {
+      viajesSync = await sincronizarViajesDesdeImport(importedRows);
+    } catch (syncErr) {
+      console.error('Error sincronizando viajes desde import JSON:', syncErr.message);
+    }
+    res.json({ imported, viajesSync });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -147,6 +308,34 @@ const COLUMN_MAP = {
   'hora actualizacion': 'fecha_actualizacion',
 };
 
+function normalizarFechaCita(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const clean = raw.replace(/[\/.]/g, '-');
+  const match = clean.match(/^(\d{1,2})-(\d{1,2})-(\d{2,4})(?:[ T]+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if (!match) return raw;
+  let [, a, b, p3, hh, mm, ss] = match;
+  if (a.includes('-') || b.includes('-')) return raw;
+  let year = p3.length === 2 ? `20${p3}` : p3;
+  let numeroMes;
+  let numeroDia;
+  let n1 = parseInt(a, 10);
+  let n2 = parseInt(b, 10);
+  if (n1 > 12) {
+    numeroDia = n1;
+    numeroMes = n2;
+  } else if (n2 > 12) {
+    numeroMes = n1;
+    numeroDia = n2;
+  } else {
+    numeroMes = n1;
+    numeroDia = n2;
+  }
+  if (numeroMes < 1 || numeroMes > 12 || numeroDia < 1 || numeroDia > 31) return raw;
+  const hora = hh ? `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}${ss ? `:${String(ss).padStart(2, '0')}` : ':00'}` : '';
+  return `${year}-${String(numeroMes).padStart(2, '0')}-${String(numeroDia).padStart(2, '0')}${hora ? ` ${hora}` : ''}`;
+}
+
 function mapCsvRow(row) {
   const mapped = {};
   for (const [csvKey, dbField] of Object.entries(COLUMN_MAP)) {
@@ -154,6 +343,9 @@ function mapCsvRow(row) {
     mapped[dbField] = val ? (val[1] || '') : '';
   }
   mapped.estatus = mapped.estatus || 'Disponible';
+  if (mapped.cita_carga) mapped.cita_carga = normalizarFechaCita(mapped.cita_carga);
+  if (mapped.cita_descarga) mapped.cita_descarga = normalizarFechaCita(mapped.cita_descarga);
+  if (mapped.fecha_actualizacion) mapped.fecha_actualizacion = normalizarFechaCita(mapped.fecha_actualizacion);
   return mapped;
 }
 
@@ -285,7 +477,13 @@ router.post('/seguimiento/import-csv', requireAdmin, async (req, res) => {
       }
     });
     await generateHistoryPdf(importedRows, userName, timestamp);
-    res.json({ imported: importedRows.length, headers });
+    let viajesSync = [];
+    try {
+      viajesSync = await sincronizarViajesDesdeImport(importedRows);
+    } catch (syncErr) {
+      console.error('Error sincronizando viajes desde import:', syncErr.message);
+    }
+    res.json({ imported: importedRows.length, headers, viajesSync });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

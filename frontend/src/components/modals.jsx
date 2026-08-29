@@ -1234,6 +1234,34 @@ export function SeguimientoUpdateModal({
                         </div>
 
                         <div style={{ padding: '1rem', background: '#111111', border: '1px solid #1a3d1a', borderRadius: '12px' }}>
+                          <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.6rem' }}>Telemetría en vivo</div>
+                          {(() => {
+                            const loc = unidad?.location;
+                            const tieneUbicacion = loc && (Number(loc.latitude) || Number(loc.longitude));
+                            const velMph = Number(loc?.speed || 0);
+                            const circulando = velMph > 1;
+                            const velKmh = Math.round(velMph * 1.60934);
+                            const ubicacion = loc?.location || '';
+                            const lat = loc ? Number(loc.latitude) : null;
+                            const lng = loc ? Number(loc.longitude) : null;
+                            const coords = (Number.isFinite(lat) && Number.isFinite(lng) && lat && lng) ? ` (${lat.toFixed(5)}, ${lng.toFixed(5)})` : '';
+                            if (!tieneUbicacion) {
+                              return <div style={{ fontSize: '0.85rem', color: '#f87171' }}>Sin señal de ubicación</div>;
+                            }
+                            return (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.85rem', color: '#c0c0c0' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                  <span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', flexShrink: 0, background: circulando ? '#00ff41' : '#9ca3af', boxShadow: circulando ? '0 0 8px #00ff41' : 'none' }} />
+                                  <strong style={{ color: circulando ? '#00ff41' : '#9ca3af' }}>{circulando ? 'Circulando' : 'Detenida'}</strong>
+                                  <span style={{ color: '#6a9b6a' }}>· {velKmh} km/h</span>
+                                </div>
+                                <div style={{ color: '#e0e0e0', lineHeight: 1.4 }}>{ubicacion || 'Sin dirección disponible'}{coords}</div>
+                              </div>
+                            );
+                          })()}
+                        </div>
+
+                        <div style={{ padding: '1rem', background: '#111111', border: '1px solid #1a3d1a', borderRadius: '12px' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.8rem', flexWrap: 'wrap' }}>
                             <div>
                               <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Viaje Actual</div>
@@ -1935,7 +1963,8 @@ export function ImportarSeguimientoModal({
     setExito('');
     try {
       const result = await importarSeguimientoDesdeCsv(url.trim());
-      setExito(`${result.imported} registros importados correctamente`);
+      const creados = Array.isArray(result.viajesSync) ? result.viajesSync.filter(v => v && v.creado).length : 0;
+      setExito(`${result.imported} registros importados correctamente${creados ? ` · ${creados} viaje(s) creado(s)` : ''}`);
       setTimeout(() => cerrar(), 1500);
     } catch (err) {
       const msg = err.message || 'Error al importar';
@@ -1971,8 +2000,7 @@ export function ImportarSeguimientoModal({
               {error && <div style={{ color: '#f87171', fontSize: '0.8rem' }}>{error}</div>}
               {exito && <div style={{ color: '#10b981', fontSize: '0.8rem' }}>{exito}</div>}
               <div style={{ fontSize: '0.75px', color: '#6a9b6a', background: '#1a1a1a', padding: '0.6rem', borderRadius: '8px', lineHeight: 1.5 }}>
-                <strong style={{ color: '#f59e0b' }}>Nota:</strong> Esta accion reemplazara todos los registros actuales de seguimiento. Se generara un PDF con el historial de la importacion.
-              </div>
+                <strong style={{ color: '#f59e0b' }}>Nota:</strong> Esta accion reemplazara todos los registros actuales de seguimiento. Se generara un PDF con el historial. Por cada fila con <strong>UNIDAD</strong> y origen/destino se <strong>creara o actualizara el viaje</strong> de esa unidad, sincronizando el estado.</div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
                 <button type="button" onClick={cerrar} style={s.button('#6b7280')}>Cancelar</button>
                 <button type="button" onClick={handleImportar} disabled={importarSeguimientoLoading} style={s.button('#00ff41')}>

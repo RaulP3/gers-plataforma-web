@@ -27,8 +27,10 @@ const ROUTE_PROXIMITY_METERS = 10000;
 const BASE_LAYERS = {
   dark: {
     label: 'Oscuro',
-    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    options: { attribution: '&copy; OSM &copy; CARTO', maxZoom: 19 },
+    layers: [
+      { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', fallback: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', options: { attribution: 'Tiles &copy; Esri', maxZoom: 19 } },
+      { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', fallback: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', options: { attribution: 'Tiles &copy; Esri', maxZoom: 19 } },
+    ],
   },
   street: {
     label: 'Calles',
@@ -65,6 +67,22 @@ function escapeHtml(value) {
 
 function safeColor(value, fallback) {
   return typeof value === 'string' && /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value) ? value : fallback;
+}
+
+function crearTileConFallback(L, spec) {
+  const tile = L.tileLayer(spec.url, spec.options);
+  if (spec.fallback) {
+    let fallbackActivo = false;
+    tile.on('tileerror', () => {
+      if (fallbackActivo) return;
+      fallbackActivo = true;
+      if (tile._url !== spec.fallback) {
+        tile.setUrl(spec.fallback);
+        tile.redraw();
+      }
+    });
+  }
+  return tile;
 }
 
 function hasCoordinates(latitude, longitude) {
@@ -232,7 +250,9 @@ export default function MapaUnidades({ vehiculos, geofences = [], customRiskZone
       mapRef.current = map;
 
       const initialBase = BASE_LAYERS.dark;
-      baseLayerRef.current = L.tileLayer(initialBase.url, initialBase.options).addTo(map);
+      const baseTiles = (initialBase.layers || [{ url: initialBase.url, options: initialBase.options }]).map(spec => crearTileConFallback(L, spec));
+      baseTiles.forEach(tile => tile.addTo(map).bringToBack());
+      baseLayerRef.current = baseTiles;
 
       const withLoc = vehiclesRef.current.filter(v => v.location && hasCoordinates(v.location.latitude, v.location.longitude));
       if (withLoc.length > 0) {
@@ -260,16 +280,17 @@ export default function MapaUnidades({ vehiculos, geofences = [], customRiskZone
 
   useEffect(() => {
     if (!mapReady || !mapRef.current || !LRef.current) return;
-    const definition = BASE_LAYERS[baseLayer] || BASE_LAYERS.dark;
-    if (baseLayerRef.current) mapRef.current.removeLayer(baseLayerRef.current);
-    if (definition.layers) {
-      baseLayerRef.current = LRef.current.layerGroup(
-        definition.layers.map(tile => LRef.current.tileLayer(tile.url, tile.options))
-      ).addTo(mapRef.current);
-    } else {
-      baseLayerRef.current = LRef.current.tileLayer(definition.url, definition.options).addTo(mapRef.current);
+    const definition = BASE_LAYERS[baseLayer] || BASE_LAYERS.satellite;
+    const L = LRef.current;
+    const map = mapRef.current;
+    if (Array.isArray(baseLayerRef.current)) {
+      baseLayerRef.current.forEach(tile => map.removeLayer(tile));
+    } else if (baseLayerRef.current) {
+      map.removeLayer(baseLayerRef.current);
     }
-    baseLayerRef.current.bringToBack();
+    const baseTiles = (definition.layers || [{ url: definition.url, options: definition.options }]).map(spec => crearTileConFallback(L, spec));
+    baseTiles.forEach(tile => tile.addTo(map).bringToBack());
+    baseLayerRef.current = baseTiles;
   }, [baseLayer, mapReady]);
 
   useEffect(() => {

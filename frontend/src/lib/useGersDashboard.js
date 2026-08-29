@@ -1212,6 +1212,29 @@ export default function useGersDashboard() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Error al importar');
       await refreshSeguimiento();
+      await refreshViajes();
+      const creados = Array.isArray(data.viajesSync)
+        ? data.viajesSync.filter(v => v && v.viaje && v.creado)
+        : [];
+      if (creados.length > 0) {
+        const primero = creados[0].viaje;
+        if (primero && primero.id) {
+          const form = normalizarViaje(primero);
+          const aDatetimeLocal = (v) => {
+            if (!v) return '';
+            const d = new Date(String(v).replace(' ', 'T'));
+            if (Number.isNaN(d.getTime())) return '';
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+          };
+          form.fecha_inicio = aDatetimeLocal(form.fecha_inicio);
+          form.fecha_fin = aDatetimeLocal(form.fecha_fin);
+          setViajeDetalle(primero);
+          setViajeForm(form);
+          setViajeEditando(true);
+          setShowViajeModal(true);
+        }
+      }
       setShowImportarSeguimientoModal(false);
       return data;
     } catch (err) {
@@ -2281,6 +2304,7 @@ export default function useGersDashboard() {
         });
       }
       await refreshSeguimiento();
+      await refreshViajes();
       const indice = todasLasUnidades.findIndex(v => String(v.id) === String(seguimientoModalUnidadId));
       const siguiente = todasLasUnidades[indice + 1] || null;
       setSeguimientoModalSaving(false);
@@ -2351,6 +2375,7 @@ export default function useGersDashboard() {
       setSeguimientoHistorial([]);
       setSelectedSeguimiento(null);
       await refreshSeguimiento();
+      await refreshViajes();
     } catch (err) {
       alert(err.message || 'No se pudo guardar el seguimiento');
     }
