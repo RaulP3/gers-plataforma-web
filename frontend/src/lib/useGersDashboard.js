@@ -1758,6 +1758,36 @@ export default function useGersDashboard() {
     }
   };
 
+  const borrarViajesActivos = async () => {
+    const activos = viajes.filter(v => !['completado', 'cancelado'].includes(String(v.estado || '').toLowerCase()));
+    const mensaje = activos.length > 0
+      ? `¿Borrar los ${activos.length} viajes actuales y TODO el seguimiento (y sus citas)? Esta acción no se puede deshacer.`
+      : 'No hay viajes activos. ¿Borrar TODO el seguimiento (y sus citas) de todos modos? Esta acción no se puede deshacer.';
+    if (!confirm(mensaje)) return false;
+    try {
+      await apiJson(`${apiUrl}/viajes-activos`, { method: 'DELETE' });
+      await refreshViajes();
+      await refreshSeguimiento();
+      return true;
+    } catch (err) {
+      alert(err.message || 'No se pudo completar la acción');
+      return false;
+    }
+  };
+
+  const limpiarSeguimiento = async () => {
+    if (!confirm('¿Borrar TODA la información de seguimiento y sus citas? Esta acción no se puede deshacer.')) return false;
+    try {
+      await apiJson(`${apiUrl}/seguimiento`, { method: 'DELETE' });
+      await refreshSeguimiento();
+      await refreshViajes();
+      return true;
+    } catch (err) {
+      alert(err.message || 'No se pudo limpiar el seguimiento');
+      return false;
+    }
+  };
+
   const marcarAlertaLeida = async (id) => {
     try {
       await apiJson(`${apiUrl}/alertas/${id}/leer`, { method: 'PUT' });
@@ -4067,6 +4097,8 @@ export default function useGersDashboard() {
     terminarArrastreViaje,
     soltarViaje,
     eliminarViaje,
+    borrarViajesActivos,
+    limpiarSeguimiento,
     marcarAlertaLeida,
     archivarAlerta,
     archivarAlertas,

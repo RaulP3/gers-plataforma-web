@@ -174,6 +174,29 @@ router.delete('/viajes/:id', async (req, res) => {
   }
 });
 
+router.delete('/viajes-activos', async (req, res) => {
+  try {
+    const result = await withTransaction(async tx => {
+      let changes = 0;
+      let ids = [];
+      const rows = await tx.all("SELECT id FROM viajes WHERE estado NOT IN ('completado', 'cancelado')");
+      if (rows.length > 0) {
+        ids = rows.map(t => t.id);
+        const placeholders = ids.map(() => '?').join(',');
+        await tx.run(`DELETE FROM viaje_paradas WHERE viaje_id IN (${placeholders})`, ids);
+        const del = await tx.run(`DELETE FROM viajes WHERE id IN (${placeholders})`, ids);
+        changes = del.changes;
+      }
+      const hist = await tx.run('DELETE FROM seguimiento_historial');
+      const seg = await tx.run('DELETE FROM seguimiento');
+      return { changes, ids, viajes: changes, seguimiento: seg.changes, seguimientoHistorial: hist.changes };
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/route-history', (req, res) => {
   const { vehicle_id, fecha_inicio, fecha_fin, limit: lim } = req.query;
   if (!vehicle_id) return res.status(400).json({ error: 'vehicle_id es requerido' });

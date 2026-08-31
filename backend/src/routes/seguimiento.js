@@ -228,6 +228,19 @@ router.delete('/seguimiento/:id', (req, res) => {
   });
 });
 
+router.delete('/seguimiento', async (req, res) => {
+  try {
+    const result = await withTransaction(async tx => {
+      const hist = await tx.run('DELETE FROM seguimiento_historial');
+      const seg = await tx.run('DELETE FROM seguimiento');
+      return { seguimiento: seg.changes, seguimientoHistorial: hist.changes };
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/seguimiento/:id/historial', (req, res) => {
   db.all('SELECT * FROM seguimiento_historial WHERE seguimiento_id = ? ORDER BY fecha_cambio DESC', [req.params.id], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });

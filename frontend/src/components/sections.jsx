@@ -1156,6 +1156,7 @@ export function ViajesSection({
   viajeEtaError,
   viajeWasDraggedRef,
   viajes,
+  borrarViajesActivos,
   viajesHistorialSearch,
   viajesProximosOcultos,
   viajesProximosSearch,
@@ -1174,6 +1175,7 @@ export function ViajesSection({
                   <button type="button" onClick={() => setViajesView('historial')} style={{ padding: '0.5rem 0.9rem', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem', background: viajesView === 'historial' ? '#00ff41' : 'transparent', color: viajesView === 'historial' ? '#061006' : '#6a9b6a' }}>Historial</button>
                 </div>
                 <button type="button" onClick={() => setShowProgramarViajeModal(true)} style={s.button('#10b981')}>+ Programar viaje</button>
+                <button type="button" onClick={async () => { const ok = await borrarViajesActivos(); if (ok) alert('Viajes actuales borrados'); }} style={s.button('#ef4444')}>Borrar viajes actuales</button>
               </div>
             </div>
             {showProgramarViajeModal &&
@@ -1885,6 +1887,7 @@ export function SeguimientoSection({
   gruposUnicos,
   guardarSeguimiento,
   limpiarSeguimientoForm,
+  limpiarSeguimiento,
   loadAll,
   parseFecha,
   s,
@@ -2092,6 +2095,7 @@ export function SeguimientoSection({
                     <button onClick={abrirActualizarSeguimiento} style={s.button('#10b981')}>Actualizar Seguimiento</button>
                     <button onClick={() => setShowImportarSeguimientoModal(true)} style={s.button('#8b5cf6')}>📋 Importar desde Sheets</button>
                     <button onClick={abrirGeneradorMensajes} style={s.button('#8b5cf6')}>📲 Generar Mensaje</button>
+                    <button onClick={async () => { const ok = await limpiarSeguimiento(); if (ok) alert('Seguimiento limpiado'); }} style={s.button('#ef4444')}>Limpiar todo</button>
                   </div>
                 </div>
 
