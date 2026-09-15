@@ -351,8 +351,6 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
   db.run("ALTER TABLE pendientes_historial ADD COLUMN archived_by_user_id INTEGER", [], () => {});
   db.run("ALTER TABLE pendientes_historial ADD COLUMN archived_by_username TEXT", [], () => {});
   db.run("ALTER TABLE pendientes_historial ADD COLUMN comentarios_resumen TEXT", [], () => {});
-  db.run("ALTER TABLE seguimiento ADD COLUMN created_by_user_id INTEGER", [], () => {});
-  db.run("ALTER TABLE seguimiento ADD COLUMN created_by_username TEXT", [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS clientes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -463,6 +461,8 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
     created_by_username TEXT,
     fecha_actualizacion DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+  db.run("ALTER TABLE seguimiento ADD COLUMN created_by_user_id INTEGER", [], () => {});
+  db.run("ALTER TABLE seguimiento ADD COLUMN created_by_username TEXT", [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS seguimiento_historial (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

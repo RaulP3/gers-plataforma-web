@@ -54,7 +54,7 @@ Plataforma web de gestión, monitoreo y operación logística de GERS. Permite m
 - Umbral de GPS para marcar cita sin señal reciente: `CITAS_GPS_STALE_MIN = 60` minutos (`page.js:11`).
 
 ### Sincronización de remolques con viajes
-- Al poner un viaje en estado activo (`en_ruta_vacio`, `en_ruta_cargado`, `proceso_carga`, `proceso_descarga`, `proceso_liberacion`, `espera_ingreso`, `en_resguardo`) y tener remolque, el backend asigna el remolque a la unidad automáticamente (`syncTripTrailer`, `server.js:1890`).
+- Al poner un viaje en estado activo (`en_ruta_vacio`, `en_ruta_cargado`, `proceso_carga`, `proceso_descarga`, `proceso_liberacion`, `espera_ingreso`, `en_resguardo`) y tener remolque, el backend asigna el remolque a la unidad automáticamente (`syncTripTrailer` en `src/services/viajes.js`, invocado desde `src/routes/viajes.js`).
 - Un remolque o grupo full (doble remolque) ya asignado a otra unidad devuelve `409` con el detalle.
 
 ### Geocercas y eventos
@@ -80,7 +80,7 @@ gers-plataforma-web/
 │   ├── railway.json            # Config de despliegue Railway
 │   ├── Dockerfile
 │   ├── .env.example            # Variables requeridas
-│   ├── .env.docker.local       # Variables locales para Docker
+│   ├── .env.docker             # Variables para Docker (local)
 │   ├── gers.db                 # Base de datos SQLite (generada en runtime)
 │   └── test/
 │       └── smoke.js            # Prueba integral (levanta servidor + Samsara mock)
@@ -113,7 +113,7 @@ Archivo SQLite en `DATABASE_PATH` (por defecto `backend/gers.db`; en Docker `/ap
 | Tabla | Contenido |
 |-------|-----------|
 | `users`, `sessions` | Autenticación (hash + salt) y sesiones |
-| `vehicles` / `vehicle_locations` | Unidades y última ubicación reportada |
+| `vehicle_locations` | Última ubicación reportada por unidad Samsara |
 | `viajes`, `viaje_paradas` | Viajes (directo/reparto) y sus paradas con estado |
 | `seguimiento`, `seguimiento_historial` | Seguimiento operativo por unidad y su historial |
 | `remolques`, `remolque_asignaciones` | Remolques y asignaciones (sencillo/full) |
@@ -201,7 +201,7 @@ Los datos persisten en el volumen `gers-data`. No confirmes archivos `.env` ni s
 |----------|-------------|
 | `SAMSARA_API_TOKEN` | Token de API de Samsara |
 | `SAMSARA_WEBHOOK_SECRET` | Secreto del webhook de Samsara |
-| `SAMSARA_API_URL` | URL base de la API de Samsara (por defecto `https://api.samsara.com/v1`) |
+| `SAMSARA_API_BASE_URL` | URL base de la API de Samsara (por defecto `https://api.samsara.com`) |
 | `PORT` | Puerto del backend (por defecto `3001`) |
 | `FRONTEND_URL` | Origen permitido por CORS (por defecto `http://localhost:3000`) |
 | `ADMIN_USERNAME` | Usuario administrador inicial |
@@ -421,7 +421,7 @@ El backend no es compatible con serverless (usa SQLite en archivo local y SSE), 
 
 ## Acceso Inicial
 
-No existen credenciales públicas predeterminadas. Usa el usuario y la contraseña definidos por el operador en `.env` para Docker o en `backend/.env` para desarrollo local. El sistema crea el administrador inicial con esos valores.
+En producción (`NODE_ENV=production`) las variables `ADMIN_USERNAME` y `ADMIN_PASSWORD` son obligatorias; el sistema las rechaza si no están definidas. En desarrollo local, si se omiten, se crea un administrador por defecto (`admin`/`admin123`) que debes cambiar en el primer inicio. Usa siempre credenciales únicas y fuertes.
 
 ## Documentación adicional
 

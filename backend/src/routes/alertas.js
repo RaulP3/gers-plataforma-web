@@ -15,7 +15,7 @@ router.get('/alertas', (req, res) => {
   });
 });
 
-router.post('/alertas', async (req, res) => {
+router.post('/alertas', requireAdmin, async (req, res) => {
   const { vehicle_id, vehicle_name, tipo, mensaje, severidad } = req.body;
   try {
     const alert = await createAlertRecord({
@@ -38,7 +38,7 @@ router.put('/alertas/:id/leer', (req, res) => {
   });
 });
 
-router.put('/alertas/archivar-todas', (req, res) => {
+router.put('/alertas/archivar-todas', requireAdmin, (req, res) => {
   db.run("UPDATE alertas SET archivada = 1, leida = 1, archived_at = datetime('now') WHERE COALESCE(archivada, 0) = 0", [], function (err) {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ archived: this.changes });

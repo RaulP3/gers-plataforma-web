@@ -3153,7 +3153,7 @@ export default function useGersDashboard() {
       if (citasEtaRequestRef.current.generation === generation) setCitasEtaLoading(false);
     });
     return () => controller.abort();
-  }, [activeTab, citasEtaRefresh]);
+  }, [activeTab, citasEtaRefresh, citasOperativas]);
 
   useEffect(() => {
     if (!citaSeleccionada) { setCitaLlegada(null); return; }

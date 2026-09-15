@@ -155,25 +155,29 @@ router.delete('/remolques/:id', async (req, res) => {
   }
 });
 
-router.put('/remolques/:id', (req, res) => {
-  db.get('SELECT * FROM remolques WHERE id = ?', [req.params.id], (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
+router.put('/remolques/:id', async (req, res) => {
+  try {
+    const row = await getQuery('SELECT * FROM remolques WHERE id = ?', [req.params.id]);
     if (!row) return res.status(404).json({ error: 'No encontrado' });
     const has = (key) => Object.prototype.hasOwnProperty.call(req.body || {}, key);
+    if (has('resguardo')) {
+      await setRemolqueResguardo(req.params.id, {
+        resguardo: req.body.resguardo ? 1 : 0,
+        fecha_cita: has('fecha_cita') ? (req.body.fecha_cita || null) : row.fecha_cita,
+      });
+    }
     const numero = has('numero') ? req.body.numero : row.numero;
     const categoria = has('categoria') ? req.body.categoria : row.categoria;
-    const resguardo = has('resguardo') ? (req.body.resguardo ? 1 : 0) : row.resguardo;
-    const fecha_cita = has('fecha_cita') ? (req.body.fecha_cita || null) : row.fecha_cita;
     if (!numero) return res.status(400).json({ error: 'numero es requerido' });
-    db.run(
-      'UPDATE remolques SET numero = ?, categoria = ?, resguardo = ?, fecha_cita = ? WHERE id = ?',
-      [String(numero).trim(), categoria || 'Caja Seca', resguardo, fecha_cita, req.params.id],
-      function (runErr) {
-        if (runErr) return res.status(500).json({ error: runErr.message });
-        res.json({ changes: this.changes });
-      }
+    const result = await runQuery(
+      'UPDATE remolques SET numero = ?, categoria = ? WHERE id = ?',
+      [String(numero).trim(), categoria || 'Caja Seca', req.params.id]
     );
-  });
+    res.json({ changes: result.changes });
+  } catch (err) {
+    if (err?.message?.includes('UNIQUE')) return res.status(400).json({ error: 'Este número de remolque ya existe' });
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.put('/remolques/:id/resguardo', async (req, res) => {

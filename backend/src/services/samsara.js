@@ -33,14 +33,14 @@ async function fetchSamsaraDrivers() {
 
 async function endOngoingSamsaraAssignment(vehicleId) {
   const headers = { 'Authorization': `Bearer ${process.env.SAMSARA_API_TOKEN}`, 'Content-Type': 'application/json' };
-  const res = await axios.get('https://api.samsara.com/fleet/driver-vehicle-assignments', {
+  const res = await axios.get(`${SAMSARA_API_BASE_URL}/fleet/driver-vehicle-assignments`, {
     headers,
     params: { filterBy: 'vehicles', vehicleIds: String(vehicleId), startTime: '1970-01-01T00:00:00Z', assignmentType: 'external' },
     timeout: 15000,
   });
   const ongoing = (res.data.data || []).filter(a => !a.endTime);
   for (const a of ongoing) {
-    await axios.patch('https://api.samsara.com/fleet/driver-vehicle-assignments', {
+    await axios.patch(`${SAMSARA_API_BASE_URL}/fleet/driver-vehicle-assignments`, {
       driverId: a.driver.id,
       vehicleId: a.vehicle.id,
       startTime: a.startTime,
@@ -78,7 +78,7 @@ async function syncOperatorToSamsara(vehicleId, operatorName, driverIdSamsara) {
   }
 
   try {
-    await axios.post('https://api.samsara.com/fleet/driver-vehicle-assignments', {
+    await axios.post(`${SAMSARA_API_BASE_URL}/fleet/driver-vehicle-assignments`, {
       driverId,
       vehicleId: String(vehicleId),
       startTime: new Date().toISOString(),

@@ -85,6 +85,9 @@ router.put('/mapas/:id', async (req, res) => {
   try {
     const current = await getQuery('SELECT * FROM mapas_mymaps WHERE id = ?', [id]);
     if (!current) return res.status(404).json({ error: 'Mapa no encontrado' });
+    if (req.user.rol !== 'admin' && current.created_by_user_id !== req.user.id) {
+      return res.status(403).json({ error: 'Solo el propietario o un administrador puede modificar este mapa' });
+    }
     if (has('nombre') && typeof req.body.nombre !== 'string') {
       return res.status(400).json({ error: 'nombre debe ser texto' });
     }

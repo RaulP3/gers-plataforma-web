@@ -144,7 +144,13 @@ router.post('/pendientes/archivar-completados', requireAdmin, async (req, res) =
 });
 
 router.get('/reportes/pendientes-completados', (req, res) => {
-  db.all('SELECT * FROM pendientes_historial ORDER BY archived_at DESC, id DESC', [], (err, rows) => {
+  const { fecha_inicio, fecha_fin } = req.query;
+  let query = 'SELECT * FROM pendientes_historial WHERE 1=1';
+  const params = [];
+  if (fecha_inicio) { query += ' AND archived_at >= ?'; params.push(fecha_inicio); }
+  if (fecha_fin) { query += ' AND archived_at <= ?'; params.push(fecha_fin + ' 23:59:59'); }
+  query += ' ORDER BY archived_at DESC, id DESC';
+  db.all(query, params, (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows || []);
   });

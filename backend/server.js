@@ -45,6 +45,10 @@ app.use(express.json({
     if (req.originalUrl.split('?')[0] === '/api/webhooks/samsara') req.rawBody = Buffer.from(buffer);
   },
 }));
+app.use((req, res, next) => {
+  if (req.body === undefined || req.body === null) req.body = {};
+  next();
+});
 
 app.get('/health', (req, res) => {
   db.get('SELECT 1 AS ok', [], (err) => {

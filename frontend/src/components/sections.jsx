@@ -913,6 +913,7 @@ export function AlertasSection({
   apiUrl,
   archivarAlerta,
   archivarAlertas,
+  currentUser,
   filtroAlertas,
   loadAll,
   marcarAlertaLeida,
@@ -943,7 +944,7 @@ export function AlertasSection({
                 <button onClick={async () => { try { await apiJson(`${apiUrl}/check-geofences`, { method: 'POST' }); await refreshAlertas(); } catch (err) { alert(err.message || 'No se pudo revisar geocercas'); } }} style={s.button('#8b5cf6')}>Revisar geocercas</button>
                 <button onClick={async () => { try { await apiJson(`${apiUrl}/check-fuel`, { method: 'POST' }); await refreshAlertas(); } catch (err) { alert(err.message || 'No se pudo revisar combustible'); } }} style={s.button('#f59e0b')}>Revisar combustible</button>
                 <button onClick={loadAll} style={s.button()}>Actualizar</button>
-                {alertasView === 'activas' && <button onClick={archivarAlertas} disabled={alertas.length === 0} style={{ ...s.button('#f59e0b'), opacity: alertas.length === 0 ? 0.5 : 1 }}>Archivar activas</button>}
+                {alertasView === 'activas' && currentUser?.rol === 'admin' && <button onClick={archivarAlertas} disabled={alertas.length === 0} style={{ ...s.button('#f59e0b'), opacity: alertas.length === 0 ? 0.5 : 1 }}>Archivar activas</button>}
               </div>
             </div>
             {alertasVisibles.length === 0 ? (
@@ -1119,7 +1120,9 @@ export function OperacionesSection({
 }
 
 export function ViajesSection({
+  borrarViajesActivos,
   calculandoViajeEta,
+  currentUser,
   crearViaje,
   dragOverViajeColumn,
   draggedViaje,
@@ -1156,7 +1159,6 @@ export function ViajesSection({
   viajeEtaError,
   viajeWasDraggedRef,
   viajes,
-  borrarViajesActivos,
   viajesHistorialSearch,
   viajesProximosOcultos,
   viajesProximosSearch,
@@ -1175,7 +1177,7 @@ export function ViajesSection({
                   <button type="button" onClick={() => setViajesView('historial')} style={{ padding: '0.5rem 0.9rem', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem', background: viajesView === 'historial' ? '#00ff41' : 'transparent', color: viajesView === 'historial' ? '#061006' : '#6a9b6a' }}>Historial</button>
                 </div>
                 <button type="button" onClick={() => setShowProgramarViajeModal(true)} style={s.button('#10b981')}>+ Programar viaje</button>
-                <button type="button" onClick={async () => { const ok = await borrarViajesActivos(); if (ok) alert('Viajes actuales borrados'); }} style={s.button('#ef4444')}>Borrar viajes actuales</button>
+                {currentUser?.rol === 'admin' && <button type="button" onClick={async () => { const ok = await borrarViajesActivos(); if (ok) alert('Viajes actuales borrados'); }} style={s.button('#ef4444')}>Borrar viajes actuales</button>}
               </div>
             </div>
             {showProgramarViajeModal &&

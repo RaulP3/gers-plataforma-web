@@ -87,7 +87,7 @@ router.put('/viajes/:id', async (req, res) => {
       telefono: has('telefono') ? req.body.telefono : row.telefono,
       fecha_inicio: has('fecha_inicio') ? req.body.fecha_inicio : row.fecha_inicio,
       fecha_fin: has('fecha_fin') ? req.body.fecha_fin : row.fecha_fin,
-      cita_programada: has('fecha_fin') ? req.body.fecha_fin : row.fecha_fin,
+      cita_programada: has('cita_programada') ? req.body.cita_programada : row.cita_programada,
       notas: has('notas') ? req.body.notas : row.notas,
       estado: has('estado') ? req.body.estado : row.estado,
       remolque: has('remolque') ? req.body.remolque : row.remolque,
@@ -110,24 +110,27 @@ router.put('/viajes/:id', async (req, res) => {
       }
     }
 
-    const result = await runQuery(
-      'UPDATE viajes SET vehicle_id = ?, vehicle_name = ?, origen = ?, destino = ?, tipo_entrega = ?, destinos_json = ?, conductor = ?, telefono = ?, fecha_inicio = ?, fecha_fin = ?, cita_programada = ?, notas = ?, estado = ?, remolque = ? WHERE id = ?',
-      [next.vehicle_id, next.vehicle_name, next.origen, next.destino, next.tipo_entrega, next.destinos_json, next.conductor, next.telefono, next.fecha_inicio, next.fecha_fin, next.cita_programada, next.notas, next.estado, next.remolque, req.params.id]
-    );
-    const paradas = await syncTripStops({ id: Number(req.params.id), ...next }, has('tipo_entrega') || has('destinos') || has('destino'));
-    let trailerSync = null;
-    if (TRIP_ROUTE_STATES.has(nuevoEstado)) {
-      await resetTripGeofenceState(next);
-    }
     const estadoPrevio = String(row.estado || '').toLowerCase();
     const viajeActivoPrevio = TRIP_TRAILER_ACTIVE_STATES.has(estadoPrevio);
-    if (!viajeActivoPrevio && TRIP_TRAILER_ACTIVE_STATES.has(nuevoEstado) && (next.remolque || row.remolque)) {
+    const remolqueCambio = has('remolque') && next.remolque !== row.remolque;
+    let trailerSync = null;
+    if ((!viajeActivoPrevio && TRIP_TRAILER_ACTIVE_STATES.has(nuevoEstado) && (next.remolque || row.remolque))
+        || (TRIP_TRAILER_ACTIVE_STATES.has(nuevoEstado) && remolqueCambio)) {
       try {
         trailerSync = await syncTripTrailer({ ...next, remolque: next.remolque || row.remolque });
       } catch (syncErr) {
         if (syncErr.status === 409) return res.status(409).json({ error: syncErr.message });
         console.error('Error sincronizando remolque del viaje:', syncErr.message);
       }
+    }
+
+    const result = await runQuery(
+      'UPDATE viajes SET vehicle_id = ?, vehicle_name = ?, origen = ?, destino = ?, tipo_entrega = ?, destinos_json = ?, conductor = ?, telefono = ?, fecha_inicio = ?, fecha_fin = ?, cita_programada = ?, notas = ?, estado = ?, remolque = ? WHERE id = ?',
+      [next.vehicle_id, next.vehicle_name, next.origen, next.destino, next.tipo_entrega, next.destinos_json, next.conductor, next.telefono, next.fecha_inicio, next.fecha_fin, next.cita_programada, next.notas, next.estado, next.remolque, req.params.id]
+    );
+    const paradas = await syncTripStops({ id: Number(req.params.id), ...next }, has('tipo_entrega') || has('destinos') || has('destino'));
+    if (TRIP_ROUTE_STATES.has(nuevoEstado)) {
+      await resetTripGeofenceState(next);
     }
     res.json({ changes: result.changes, paradas, trailerSync });
   } catch (err) {
@@ -174,7 +177,7 @@ router.delete('/viajes/:id', async (req, res) => {
   }
 });
 
-router.delete('/viajes-activos', async (req, res) => {
+router.delete('/viajes-activos', requireAdmin, async (req, res) => {
   try {
     const result = await withTransaction(async tx => {
       let changes = 0;

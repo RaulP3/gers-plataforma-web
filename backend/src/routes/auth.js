@@ -15,7 +15,7 @@ router.post('/auth/login', async (req, res) => {
 
     const user = await getQuery('SELECT * FROM users WHERE username = ? AND activo = 1', [username.trim()]);
     if (!user) return res.status(401).json({ error: 'Credenciales inválidas' });
-    if (!verifyPassword(password, user.password_salt, user.password_hash)) {
+    if (!await verifyPassword(password, user.password_salt, user.password_hash)) {
       return res.status(401).json({ error: 'Credenciales inválidas' });
     }
 
@@ -76,7 +76,7 @@ router.post('/users', requireAuth, requireAdmin, async (req, res) => {
     }
     const existing = await getQuery('SELECT id FROM users WHERE username = ?', [username.trim()]);
     if (existing) return res.status(409).json({ error: 'El usuario ya existe' });
-    const { salt, hash } = hashPassword(password);
+    const { salt, hash } = await hashPassword(password);
     const result = await runQuery(
       'INSERT INTO users (username, password_hash, password_salt, nombre, rol, activo) VALUES (?, ?, ?, ?, ?, 1)',
       [username.trim(), hash, salt, nombre.trim(), rol]

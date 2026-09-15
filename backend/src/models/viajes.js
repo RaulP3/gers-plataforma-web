@@ -110,7 +110,7 @@ function getActiveTripsForVehicle(vehicleId, vehicleName) {
   return allQuery(
     `SELECT * FROM viajes
       WHERE (CAST(vehicle_id AS TEXT) = ? OR LOWER(COALESCE(vehicle_name, '')) = LOWER(?))
-        AND LOWER(COALESCE(estado, '')) NOT IN ('cancelado')`,
+        AND LOWER(COALESCE(estado, '')) NOT IN ('completado', 'cancelado')`,
     [String(vehicleId || ''), String(vehicleName || '')]
   );
 }
@@ -121,7 +121,7 @@ function getCandidateStopsForVehicle(vehicleId, vehicleName) {
        FROM viaje_paradas vp
        JOIN viajes v ON v.id = vp.viaje_id
       WHERE (CAST(v.vehicle_id AS TEXT) = ? OR LOWER(COALESCE(v.vehicle_name, '')) = LOWER(?))
-        AND LOWER(COALESCE(v.estado, '')) NOT IN ('cancelado')
+        AND LOWER(COALESCE(v.estado, '')) NOT IN ('completado', 'cancelado')
       ORDER BY CASE WHEN LOWER(COALESCE(v.estado, '')) IN ('completado') THEN 1 ELSE 0 END ASC, v.id DESC, vp.orden ASC`,
     [String(vehicleId || ''), String(vehicleName || '')]
   );

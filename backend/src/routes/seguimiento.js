@@ -423,10 +423,12 @@ router.get('/seguimiento/history-pdfs', requireAdmin, (req, res) => {
 });
 
 router.get('/seguimiento/history-pdfs/:filename', requireAdmin, (req, res) => {
-  const filePath = path.join(HISTORY_DIR, req.params.filename);
-  if (!fs.existsSync(filePath) || !req.params.filename.endsWith('.pdf')) return res.status(404).json({ error: 'No encontrado' });
+  const filename = String(req.params.filename || '');
+  if (!filename.endsWith('.pdf') || path.basename(filename) !== filename) return res.status(404).json({ error: 'No encontrado' });
+  const filePath = path.join(HISTORY_DIR, filename);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'No encontrado' });
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${req.params.filename}"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   fs.createReadStream(filePath).pipe(res);
 });
 

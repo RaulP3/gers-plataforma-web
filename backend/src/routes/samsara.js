@@ -1,5 +1,6 @@
 const express = require('express');
 const { db, getQuery, runQuery } = require('../db');
+const { requireAdmin } = require('../auth');
 const {
   refreshSamsaraVehicles,
   fetchSamsaraDrivers,
@@ -25,7 +26,7 @@ router.get('/vehicle-operators', (req, res) => {
   });
 });
 
-router.put('/vehicle-operators/:vehicleId', async (req, res) => {
+router.put('/vehicle-operators/:vehicleId', requireAdmin, async (req, res) => {
   try {
     const row = await getQuery('SELECT * FROM vehicle_operators WHERE vehicle_id = ?', [req.params.vehicleId]);
     const has = (key) => Object.prototype.hasOwnProperty.call(req.body || {}, key);

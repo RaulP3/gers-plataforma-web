@@ -101,8 +101,11 @@ async function getTripContactForGeofence(vehicle, geofenceName, tripIdHint = nul
   let candidates = await getCandidateStopsForVehicle(vehicle.id, vehicle.name);
   if (tripIdHint) candidates = candidates.filter(candidate => Number(candidate.viaje_id) === Number(tripIdHint));
   const stop = candidates.find(candidate => normalizeDestination(candidate.destino) === normalizedGeofence);
-  const directTrip = activeTrips.find(trip => trip.tipo_entrega !== 'reparto' && normalizeDestination(trip.destino) === normalizedGeofence && String(trip.estado || '').toLowerCase() !== 'completado')
-    || activeTrips.find(trip => trip.tipo_entrega !== 'reparto' && normalizeDestination(trip.destino) === normalizedGeofence);
+  const directTrip = activeTrips.find(trip =>
+    trip.tipo_entrega !== 'reparto' &&
+    normalizeDestination(trip.destino) === normalizedGeofence &&
+    !['completado', 'cancelado'].includes(String(trip.estado || '').toLowerCase())
+  );
   const trip = (stop ? activeTrips.find(t => t.id === stop.viaje_id) : null) || directTrip || null;
   return { stop, trip, directTrip };
 }
@@ -124,6 +127,7 @@ async function updateTripStopFromGeofence(vehicle, geofenceName, type, eventTime
   const tripId = stop?.viaje_id || directTrip?.id;
   const estadoActual = String(trip?.estado || '').toLowerCase();
 
+  if (['completado', 'cancelado'].includes(estadoActual)) return stop ? getParada(stop.id) : null;
   if (estadoActual === 'programado') {
     return stop ? getParada(stop.id) : null;
   }

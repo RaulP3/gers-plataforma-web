@@ -1,14 +1,17 @@
 const crypto = require('crypto');
+const { promisify } = require('util');
 const { db, getQuery, runQuery } = require('../db');
 const { PBKDF2_ITERATIONS, SESSION_DAYS, IS_PRODUCTION } = require('../config');
 
-function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
-  const hash = crypto.pbkdf2Sync(password, salt, PBKDF2_ITERATIONS, 64, 'sha512').toString('hex');
+const pbkdf2 = promisify(crypto.pbkdf2);
+
+async function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const hash = (await pbkdf2(password, salt, PBKDF2_ITERATIONS, 64, 'sha512')).toString('hex');
   return { salt, hash };
 }
 
-function verifyPassword(password, salt, storedHash) {
-  const { hash } = hashPassword(password, salt);
+async function verifyPassword(password, salt, storedHash) {
+  const { hash } = await hashPassword(password, salt);
   return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(storedHash, 'hex'));
 }
 
@@ -43,8 +46,11 @@ async function ensureDefaultAdmin() {
     }
     const existing = await getQuery('SELECT id FROM users WHERE username = ?', [adminUser]);
     if (existing) return;
+    if (!configuredUser && adminUser === 'admin' && adminPass === 'admin123') {
+      console.warn('AVISO: Creando usuario admin con credenciales por defecto (admin/admin123). Define ADMIN_USERNAME/ADMIN_PASSWORD o cambia la contraseña tras el primer ingreso.');
+    }
     const name = process.env.ADMIN_NAME || 'Administrador';
-    const { salt, hash } = hashPassword(adminPass);
+    const { salt, hash } = await hashPassword(adminPass);
     await runQuery(
       'INSERT INTO users (username, password_hash, password_salt, nombre, rol, activo) VALUES (?, ?, ?, ?, ?, 1)',
       [adminUser, hash, salt, name, 'admin']
@@ -70,7 +76,7 @@ async function getUserByUsername(username) {
 }
 
 async function createUser({ username, password, nombre, rol }) {
-  const { salt, hash } = hashPassword(password);
+  const { salt, hash } = await hashPassword(password);
   const result = await runQuery(
     'INSERT INTO users (username, password_hash, password_salt, nombre, rol, activo) VALUES (?, ?, ?, ?, ?, 1)',
     [username, hash, salt, nombre, rol]

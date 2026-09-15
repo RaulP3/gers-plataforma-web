@@ -5,7 +5,9 @@ const backendRoot = path.resolve(__dirname, '..');
 const PORT = process.env.PORT || 3001;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
-const SAMSARA_API_BASE_URL = (process.env.SAMSARA_API_BASE_URL || 'https://api.samsara.com').replace(/\/$/, '');
+const SAMSARA_API_BASE_URL = (process.env.SAMSARA_API_BASE_URL || process.env.SAMSARA_API_URL || 'https://api.samsara.com')
+  .replace(/\/+v1\/?$/, '')
+  .replace(/\/+$/, '');
 const allowedOrigins = new Set(
   (process.env.CORS_ORIGINS || FRONTEND_URL).split(',').map(origin => origin.trim()).filter(Boolean)
 );
