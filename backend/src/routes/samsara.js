@@ -10,10 +10,19 @@ const {
 
 const router = express.Router();
 
+async function filterVehiclesByUser(vehicles, user) {
+  if (!user || user.rol === 'admin') return vehicles;
+  const { getAsignacionesUserId } = require('../models/unidad_usuarios');
+  const claves = new Set(await getAsignacionesUserId(user.id));
+  const rows = Array.isArray(vehicles) ? vehicles : (Array.isArray(vehicles?.data) ? vehicles.data : Array.isArray(vehicles?.vehicles) ? vehicles.vehicles : []);
+  return rows.filter(v => claves.has(`samsara:${v?.id}`));
+}
+
 router.get('/samsara/vehicles', async (req, res) => {
   try {
     const enrichedVehicles = await refreshSamsaraVehicles();
-    res.json(enrichedVehicles);
+    const filtered = await filterVehiclesByUser(enrichedVehicles, req.user);
+    res.json(filtered);
   } catch (error) {
     res.status(500).json({ error: 'Error al obtener vehículos', details: error.message });
   }

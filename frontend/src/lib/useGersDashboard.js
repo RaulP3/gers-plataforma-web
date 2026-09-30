@@ -25,6 +25,7 @@ export default function useGersDashboard() {
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [loginError, setLoginError] = useState('');
   const [usuarios, setUsuarios] = useState([]);
+  const [asignacionesUnidad, setAsignacionesUnidad] = useState({});
   const [formUsuario, setFormUsuario] = useState({ username: '', password: '', nombre: '', rol: 'user' });
   const [usuarioMsg, setUsuarioMsg] = useState('');
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -1167,6 +1168,7 @@ export default function useGersDashboard() {
       if (currentUser?.rol === 'admin') {
         const usersRes = await requestJson(`${apiUrl}/users`).catch(() => null);
         if (Array.isArray(usersRes)) setUsuarios(usersRes);
+        await cargarAsignacionesUnidad();
       }
       sseCooldownUntilRef.current = Date.now() + 3000;
     };
@@ -1487,9 +1489,44 @@ export default function useGersDashboard() {
     try {
       await apiJson(`${apiUrl}/users/${user.id}`, { method: 'DELETE' });
       setUsuarios(prev => prev.filter(item => item.id !== user.id));
+      setAsignacionesUnidad(prev => {
+        const next = { ...prev };
+        delete next[user.id];
+        return next;
+      });
       setUsuarioMsg(`Usuario ${user.username} eliminado`);
     } catch (err) {
       setUsuarioMsg(err.message || 'No se pudo eliminar el usuario');
+    }
+  };
+
+  const cargarAsignacionesUnidad = async () => {
+    try {
+      const rows = await fetch(`${apiUrl}/unidad-usuarios`).then(r => r.json()).catch(() => []);
+      if (!Array.isArray(rows)) return;
+      const map = {};
+      rows.forEach(r => {
+        if (!map[r.user_id]) map[r.user_id] = new Set();
+        if (r.unidad_clave) map[r.user_id].add(r.unidad_clave);
+      });
+      const next = {};
+      Object.entries(map).forEach(([userId, set]) => { next[userId] = [...set]; });
+      setAsignacionesUnidad(next);
+    } catch {}
+  };
+
+  const guardarAsignacionUnidad = async (userId, unidadClaves) => {
+    try {
+      const res = await apiJson(`${apiUrl}/unidad-usuarios/usuario/${userId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ unidad_claves: Array.isArray(unidadClaves) ? unidadClaves : [] }),
+      });
+      setAsignacionesUnidad(prev => ({ ...prev, [userId]: [...(Array.isArray(unidadClaves) ? unidadClaves : [])] }));
+      return true;
+    } catch (err) {
+      alert(err.message || 'No se pudieron guardar las asignaciones');
+      return false;
     }
   };
 
@@ -3709,6 +3746,7 @@ export default function useGersDashboard() {
     { key: 'rutas', label: 'Historial Rutas', icon: '🛤️' },
     { key: 'reportes', label: 'Reportes', icon: '📈' },
     ...(esAdmin ? [{ key: 'usuarios', label: 'Usuarios', icon: '🔐' }] : []),
+    ...(esAdmin ? [{ key: 'asignacion', label: 'Asignar Unidades', icon: '🔗' }] : []),
   ].filter(item => esAdmin || !tabsOcultosParaUser.includes(item.key));
 
   const s = {
@@ -3758,6 +3796,9 @@ export default function useGersDashboard() {
     setLoginError,
     usuarios,
     setUsuarios,
+    asignacionesUnidad,
+    cargarAsignacionesUnidad,
+    guardarAsignacionUnidad,
     formUsuario,
     setFormUsuario,
     usuarioMsg,

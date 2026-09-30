@@ -18,6 +18,7 @@ import {
   RutasSection,
   CitasSection,
   UsuariosSection,
+  AsignacionSection,
   ReportesSection,
 } from '../components/sections';
 import { FloatingAlerts, ModalsRoot } from '../components/overlays';
@@ -102,6 +103,7 @@ export default function Home() {
 
         {activeTab === 'citas' && <CitasSection {...d} />}
         {activeTab === 'usuarios' && currentUser?.rol === 'admin' && <UsuariosSection {...d} />}
+        {activeTab === 'asignacion' && currentUser?.rol === 'admin' && <AsignacionSection {...d} />}
 
         {activeTab === 'reportes' && <ReportesSection {...d} />}
       </main>

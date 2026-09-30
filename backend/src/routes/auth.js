@@ -2,6 +2,11 @@ const express = require('express');
 const { db, runQuery, getQuery, withTransaction } = require('../db');
 const { requireAuth, requireAdmin } = require('../auth');
 const { hashPassword, verifyPassword, createSessionToken } = require('../models/users');
+const {
+  listAsignaciones,
+  getAsignacionesUserId,
+  setAsignacionesUserId,
+} = require('../models/unidad_usuarios');
 const { SESSION_DAYS } = require('../config');
 
 const router = express.Router();
@@ -102,12 +107,48 @@ router.delete('/users/:id', requireAuth, requireAdmin, async (req, res) => {
     }
     await withTransaction(async tx => {
       await tx.run('DELETE FROM sessions WHERE user_id = ?', [userId]);
+      await tx.run('DELETE FROM unidad_usuarios WHERE user_id = ?', [userId]);
       await tx.run('DELETE FROM users WHERE id = ?', [userId]);
     });
     res.json({ deleted: 1, id: userId });
   } catch (err) {
     console.error('Error al eliminar usuario:', err);
     res.status(500).json({ error: 'No se pudo eliminar el usuario' });
+  }
+});
+
+// --- Asignación de unidades por usuario ---
+
+router.get('/unidad-usuarios', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const rows = await listAsignaciones();
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/unidad-usuarios/usuario/:userId', requireAuth, requireAdmin, async (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!Number.isInteger(userId) || userId <= 0) return res.status(400).json({ error: 'Usuario inválido' });
+  try {
+    const claves = await getAsignacionesUserId(userId);
+    res.json({ user_id: userId, unidad_claves: claves });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/unidad-usuarios/usuario/:userId', requireAuth, requireAdmin, async (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!Number.isInteger(userId) || userId <= 0) return res.status(400).json({ error: 'Usuario inválido' });
+  try {
+    const user = await getQuery('SELECT id FROM users WHERE id = ?', [userId]);
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+    const result = await setAsignacionesUserId(userId, req.body?.unidad_claves);
+    res.json({ user_id: userId, changes: result.changes });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

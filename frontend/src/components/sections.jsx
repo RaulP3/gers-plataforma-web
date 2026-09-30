@@ -3244,3 +3244,90 @@ export function ReportesSection({
             </div>
           </div>);
 }
+
+export function AsignacionSection({
+  asignacionesUnidad,
+  currentUser,
+  guardarAsignacionUnidad,
+  s,
+  todasLasUnidades,
+  unidadKey,
+  usuarios,
+}) {
+  const [seleccion, setSeleccion] = useState({});
+  const [guardando, setGuardando] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  const usuariosAsignables = useMemo(() => (usuarios || []).filter(u => u.rol !== 'admin'), [usuarios]);
+
+  const seleccionDe = (userId) => {
+    if (seleccion[userId] !== undefined) return seleccion[userId];
+    return asignacionesUnidad[userId] || [];
+  };
+
+  const toggleUnidad = (userId, clave) => {
+    setMsg('');
+    setSeleccion(prev => {
+      const actuales = seleccion[userId] !== undefined ? seleccion[userId] : (asignacionesUnidad[userId] || []);
+      const next = actuales.includes(clave) ? actuales.filter(c => c !== clave) : [...actuales, clave];
+      return { ...prev, [userId]: next };
+    });
+  };
+
+  const guardar = async (userId) => {
+    setGuardando(true);
+    try {
+      const ok = await guardarAsignacionUnidad(userId, seleccionDe(userId));
+      if (ok) {
+        setMsg('Asignaciones guardadas');
+        setTimeout(() => setMsg(''), 2500);
+      }
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  return (<div>
+            <h2 style={{ marginTop: 0, marginBottom: '1.5rem' }}>Asignar Unidades por Usuario</h2>
+            {msg && <div style={{ marginBottom: '1rem', padding: '0.75rem 1rem', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', color: '#166534', fontSize: '0.9rem' }}>{msg}</div>}
+            {usuariosAsignables.length === 0 && (
+              <div style={s.card}><p style={{ color: '#6a9b6a' }}>No hay usuarios no-admin para asignar. Crea usuarios en la sección Usuarios.</p></div>
+            )}
+            {usuariosAsignables.map((user) => {
+              const claves = seleccionDe(user.id);
+              return (
+                <div key={user.id} style={{ ...s.card, marginBottom: '1.5rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+                    <div>
+                      <strong style={{ fontSize: '1rem', color: '#e0e0e0' }}>{user.nombre || user.username}</strong>
+                      <span style={{ marginLeft: '0.75rem', color: '#6a9b6a', fontSize: '0.8rem' }}>@{user.username} · {claves.length} unidad{claves.length !== 1 ? 'es' : ''} asignada{claves.length !== 1 ? 's' : ''}</span>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={guardando || user.id === currentUser?.id}
+                      onClick={() => guardar(user.id)}
+                      style={{ ...s.button('#00ff41'), opacity: guardando ? 0.5 : 1, cursor: guardando ? 'wait' : 'pointer' }}
+                    >
+                      {guardando ? 'Guardando...' : 'Guardar asignación'}
+                    </button>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.5rem', maxHeight: '360px', overflow: 'auto', paddingRight: '0.25rem' }}>
+                    {todasLasUnidades.map((unidad) => {
+                      const clave = unidadKey(unidad);
+                      const marcada = claves.includes(clave);
+                      return (
+                        <label
+                          key={clave}
+                          style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.55rem 0.7rem', borderRadius: '8px', border: `1px solid ${marcada ? '#00ff41' : '#1a3d1a'}`, background: marcada ? 'rgba(0,255,65,0.06)' : 'transparent', cursor: 'pointer', fontSize: '0.85rem', color: '#c0c0c0' }}
+                        >
+                          <input type="checkbox" checked={marcada} onChange={() => toggleUnidad(user.id, clave)} style={{ accentColor: '#00ff41' }} />
+                          <span>{unidad.nombre || unidad.name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>);
+}

@@ -47,9 +47,17 @@ router.delete('/risk-zones/:id', (req, res) => {
 });
 
 router.get('/unidades', (req, res) => {
-  db.all('SELECT * FROM unidades ORDER BY created_at DESC', [], (err, rows) => {
+  db.all('SELECT * FROM unidades ORDER BY created_at DESC', [], async (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
+    if (!req.user || req.user.rol === 'admin') return res.json(rows);
+    const { getAsignacionesUserId } = require('../models/unidad_usuarios');
+    try {
+      const claves = new Set(await getAsignacionesUserId(req.user.id));
+      const filtered = (rows || []).filter(u => claves.has(`local:${u.id}`));
+      res.json(filtered);
+    } catch (filterErr) {
+      res.status(500).json({ error: filterErr.message });
+    }
   });
 });
 

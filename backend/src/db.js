@@ -175,6 +175,13 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`, [], () => {});
 
+  db.run(`CREATE TABLE IF NOT EXISTS unidad_usuarios (
+    unidad_clave TEXT NOT NULL,
+    user_id INTEGER NOT NULL,
+    assigned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (unidad_clave, user_id)
+  )`, [], () => {});
+
   db.run(`CREATE TABLE IF NOT EXISTS pendientes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     titulo TEXT NOT NULL,
