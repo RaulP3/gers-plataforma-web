@@ -1,0 +1,1693 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Mapa de Riesgo · Transporte Pesado en México</title>
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css"/>
+<style>
+  :root{
+    --bg:#0a0f0d; --panel:#0d1512; --panel2:#111c18; --line:#1e3a2c;
+    --text:#d7ffe0; --muted:#8fb99b; --green:#72d98a; --red:#ef4444;
+    --orange:#f97316; --yellow:#eab308; --teal:#2dd4bf;
+    --track:#16231d; --popup:#0f1a15; --shadow:0 16px 40px rgba(0,0,0,.55);
+  }
+  body.light{
+    --bg:#eef2f6; --panel:#ffffff; --panel2:#f2f6fa; --line:#d3dce5;
+    --text:#16222e; --muted:#54687b; --green:#15803d; --red:#dc2626;
+    --orange:#c2410c; --yellow:#a16207; --teal:#0e7490;
+    --track:#e3e9ef; --popup:#ffffff; --shadow:0 16px 32px rgba(20,40,60,.18);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;height:100%;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text)}
+  #map{position:absolute;inset:0;z-index:0}
+  #sidebar{
+    position:absolute;top:12px;right:12px;bottom:12px;width:330px;z-index:1000;
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    padding:14px 16px 12px;overflow-y:auto;box-shadow:var(--shadow);
+    backdrop-filter:blur(8px);transition:transform .25s ease,opacity .25s ease;
+  }
+  #sidebar.closed{transform:translateX(calc(100% + 20px));opacity:0;pointer-events:none}
+  #head{display:flex;gap:8px;align-items:flex-start;margin-bottom:4px}
+  #head h1{font-size:1.02rem;margin:0;line-height:1.15;letter-spacing:.02em}
+  #head h1 span{display:block;font-size:.68rem;color:var(--muted);font-weight:600;letter-spacing:.02em;margin-top:2px}
+  #theme-btn{margin-left:auto;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:9px;width:32px;height:32px;cursor:pointer;font-size:.95rem;flex:none;transition:transform .15s}
+  #theme-btn:hover{transform:scale(1.08)}
+  #sidebar .sub{font-size:.72rem;color:var(--muted);margin:0 0 8px}
+  h2{font-size:.68rem;color:var(--green);letter-spacing:.09em;text-transform:uppercase;margin:15px 0 6px;font-weight:800}
+  .kpis{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .kpi{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 10px;transition:border-color .15s}
+  .kpi:hover{border-color:var(--green)}
+  .kpi b{display:block;font-size:1.05rem;color:var(--green)}
+  .kpi span{font-size:.66rem;color:var(--muted);line-height:1.25}
+  .row{display:flex;align-items:center;gap:8px;padding:3px 0;cursor:pointer;font-size:.8rem;user-select:none;transition:color .15s}
+  .row:hover{color:var(--green)}
+  .row input{accent-color:var(--green)}
+  .pills{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px}
+  .pill{font-size:.66rem;background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:3px 8px;color:var(--muted);white-space:nowrap}
+  .bar{margin:5px 0}
+  .bar .top{display:flex;justify-content:space-between;gap:8px;font-size:.72rem;margin-bottom:2px}
+  .bar .top b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bar .top span{flex:none;color:var(--muted)}
+  .bar .track{height:6px;background:var(--track);border-radius:4px;overflow:hidden}
+  .bar .fill{height:100%;border-radius:4px}
+  .src{font-size:.62rem;color:var(--muted);line-height:1.5;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+  #tabs{display:flex;gap:6px;margin:10px 0 2px;position:sticky;top:-14px;background:var(--panel);padding:4px 0;z-index:520;border-bottom:1px solid var(--line)}
+  .tab{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:9px;color:var(--muted);padding:7px 2px;cursor:pointer;font-size:.66rem;font-weight:700;letter-spacing:.03em;text-align:center;transition:background .15s,border-color .15s,color .15s;position:relative}
+  .tab:hover{border-color:var(--green);color:var(--text)}
+  .tab.active{border-color:var(--green);color:var(--green);background:rgba(114,217,138,.08)}
+  .tab .cnt{display:none;position:absolute;top:-6px;right:-6px;background:var(--red);color:#fff;border-radius:999px;font-size:.58rem;font-weight:800;min-width:16px;height:16px;line-height:16px;padding:0 4px}
+  .tab .cnt.show{display:block}
+  .tabpane{display:none}
+  .tabpane.active{display:block}
+  #samsara-alertas table{width:100%;border-collapse:collapse;font-size:.64rem;margin-top:4px}
+  #samsara-alertas th{text-align:left;color:var(--muted);font-weight:700;letter-spacing:.05em;text-transform:uppercase;font-size:.6rem;padding:5px 4px;border-bottom:1px solid var(--line)}
+  #samsara-alertas td{padding:5px 4px;border-bottom:1px solid var(--line);vertical-align:middle}
+  #samsara-alertas tr{transition:background .12s;cursor:pointer}
+  #samsara-alertas tbody tr:hover{background:var(--panel2)}
+  #samsara-alertas .dust{color:var(--muted);font-size:.58rem}
+  #samsara-alertas .chip{display:inline-block;border-radius:999px;padding:1px 7px;font-size:.58rem;font-weight:800;color:#fff}
+  #samsara-resultados{margin-top:4px}
+  #samsara-resultados .hit{display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--panel2);border-radius:8px;padding:6px 8px;margin-top:4px;cursor:pointer;transition:border-color .15s;font-size:.7rem}
+  #samsara-resultados .hit:hover{border-color:var(--green)}
+  #samsara-resultados .hit .dot{width:9px;height:9px;border-radius:50%;flex:none;box-shadow:0 0 6px currentColor}
+  #samsara-resultados .hit .nmi{flex:1;min-width:0}
+  #samsara-resultados .hit .nmi b{display:block;font-size:.72rem}
+  #samsara-resultados .hit .nmi span{display:block;font-size:.6rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #samsara-resultados .vacia{font-size:.66rem;color:var(--muted);margin-top:6px}
+  #samsara-resultados .hit .btn-destino{flex:none;border:1px solid var(--line);background:var(--track);color:var(--muted);border-radius:6px;padding:2px 6px;cursor:pointer;font-size:.66rem;transition:border-color .15s,color .15s}
+  #samsara-resultados .hit .btn-destino:hover{border-color:var(--green);color:var(--green)}
+  #samsara-alertas td .btn-destino{border:1px solid var(--line);background:var(--track);color:var(--muted);border-radius:6px;padding:1px 6px;cursor:pointer;font-size:.6rem}
+  #samsara-alertas td .btn-destino:hover{border-color:var(--green);color:var(--green)}
+  .field{background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:7px 9px;font-size:.78rem;outline:none;width:100%;transition:border-color .15s}
+  .field:focus{border-color:var(--green)}
+  .form{display:flex;flex-direction:column;gap:6px}
+  .btn{border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--text);padding:7px 9px;cursor:pointer;font-size:.78rem;font-weight:700;transition:background .15s,border-color .15s,transform .1s}
+  .btn:hover{border-color:var(--green)}
+  .btn:active{transform:translateY(1px)}
+  .btn.primary{border-color:var(--green);color:var(--green)}
+  .btn.primary:hover{background:rgba(114,217,138,.12)}
+  .btn.danger{border-color:var(--red);color:var(--red)}
+  .btn.danger:hover{background:rgba(255,99,99,.12)}
+  .btn.ghost{color:var(--muted);background:transparent}
+  .hint{font-size:.64rem;color:var(--muted);line-height:1.4;margin-top:2px}
+  .code{display:inline-block;background:var(--track);border:1px solid var(--line);border-radius:5px;padding:0 5px;font-family:Consolas,monospace;font-size:.62rem;color:var(--text)}
+  .badge{display:inline-block;background:var(--track);border:1px solid var(--line);border-radius:5px;padding:0 6px;font-size:.66rem;color:var(--yellow);font-weight:600}
+  #route-result{font-size:.72rem;line-height:1.6;color:var(--muted);margin-top:6px}
+  #route-result b{color:var(--text)}
+  #rutas-opts{display:flex;flex-direction:column;gap:5px;margin-top:8px}
+  .ropt{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:8px;padding:6px 9px;cursor:pointer;font-size:.72rem;text-align:left;line-height:1.45;transition:border-color .15s,background .15s}
+  .ropt:hover{border-color:var(--green)}
+  .ropt.active{border-color:var(--green);background:rgba(114,217,138,.08);box-shadow:0 0 0 1px var(--green) inset}
+  .ropt b{color:var(--green)}
+  .ropt .badge{float:right;color:var(--yellow);font-weight:800}
+  #toggle{
+    position:absolute;top:12px;right:12px;z-index:1100;border:1px solid var(--line);border-radius:10px;
+    background:var(--panel);color:var(--text);padding:8px 12px;cursor:pointer;font-weight:700;font-size:.8rem;
+    box-shadow:0 6px 18px rgba(0,0,0,.4);display:none;transition:background .15s;
+  }
+  #toggle:hover{background:var(--panel2)}
+  #sidebar.closed ~ #toggle{display:block}
+  .leaflet-popup-content-wrapper{background:var(--popup);color:var(--text);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+  .leaflet-popup-tip{background:var(--popup);border:1px solid var(--line)}
+  .leaflet-popup-content{margin:10px 12px;font-size:.78rem;line-height:1.5}
+  .leaflet-popup-content strong.sev{font-size:.95rem}
+  .leaflet-popup-content .meta{color:var(--muted);font-size:.68rem}
+  .leaflet-popup-content .poptab{display:inline-block;margin-top:6px;font-size:.7rem;font-weight:700;color:var(--teal);border:1px solid var(--teal);padding:2px 8px;border-radius:6px;text-decoration:none}
+  .leaflet-popup-content .poptab:hover{background:var(--teal);color:#fff}
+  @keyframes sampulse{0%{box-shadow:0 0 0 0 rgba(255,255,255,0);transform:scale(1)}30%{box-shadow:0 0 0 9px rgba(255,255,255,.28);transform:scale(1.08)}100%{box-shadow:0 0 0 0 rgba(255,255,255,0);transform:scale(1)}}
+  .sam-wrap{animation:sampulse 1.8s ease-out infinite}
+  ::-webkit-scrollbar{width:8px}
+  ::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+  @media (max-width:760px){
+    #sidebar{left:8px;right:8px;top:8px;bottom:8px;width:auto;max-width:none}
+    #toggle{top:8px;right:8px}
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="toggle">☰ Panel</div>
+
+<div id="sidebar">
+  <div id="head">
+    <h1>🚛 Mapa de riesgo<span>Transporte de carga · México</span></h1>
+    <button id="theme-btn" title="Cambiar tema">☀️</button>
+  </div>
+
+  <div id="tabs">
+    <button class="tab active" data-tab="samsara">🚛 Unidades<span class="cnt" id="tab-cnt-samsara"></span></button>
+    <button class="tab" data-tab="ruta">🛣 Ruta</button>
+    <button class="tab" data-tab="incidentes">🚧 Incidentes</button>
+    <button class="tab" data-tab="capas">🗺 Capas</button>
+    <button class="tab" data-tab="info">📊 Info</button>
+  </div>
+
+  <div class="tabpane active" data-pane="samsara">
+    <h2>Unidades Samsara</h2>
+    <div class="form">
+      <input id="samsara-url" class="field" type="text" value="http://localhost:8787/locations" placeholder="http://localhost:8787/locations"/>
+      <div class="row" style="gap:6px">
+        <button id="btn-samsara" type="button" class="btn primary" style="flex:1">Conectar unidades</button>
+        <button id="btn-samsara-stop" type="button" class="btn ghost" style="display:none;flex:1">Detener</button>
+      </div>
+      <label class="row" style="font-size:.74rem"><input type="checkbox" id="samsara-auto" checked/> Actualizar automáticamente cada
+        <select id="samsara-freq">
+          <option value="10000">10 s</option>
+          <option value="30000" selected>30 s</option>
+          <option value="60000">60 s</option>
+        </select>
+      </label>
+      <label class="row" style="font-size:.72rem"><input type="checkbox" id="samsara-agrupar"/> Mostrar solo las que están por mi ruta</label>
+      <div class="hint">Tu token vive solo en el proxy local (nunca en este archivo). Inícialo primero:<br/><code class="code">cd mapa-riesgo\samsara</code><br/><code class="code">powershell -ExecutionPolicy Bypass -File .\samsara-proxy.ps1</code></div>
+      <div id="samsara-status" class="hint"></div>
+      <label class="row" style="margin-top:8px;font-size:.74rem"><input type="text" id="samsara-buscar" class="field" placeholder="🔍 Buscar unidad (GERS-211, VIN…)" autocomplete="off"/></label>
+      <div id="samsara-resultados"></div>
+      <div id="samsara-destino" style="display:none;margin-top:8px;border:1px solid var(--line);border-radius:10px;padding:8px;background:var(--panel2)">
+        <div style="font-size:.72rem;font-weight:700;margin-bottom:5px">🎯 Destino para <span id="samsara-destino-nombre" style="color:var(--green)"></span></div>
+        <div class="row" style="gap:6px">
+          <input id="samsara-destino-ciudad" class="field" type="text" placeholder="Ciudad / municipio destino"/>
+          <button id="samsara-destino-btn" type="button" class="btn primary" style="flex:none">Trazar</button>
+        </div>
+        <div id="samsara-destino-info" class="hint"></div>
+      </div>
+    </div>
+    <div id="samsara-alertas"></div>
+  </div>
+
+  <div class="tabpane" data-pane="incidentes">
+    <h2>Incidentes viales (HERE)</h2>
+    <div class="form">
+      <input id="inc-url" class="field" type="text" value="http://localhost:8787/traffic" placeholder="http://localhost:8787/traffic"/>
+      <div class="row" style="gap:6px">
+        <button id="btn-inc" type="button" class="btn primary" style="flex:1">Conectar incidentes</button>
+        <button id="btn-inc-stop" type="button" class="btn ghost" style="display:none;flex:1">Detener</button>
+      </div>
+      <label class="row" style="font-size:.74rem"><input type="checkbox" id="inc-auto" checked/> Actualizar automáticamente cada
+        <select id="inc-freq">
+          <option value="60000">60 s</option>
+          <option value="120000" selected>2 min</option>
+          <option value="300000">5 min</option>
+        </select>
+      </label>
+      <label class="row" style="font-size:.74rem;align-items:center;gap:6px">Tipos
+        <input id="inc-types" class="field" type="text" value="accident,roadClosure,construction,disabledVehicle,roadHazard" style="flex:1;font-size:.68rem"/>
+      </label>
+      <label class="row" style="font-size:.74rem;align-items:center;gap:6px">Severidad
+        <select id="inc-crit" class="field" style="flex:1">
+          <option value="">Todas</option>
+          <option value="critical">Crítica</option>
+          <option value="major">Mayor</option>
+          <option value="minor">Menor</option>
+        </select>
+      </label>
+      <div class="hint">Fuente: HERE Traffic API v7. Pon tu API key en <code class="code">samsara-config.json</code> (<code class="code">hereKey</code>) y reinicia el proxy. La capa se refresca al mover el mapa.</div>
+      <div id="inc-status" class="hint"></div>
+    </div>
+    <h2>Leyenda de incidentes</h2>
+    <div class="pills">
+      <span class="pill" style="color:#b91c1c">⛔ Cierre de vía</span>
+      <span class="pill" style="color:#ef4444">● Accidente</span>
+      <span class="pill" style="color:#f59e0b">● Obras</span>
+      <span class="pill" style="color:#eab308">● Congestión</span>
+      <span class="pill" style="color:#14b8a6">● Vehículo averiado</span>
+      <span class="pill" style="color:#f97316">● Peligro en vía</span>
+      <span class="pill" style="color:#3b82f6">● Clima</span>
+    </div>
+  </div>
+
+  <div class="tabpane" data-pane="ruta">
+    <h2>Ruta y riesgo</h2>
+    <div class="form">
+      <input id="ruta-origen" class="field" type="text" placeholder="Origen (ej. Monterrey)"/>
+      <input id="ruta-destino" class="field" type="text" placeholder="Destino (ej. Guadalajara)"/>
+      <button id="btn-ruta" class="btn primary">Trazar ruta</button>
+      <button id="btn-ruta-clear" type="button" class="btn ghost">Limpiar ruta</button>
+      <button id="btn-via-clear" type="button" class="btn ghost" style="display:none">Quitar puntos de paso</button>
+      <button id="btn-pick" type="button" class="btn ghost">Elegir en el mapa</button>
+      <label class="row" style="font-size:.74rem"><input type="checkbox" id="pref-segura"/> Priorizar la opción más segura</label>
+    </div>
+    <div class="hint">Ciudades o municipios de México · se comparan hasta 3 alternativas por riesgo. Arrastra la línea de la ruta y suéltala donde la necesites: se re-trasa pasando por ahí.</div>
+    <div id="route-result"></div>
+    <div id="rutas-opts"></div>
+
+    <h2>Ruta desde Google My Maps</h2>
+    <div class="form">
+      <input id="mmap-link" class="field" type="text" placeholder="Pega el enlace del mapa (mid=...)"/>
+      <button id="btn-mmap" type="button" class="btn primary">Cargar ruta de My Maps</button>
+      <textarea id="mmap-kml" class="field" rows="4" style="font-family:Consolas,monospace;font-size:.62rem;resize:vertical" placeholder="…o pega aquí el contenido KML (alternativa si el enlace no carga): Menú del mapa → Exportar → KML, y pégalo aquí"></textarea>
+      <button id="btn-mmap-kml" type="button" class="btn ghost">Procesar KML pegado</button>
+      <div class="hint" id="mmap-hint">Dibuja tu ruta en Google My Maps (herramienta <b>Dibujar una línea</b>) y pégala aquí para ver su riesgo, OXXO y paradores cercanos.</div>
+    </div>
+  </div>
+
+  <div class="tabpane" data-pane="capas">
+    <h2>Mapa de fondo</h2>
+    <div class="pills" id="base-pick">
+      <button type="button" class="pill base-pill active" data-base="google">🛰 Google Satélite</button>
+      <button type="button" class="pill base-pill" data-base="calles">🗺 Calles</button>
+      <button type="button" class="pill base-pill" data-base="satelite">🛰 Esri Satélite</button>
+      <button type="button" class="pill base-pill" data-base="topo">⛰ Topo</button>
+      <button type="button" class="pill base-pill" data-base="oscuro">🌙 Oscuro</button>
+    </div>
+
+    <h2>Capas</h2>
+    <label class="row"><input type="checkbox" data-layer="ruta" checked/> Ruta trazada</label>
+    <label class="row"><input type="checkbox" data-layer="samsara"/> Unidades Samsara</label>
+    <label class="row"><input type="checkbox" data-layer="municipios" checked/> Municipios de incidencia</label>
+    <label class="row"><input type="checkbox" data-layer="oxxo" checked/> Estaciones OXXO GAS</label>
+    <label class="row"><input type="checkbox" data-layer="paradores" checked/> Paradores SuKarne (GERS)</label>
+    <label class="row"><input type="checkbox" data-layer="estados" checked/> Estados por robo de carga</label>
+    <label class="row"><input type="checkbox" data-layer="carreteras" checked/> Carreteras de alto riesgo</label>
+    <label class="row"><input type="checkbox" data-layer="casetas" checked/> Casetas federales</label>
+    <label class="row"><input type="checkbox" data-layer="casetasE" checked/> Casetas estatales</label>
+    <label class="row"><input type="checkbox" data-layer="puntos" checked/> Puntos calientes</label>
+    <label class="row"><input type="checkbox" data-layer="viales" checked/> Riesgos viales / clima</label>
+    <label class="row"><input type="checkbox" data-layer="apoyo" checked/> Aduanas y puntos de apoyo</label>
+    <label class="row"><input type="checkbox" data-layer="incidentes" checked/> Incidentes viales / cierres (HERE)</label>
+    <div class="hint" id="oxxo-hint" style="margin-top:4px">Estaciones OXXO GAS: cargando…</div>
+
+    <h2>Leyenda</h2>
+    <div class="pills">
+      <span class="pill" style="color:var(--red)">● Crítica</span>
+      <span class="pill" style="color:var(--orange)">● Alta</span>
+      <span class="pill" style="color:var(--yellow)">● Media</span>
+      <span class="pill" style="color:var(--teal)">◆ Riesgo vial/clima</span>
+      <span class="pill" style="color:var(--red)">✦ Municipio</span>
+      <span class="pill" style="color:#f59e0b">€ Caseta federal</span>
+      <span class="pill" style="color:#22d3ee">€ Caseta estatal</span>
+      <span class="pill" style="color:#8b5cf6">🛃 Aduana/puerto</span>
+      <span class="pill" style="color:#06b6d4">⛽ Punto de apoyo</span>
+      <span class="pill" style="color:#e5484d">● Estación OXXO GAS</span>
+    </div>
+  </div>
+
+  <div class="tabpane" data-pane="info">
+    <h2>Cifras clave</h2>
+    <div class="kpis">
+      <div class="kpi"><b>10,367</b><span>robos a carga en 2025 (1 ataque cada ~51 min)</span></div>
+      <div class="kpi"><b>84%</b><span>concentrado en 10 estados</span></div>
+      <div class="kpi"><b>72%</b><span>de los delitos entre martes y viernes; martes 20%</span></div>
+      <div class="kpi"><b>80%+</b><span>de los robos con violencia</span></div>
+    </div>
+
+    <h2>Corredores de alto riesgo</h2>
+    <div id="hbars"></div>
+
+    <h2>Estados con mayor incidencia</h2>
+    <div id="bars"></div>
+
+    <h2>Modus operandi</h2>
+    <div class="pills">
+      <span class="pill">Retenes y puntos falsos</span>
+      <span class="pill">Asalto con violencia (80%+)</span>
+      <span class="pill">Robo en movimiento / desvío de carga</span>
+      <span class="pill">Rastreo desde paraderos y casetas</span>
+      <span class="pill">Colusión en patios / transferencias</span>
+    </div>
+
+    <h2>Mercancías más robadas</h2>
+    <div class="pills">
+      <span class="pill">Alimentos y bebidas 29% (cerveza 77%)</span>
+      <span class="pill">Construcción e insumos 12%</span>
+      <span class="pill">Miscelánea 11%</span>
+      <span class="pill">Autopartes 5–7%</span>
+      <span class="pill">Farmacéuticos 4–6%</span>
+      <span class="pill">Electrónicos (en ascenso)</span>
+    </div>
+
+    <div class="src">
+      <b>Fuentes:</b> SESNSP 2025 · SICT (10 carreteras más peligrosas, mar–may 2025) · AMESIS ·
+      CANACAR/CONATRAM · BSI &amp; TT Club 2025 · Geocodificación/OSRM: OpenStreetMap.
+      Datos aproximados para referencia; verifica con fuentes oficiales actualizadas.
+    </div>
+  </div>
+</div>
+
+<script src="vendor/leaflet/leaflet.js"></script>
+<script src="vendor/pluscodes.js"></script>
+<script src="estaciones-oxxo.js"></script>
+<script src="paradores-sukarne.js"></script>
+<script>
+const SEV = {
+  critica: { label:'Crítica', color:'#ef4444', weight:5, fill:0.16 },
+  alta:    { label:'Alta',    color:'#f97316', weight:4, fill:0.15 },
+  media:   { label:'Media',   color:'#eab308', weight:3, fill:0.13 },
+  vial:    { label:'Riesgo vial/clima', color:'#2dd4bf', weight:3, fill:0.12 },
+};
+
+const ESTADOS = [
+  { n:'Puebla', pct:16.3, sev:'critica', lat:18.85, lng:-97.80, d:'Concentra 16.3% de los robos. Autopista México–Puebla con balaceras, persecuciones y extorsión. Promedio de 5 asaltos/día en 2025.' },
+  { n:'Estado de México', pct:13.9, sev:'critica', lat:19.45, lng:-99.65, d:'El de mayor incidencia con AMESIS (23%). Cuautitlán, Tepotzotlán, Circuito Exterior Mexiquense y arcos de la 57D.' },
+  { n:'Guanajuato', pct:11.1, sev:'alta', lat:20.85, lng:-101.05, d:'Zona Bajío en crecimiento. Corredores 45D Querétaro–Irapuato y Celaya–Querétaro.' },
+  { n:'San Luis Potosí', pct:10.9, sev:'alta', lat:22.55, lng:-100.95, d:'Tramos 57 Querétaro–SLP y SLP–Matehuala, con retenes falsos y robo con violencia.' },
+  { n:'Jalisco', pct:8.7, sev:'alta', lat:20.70, lng:-103.30, d:'Zona metropolitana y Lagos de Moreno–Guadalajara (MEX 80). Robo en caminos rurales y periferia.' },
+  { n:'Veracruz', pct:5.6, sev:'alta', lat:19.40, lng:-96.60, d:'Corredor Puebla–Córdoba–Orizaba y rutas al puerto. De los más afectados en 2026 según CANACAR.' },
+  { n:'Hidalgo', pct:5.5, sev:'alta', lat:20.60, lng:-98.70, d:'Arco Norte y autopista México–Pachuca (85). Puntos: Tepeji–Atitalaquia.' },
+  { n:'Querétaro', pct:4.6, sev:'media', lat:20.70, lng:-100.30, d:'Corredor 57D y 45D con alta afluencia; robo con violencia en accesos.' },
+  { n:'Nuevo León', pct:3.7, sev:'media', lat:25.60, lng:-100.05, d:'Periferia de Monterrey y libramientos con robo de mercancía.' },
+  { n:'Michoacán', pct:3.2, sev:'media', lat:19.25, lng:-101.90, d:'Tierra Caliente con violencia entre grupos; rutas de carga comprometidas.' },
+  { n:'Tlaxcala', pct:2.1, sev:'media', lat:19.40, lng:-98.20, d:'Zona de paso del corredor México–Puebla; robo en paradas y nodos de transferencia.' },
+];
+
+const CARRETERAS = [
+  { n:'MEX 57D · México–Querétaro', sev:'critica', km:200, pts:[[19.43,-99.13],[19.71,-99.23],[20.12,-99.89],[20.59,-100.39]], d:'La carretera nº1 (~22% de los casos). Emboscadas y retenes falsos.', reco:'Convoy de 2+ unidades, horario diurno y sin detenerse en acotamientos.' },
+  { n:'MEX 57 · Querétaro–San Luis Potosí', sev:'critica', km:192, pts:[[20.59,-100.39],[21.30,-100.80],[22.16,-100.99]], d:'Segundo corredor crítico; robos a carga en movimiento.', reco:'Doble tripulación y peaje con básculas; reporte inmediato.' },
+  { n:'MEX 150D · Puebla–Córdoba', sev:'critica', km:133, pts:[[19.04,-98.21],[18.93,-97.75],[18.87,-97.37],[18.90,-96.93]], d:'~19% de los casos. Tramo Esperanza–Orizaba muy golpeado.', reco:'Tránsito de día, convoy y GPS con botón de pánico.' },
+  { n:'MEX 57 · San Luis Potosí–Matehuala', sev:'critica', km:180, pts:[[22.16,-100.99],[22.90,-100.85],[23.65,-100.64]], d:'Tramos solitarios; robo con retenes falsos y bloqueos.', reco:'Planeación con paradas en casetas; evitar tramos nocturnos en solitario.' },
+  { n:'MEX 150D · México–Puebla', sev:'critica', km:113, pts:[[19.43,-99.13],[19.30,-98.80],[19.28,-98.44],[19.04,-98.21]], d:'Balaceras y persecuciones; punto foco San Martín Texmelucan.', reco:'Evitar horas pico y tramo Texmelucan; escolta en carga de alto valor.' },
+  { n:'MEX 45D · Querétaro–Irapuato', sev:'alta', km:95, pts:[[20.59,-100.39],[20.79,-100.57],[20.66,-100.82],[20.68,-101.36]], d:'Corredor Bajío con incidencia creciente.', reco:'Doble tripulación; monitorear tipo de carga (alimentos/autopartes).' },
+  { n:'MEX 85 · México–Pachuca', sev:'alta', km:90, pts:[[19.43,-99.13],[19.60,-99.05],[19.72,-98.92],[20.12,-98.73]], d:'Robo con violencia en accesos y periferias.', reco:'Horario diurno; verificar arcos y cámaras al entrar a la ciudad.' },
+  { n:'MEX 40D · Libramiento Norte CDMX', sev:'alta', km:50, pts:[[19.50,-99.18],[19.60,-99.00],[19.56,-98.78]], d:'Libramiento de cuota con alto tránsito de carga; robos frecuentes.', reco:'Cuota exclusiva; no usar retornos ni accesos intermedios.' },
+  { n:'MEX 85D · Ecatepec–Tizayuca', sev:'alta', km:30, pts:[[19.60,-99.05],[19.72,-98.99],[19.84,-98.98]], d:'Acceso norte con incidencia alta en horario diurno.', reco:'Cargar a primera hora; supervisar paradas en estaciones de servicio.' },
+  { n:'Arco Norte (Hidalgo)', sev:'alta', km:223, pts:[[19.92,-99.28],[20.05,-99.33],[20.06,-99.22],[19.96,-99.05],[19.84,-98.98]], d:'Circuito de largo itinerario; robo de unidades en movimiento y desvío de cargas.', reco:'Monitoreo en tiempo real; contacto con centro de control cada 2 h.' },
+  { n:'MEX 80 · Lagos de Moreno–Guadalajara', sev:'media', km:185, pts:[[21.36,-101.93],[20.86,-102.60],[20.66,-103.35]], d:'Corredor occidente con asaltos en caminos rurales.', reco:'Usar carretera principal; evitar caminos rurales y paradas sin vigilancia.' },
+  { n:'MEX 15D · Maravatío–Zapotlanejo', sev:'media', km:220, pts:[[19.90,-100.50],[19.70,-101.19],[19.98,-102.28],[20.61,-103.08]], d:'Autopista del occidente; robo en nodos de transferencia.', reco:'Descansos solo en áreas vigiladas o paraderos certificados.' },
+  { n:'MEX 40D · Mazatlán–Durango (Espinazo del Diablo)', sev:'media', km:230, pts:[[23.22,-106.40],[23.55,-105.45],[24.03,-104.67]], d:'Sierra madrugadora: pendientes, niebla y hielo en invierno; cierres por clima.', reco:'Verificar clima antes de cruzar; freno auxiliar revisado; evitar hora pico de niebla.' },
+  { n:'MEX 45D · Chihuahua–Delicias–Camargo', sev:'media', km:150, pts:[[28.63,-106.07],[28.19,-105.47],[27.68,-105.17]], d:'Corredor norte con tramos solitarios y robo a plataformas.', reco:'Viajar de día y en convoy; monitoreo por satélite en tramos despoblados.' },
+  { n:'MEX 49 · Jiménez–Torreón', sev:'media', km:260, pts:[[27.13,-104.92],[25.54,-103.45]], d:'Enlace Bajío–Norte con largos tramos sin cobertura.', reco:'Planeación con paradas en casetas; reportes de posición cada 2 h.' },
+  { n:'MEX 40D · Durango–Torreón', sev:'media', km:200, pts:[[24.03,-104.67],[25.54,-103.45]], d:'Corredor transversal norte; asaltos en entronques y patios.', reco:'Descenso por autopista de cuota; evitar libramientos sin guardia.' },
+  { n:'MEX 40D · Torreón–Saltillo–Monterrey', sev:'media', km:300, pts:[[25.54,-103.45],[25.42,-101.00],[25.70,-100.30]], d:'Alta afluencia de carga hacia el noreste.', reco:'Cuota exclusiva y horario diurno; revisar cámaras al llegar a MTY.' },
+  { n:'MEX 85D · Monterrey–Nuevo Laredo', sev:'media', km:220, pts:[[25.70,-100.30],[26.20,-99.70],[27.49,-99.50]], d:'Corredor de exportación; robos en patios y retenes falsos.', reco:'Tránsito coordinado con aduana; escala en plazas de peaje con vigilancia.' },
+  { n:'MEX 40D · Monterrey–Cadereyta–Reynosa', sev:'media', km:180, pts:[[25.70,-100.30],[25.58,-100.00],[26.09,-98.30]], d:'Ruta al Golfo con incidencia en accesos industriales.', reco:'Evitar horario nocturno en libramientos; usar cuota completa.' },
+  { n:'MEX 2 · Tijuana–Tecate–Mexicali', sev:'media', km:190, pts:[[32.54,-117.04],[32.57,-116.62],[32.66,-115.46]], d:'Frontera Noroeste; revisiones y demoras por puertos fronterizos.', reco:'Cruce programado; verificar cita y documentación antes del viaje.' },
+  { n:'MEX 15D · Tepic–Mazatlán–Culiacán–Los Mochis', sev:'media', km:620, pts:[[21.51,-104.89],[22.49,-105.36],[23.22,-106.40],[24.66,-107.60],[25.79,-108.99]], d:'Corredor del Pacífico norte con asaltos a doble remolque.', reco:'Convoy, combustible en estaciones vigiladas y pernocta en casetas.' },
+  { n:'MEX 15D · Los Mochis–Cd Obregón–Hermosillo–Nogales', sev:'media', km:650, pts:[[25.79,-108.99],[27.49,-109.94],[29.08,-110.96],[31.31,-110.94]], d:'Ruta hacia la frontera SON; tramos desérticos despoblados.', reco:'Revisión preventiva de llantas y combustible; viajar en convoy.' },
+  { n:'MEX 45D · Cd Juárez–Chihuahua', sev:'media', km:360, pts:[[31.73,-106.44],[30.40,-105.90],[28.63,-106.07]], d:'Corredero fronterizo norte; robo en entronques rurales.', reco:'Horario diurno; verificar placas y caja antes de salir.' },
+  { n:'MEX 54D · Guadalajara–Colima–Manzanillo', sev:'media', km:270, pts:[[20.66,-103.35],[19.24,-103.72],[19.05,-104.32]], d:'Acceso al puerto de altura; curvas de montaña y asaltos.', reco:'Frenos revisados en bajadas; carga de contenedores en horario aduanal.' },
+  { n:'MEX 15D · Guadalajara–Tepic', sev:'media', km:230, pts:[[20.66,-103.35],[21.10,-104.10],[21.51,-104.89]], d:'Enlace Bajío–Pacífico norte; robo en paradas.', reco:'Permitir solo paradas vigiladas; custodia en carga de valor.' },
+  { n:'MEX 95D · México–Cuernavaca–Acapulco', sev:'alta', km:380, pts:[[19.43,-99.13],[18.92,-99.22],[16.86,-99.88]], d:'Turística con robo en miradores, curvas y balconeo de unidades.', reco:'Tramo de día; evitar cortes de circulación por lluvia en la sierra.' },
+  { n:'MEX 135D · Cuacnopalan–Tehuacán–Oaxaca', sev:'media', km:280, pts:[[18.90,-97.70],[18.46,-97.39],[17.07,-96.72]], d:'Sierra sureste; derrumbes, niebla y robo en tramos serranos.', reco:'Verificar cierres por clima; usar cuota y hospedar en casetas.' },
+  { n:'MEX 190 · Oaxaca–Juchitán–Tuxtla', sev:'media', km:420, pts:[[17.07,-96.72],[16.43,-95.02],[16.75,-93.10]], d:'Istmo y Chiapas con bloqueos y derrumbes por lluvia.', reco:'Monitorear bloqueos (protestas); viajar de día en convoys.' },
+  { n:'MEX 180 · Tampico–Tuxpan–Veracruz–Coatzacoalcos', sev:'media', km:620, pts:[[22.22,-97.85],[20.95,-97.40],[19.18,-96.14],[18.14,-94.41]], d:'Golfo por carretera federal; puentes y pasos urbanos.', reco:'Cuota en tramos concesionados; evitar pernocta en áreas urbanas.' },
+  { n:'MEX 180/186 · Coatzacoalcos–Villahermosa–Cd del Carmen–Mérida', sev:'media', km:780, pts:[[18.14,-94.41],[17.99,-92.93],[18.65,-91.82],[19.85,-90.53],[20.97,-89.62]], d:'Corredor del sureste hacia Yucatán; tránsito de productos.', reco:'Combustible en paradores vigilados; revisar aduanas interiores.' },
+  { n:'MEX 180D · Mérida–Valladolid–Cancún', sev:'media', km:320, pts:[[20.97,-89.62],[20.69,-88.20],[21.16,-86.83]], d:'Turístico con levantamientos de carga en desvíos.', reco:'Cuota completa; no detenerse en accesos rurales sin vigilancia.' },
+  { n:'MEX 186 · Escárcega–Chetumal', sev:'media', km:430, pts:[[18.61,-90.74],[18.50,-88.31]], d:'Camino al sur de Quintana Roo; selva y escasa cobertura.', reco:'Planeación de combustible; convoy para destinos a Chetumal.' },
+];
+
+const CASETAS = [
+  { n:'Caseta Tepotzotlán', corr:'M57D México–Querétaro', lat:19.677, lng:-99.237, d:'Caseta Tepotzotlán (M57D); corredor con mayor robo de carga.' },
+  { n:'Caseta Palmillas', corr:'M57D México–Querétaro', lat:20.139, lng:-100.100, d:'Palmillas (M57D); caseta y plaza de servicios.' },
+  { n:'Caseta San Marcos', corr:'M57 Querétaro–SLP', lat:20.801, lng:-100.440, d:'San Marcos (M57 Qro–SLP).' },
+  { n:'Caseta La Margarita', corr:'M57 SLP–Matehuala', lat:22.280, lng:-100.950, d:'Acceso norte SLP por la M57.' },
+  { n:'Caseta Matehuala', corr:'M57 SLP–Matehuala', lat:23.650, lng:-100.640, d:'Caseta de la M57 en Matehuala.' },
+  { n:'Caseta San Marcos (Puebla)', corr:'M150D México–Puebla', lat:19.220, lng:-98.560, d:'Caseta del libramiento/autopista México–Puebla.' },
+  { n:'Caseta San Martín Texmelucan', corr:'M150D México–Puebla', lat:19.279, lng:-98.437, d:'San Martín Texmelucan; punto crítico según corredor.' },
+  { n:'Caseta Esperanza', corr:'M150D Puebla–Córdoba', lat:18.868, lng:-97.367, d:'Tramo Esperanza–Orizaba; 19% de casos.' },
+  { n:'Caseta Córdoba', corr:'M150D Puebla–Córdoba', lat:18.897, lng:-96.930, d:'Córdoba (M150D).' },
+  { n:'Caseta Orizaba', corr:'M150D Puebla–Córdoba', lat:18.871, lng:-97.140, d:'Acceso a Orizaba (M150D).' },
+  { n:'Caseta Cuota Libramiento Norte CDMX', corr:'M40D Libramiento Norte', lat:19.610, lng:-99.120, d:'Libramiento de cuota con alto tránsito de carga.' },
+  { n:'Caseta Ecatepec–Tizayuca', corr:'M85D México–Pachuca', lat:19.680, lng:-99.000, d:'Acceso norte al Edomex (M85D).' },
+  { n:'Caseta Pachuca', corr:'M85 México–Pachuca', lat:20.120, lng:-98.730, d:'Caseta de acceso a Pachuca (M85).' },
+  { n:'Caseta Tahuelilpan', corr:'M57D Arco Norte', lat:20.150, lng:-99.240, d:'Arco Norte (M57D) en Hidalgo.' },
+  { n:'Caseta Tula–Arco Norte', corr:'M57D Arco Norte', lat:20.070, lng:-99.330, d:'Entronque Tula con el Arco Norte.' },
+  { n:'Caseta Querétaro (45D)', corr:'M45D Querétaro–Irapuato', lat:20.610, lng:-100.390, d:'Acceso Bajío por la M45D.' },
+  { n:'Caseta Celaya', corr:'M45D Querétaro–Irapuato', lat:20.523, lng:-100.815, d:'Caseta Celaya (M45D); corredor industrial.' },
+  { n:'Caseta Irapuato', corr:'M45D Querétaro–Irapuato', lat:20.670, lng:-101.360, d:'Irapuato (M45D).' },
+  { n:'Caseta León', corr:'M45D León', lat:21.120, lng:-101.670, d:'Acceso a León (Gto).' },
+  { n:'Caseta Lagos de Moreno', corr:'M80 Lagos de Moreno–Guadalajara', lat:21.356, lng:-101.927, d:'Lagos de Moreno (M80); encrucijada con la M45.' },
+  { n:'Caseta Zapotlanejo', corr:'M80/M15D Occidente', lat:20.610, lng:-103.080, d:'Zapotlanejo (entronque M80/M15D).' },
+  { n:'Caseta Maravatío', corr:'M15D Maravatío–Zapotlanejo', lat:19.900, lng:-100.450, d:'Maravatío (M15D).' },
+  { n:'Caseta Perote–Puebla (150D)', corr:'M150D Puebla–Córdoba', lat:19.120, lng:-97.500, d:'Tramo de montaña de la M150D.' },
+  { n:'Caseta Lázaro Cárdenas', corr:'M15D costa Michoacán', lat:17.964, lng:-102.202, d:'Acceso al puerto de Lázaro Cárdenas.' },
+  { n:'Caseta Monterrey–Cadereyta', corr:'M40D Monterrey–Reynosa', lat:25.600, lng:-100.050, d:'Acceso oriente de Monterrey hacia el Golfo.' },
+  { n:'Caseta Allende–Villa de García', corr:'M40 Monterrey–Saltillo', lat:25.700, lng:-100.750, d:'Libramiento noreste de Monterrey.' },
+  { n:'Caseta Nuevo Laredo–Monterrey', corr:'M85D Nuevo Laredo', lat:27.480, lng:-99.500, d:'Enlace a la frontera NL/Tamps.' },
+  { n:'Caseta Reynosa–Matamoros', corr:'M101 Golfo', lat:25.950, lng:-97.950, d:'Corredor de exportación del Golfo.' },
+  { n:'Caseta Cd. Victoria–Mante', corr:'M85/M101 Tamaulipas', lat:23.020, lng:-98.920, d:'Tramo intermedio hacia el centro del país.' },
+  { n:'Caseta Saltillo', corr:'M40D norte', lat:25.420, lng:-101.000, d:'Acceso a Coahuila por la M40D.' },
+  { n:'Caseta Torreón–Gómez Palacio', corr:'M40D/M49 norte', lat:25.570, lng:-103.430, d:'Encrucijada Laguna (Coah–Dgo).' },
+  { n:'Caseta Durango', corr:'M40D norte', lat:24.030, lng:-104.670, d:'Acceso a Durango capital.' },
+  { n:'Caseta Chihuahua–Delicias', corr:'M45D norte', lat:28.200, lng:-105.480, d:'Corredor centro de Chihuahua.' },
+  { n:'Caseta Cd. Juárez oriente', corr:'M45D frontera', lat:31.730, lng:-106.450, d:'Acceso fronterizo a EI Paso.' },
+  { n:'Caseta Hermosillo', corr:'M15D noroeste', lat:29.090, lng:-110.960, d:'Capital de Sonora en la M15D.' },
+  { n:'Caseta Guaymas', corr:'M15D noroeste', lat:27.950, lng:-110.900, d:'Acceso portuario del Sonora.' },
+  { n:'Caseta Cd. Obregón', corr:'M15D noroeste', lat:27.490, lng:-109.940, d:'Valle del Yaqui en la M15D.' },
+  { n:'Caseta Los Mochis–Guasave', corr:'M15D Sinaloa', lat:25.570, lng:-108.470, d:'Norte de Sinaloa en la M15D.' },
+  { n:'Caseta Culiacán', corr:'M15D nacimiento', lat:24.660, lng:-107.600, d:'Capital sinaloense en la M15D.' },
+  { n:'Caseta Mazatlán', corr:'M15D Sinaloa', lat:23.220, lng:-106.400, d:'Acceso portuario-ferrocarril de Mazatlán.' },
+  { n:'Caseta Tepic', corr:'M15D Nayarit', lat:21.500, lng:-104.890, d:'Capital nayarita en la M15D.' },
+  { n:'Caseta Puerto Vallarta', corr:'M200 Jalisco costa', lat:20.650, lng:-105.250, d:'Acceso al destino turístico del Pacífico.' },
+  { n:'Caseta Colima–Manzanillo', corr:'M54D occidente', lat:19.050, lng:-104.320, d:'Acceso al puerto de Manzanillo.' },
+  { n:'Caseta Zacatecas', corr:'M45D centro-norte', lat:22.770, lng:-102.570, d:'Corredor Bajío–norte.' },
+  { n:'Caseta Aguascalientes', corr:'M45D centro-norte', lat:21.880, lng:-102.310, d:'Encrucijada M45D/M70.' },
+  { n:'Caseta Guadalajara norte', corr:'M54D Guadalajara–Colima', lat:20.650, lng:-103.430, d:'Acceso noroeste a la capital jalisciense.' },
+  { n:'Caseta Tonalá', corr:'M80 Guadalajara–Lagos', lat:20.620, lng:-103.230, d:'Oriente de la ZMG hacia Lagos de Moreno.' },
+  { n:'Caseta Morelia', corr:'M15D centro-occidente', lat:19.700, lng:-101.190, d:'Capital michoacana en la M15D.' },
+  { n:'Caseta Toluca–Lerma', corr:'M15D/M55D Edomex', lat:19.280, lng:-99.610, d:'Corredor México–Toluca de cuota.' },
+  { n:'Caseta Pachuca norte', corr:'M85D Hidalgo', lat:20.150, lng:-98.750, d:'Acceso a Pachuca desde la M85D.' },
+  { n:'Caseta Arco Norte Nopala', corr:'M57D Arco Norte', lat:20.300, lng:-99.650, d:'Cruce del Arco Norte en Hidalgo.' },
+  { n:'Caseta Arco Norte Otumba', corr:'M57D Arco Norte', lat:19.650, lng:-98.750, d:'Cruce del Arco Norte en el Edomex.' },
+  { n:'Caseta Puebla–Vía Atlixco', corr:'M150D Puebla', lat:18.930, lng:-98.210, d:'Accesos sur de Puebla capital.' },
+  { n:'Caseta Xalapa', corr:'M140 Veracruz', lat:19.540, lng:-96.930, d:'Acceso a la capital veracruzana.' },
+  { n:'Caseta Coatzacoalcos', corr:'M180/185 Istmo', lat:18.140, lng:-94.400, d:'Puerto industrial del Istmo.' },
+  { n:'Caseta Minatitlán', corr:'M180 Istmo', lat:17.990, lng:-94.540, d:'Petroquímica del Istmo veracruzano.' },
+  { n:'Caseta Villahermosa', corr:'M180D Tabasco', lat:17.990, lng:-92.930, d:'Capital tabasqueña en la M180D.' },
+  { n:'Caseta Cárdenas–Huimanguillo', corr:'M187 Tabasco', lat:18.000, lng:-93.400, d:'Corredor Chontalpa–Villahermosa.' },
+  { n:'Caseta Cd. del Carmen', corr:'M180 Campeche', lat:18.650, lng:-91.820, d:'Puerto petrolero campechano.' },
+  { n:'Caseta Campeche (Bella Vista)', corr:'M180 Campeche', lat:19.850, lng:-90.530, d:'Acceso a Campeche capital.' },
+  { n:'Caseta Mérida norte', corr:'M180 Yucatán', lat:20.970, lng:-89.630, d:'Acceso a la capital yucateca.' },
+  { n:'Caseta Progreso', corr:'M176 Yucatán', lat:21.280, lng:-89.660, d:'Acceso al puerto de altura de Progreso.' },
+  { n:'Caseta Valladolid', corr:'M180 Cuota Mérida–Cancún', lat:20.690, lng:-88.200, d:'Tramo central hacia Quintana Roo.' },
+  { n:'Caseta Cancún oriente', corr:'M180D Quintana Roo', lat:21.100, lng:-86.850, d:'Entorno de la Riviera Maya.' },
+  { n:'Caseta Chetumal', corr:'M186 Quintana Roo', lat:18.500, lng:-88.300, d:'Capital qrooita en la frontera con BZ.' },
+  { n:'Caseta Escárcega', corr:'M186 Campeche', lat:18.610, lng:-90.740, d:'Encrucijada Campeche–Chetumal.' },
+  { n:'Caseta Acapulco', corr:'M95D Guerrero', lat:16.870, lng:-99.900, d:'Acceso al puerto turístico de Acapulco.' },
+  { n:'Caseta Cuernavaca (Alpuyeca)', corr:'M95D Morelos', lat:18.730, lng:-99.250, d:'Desvío a la costa guerrerense.' },
+  { n:'Caseta Iguala', corr:'M95D Guerrero', lat:18.350, lng:-99.530, d:'Tramo Tierra Caliente.' },
+  { n:'Caseta Oaxaca (Tlalixtac)', corr:'M135D Oaxaca', lat:17.080, lng:-96.720, d:'Acceso a Oaxaca capital.' },
+  { n:'Caseta Tehuacán', corr:'M135D Puebla', lat:18.460, lng:-97.390, d:'Ciudad de la M150D/M135D.' },
+  { n:'Caseta Tuxtepec–Loma Bonita', corr:'M145 Oaxaca', lat:18.090, lng:-96.120, d:'Cuenca del Papaloapan.' },
+  { n:'Caseta Tuxtla Gutiérrez', corr:'M190 Chiapas', lat:16.750, lng:-93.110, d:'Acceso a la capital chiapaneca.' },
+  { n:'Caseta Tapachula', corr:'M200 Chiapas', lat:14.910, lng:-92.270, d:'Frontera sur con Guatemala.' },
+];
+const CASETAS_E = [
+  { n:'Caseta Circuito Exterior Mexiquense (oriente)', corr:'Estatal Edomex', lat:19.400, lng:-98.940, d:'Libramiento estatal; alta afluencia de carga hacia la 150D.' },
+  { n:'Caseta Circuito Exterior Mexiquense (norte)', corr:'Estatal Edomex', lat:19.620, lng:-99.050, d:'Anillo estatal; robo reportado en accesos.' },
+  { n:'Caseta Libramiento Cd. Chihuahua', corr:'Estatal Chihuahua', lat:28.630, lng:-106.070, d:'Libramiento de la capital chihuahuense.' },
+  { n:'Caseta Libramiento Norponiente Saltillo', corr:'Estatal Coahuila', lat:25.460, lng:-101.070, d:'Libramiento del valle de Saltillo.' },
+  { n:'Caseta Libramiento Aguascalientes', corr:'Estatal Ags', lat:21.800, lng:-102.350, d:'Libramiento de la capital hidrocálida.' },
+  { n:'Caseta Libramiento Tepic', corr:'Estatal Nayarit', lat:21.480, lng:-104.850, d:'Libramiento poniente de Tepic.' },
+  { n:'Caseta Libramiento Culiacán', corr:'Estatal Sinaloa', lat:24.780, lng:-107.400, d:'Libramiento de Culiacán en la salida norte.' },
+  { n:'Caseta Cabo San Lucas–San José del Cabo', corr:'Estatal BCS', lat:22.900, lng:-109.900, d:'Corredor turístico de Baja California Sur.' },
+  { n:'Caseta Libramiento Aeropuerto San José del Cabo', corr:'Estatal BCS', lat:23.100, lng:-109.700, d:'Acceso al aeropuerto internacional SJD.' },
+  { n:'Caseta Libramiento de Veracruz', corr:'Estatal Veracruz', lat:19.200, lng:-96.140, d:'Periférico marítimo del puerto.' },
+  { n:'Caseta Libramiento de Tuxtla Gutiérrez', corr:'Estatal Chiapas', lat:16.750, lng:-93.110, d:'Libramiento de la capital chiapaneca.' },
+  { n:'Caseta Libramiento Poniente de Guadalajara', corr:'Estatal Jalisco', lat:20.650, lng:-103.450, d:'Libramiento poniente de la ZMG.' },
+];
+
+const PUNTOS = [
+  { n:'Cuautitlán (Edomex)', sev:'critica', lat:19.6710, lng:-99.1790, d:'Nodo logístico con mayor robo de carga de la zona centro.' },
+  { n:'Circuito Exterior Mexiquense', sev:'critica', lat:19.55, lng:-99.05, d:'Autopista perimetral con asaltos y robo de mercancía.' },
+  { n:'San Martín Texmelucan (Puebla)', sev:'critica', lat:19.2822, lng:-98.4400, d:'Emboscadas y retenes falsos en la 150D.' },
+  { n:'Tepotzotlán (Edomex)', sev:'alta', lat:19.7150, lng:-99.2390, d:'Accesos a parques industriales; paradas no autorizadas de alto riesgo.' },
+  { n:'Esperanza (Puebla)', sev:'alta', lat:18.8686, lng:-97.3678, d:'Tramo de montaña con cuellos de botella y asaltos.' },
+  { n:'Celaya (Guanajuato)', sev:'alta', lat:20.5235, lng:-100.8157, d:'Corredor industrial Bajío con robo creciente.' },
+  { n:'Lagos de Moreno (Jalisco)', sev:'media', lat:21.3565, lng:-101.9279, d:'Encrucijada de corredores 80 y 45; robos en peajes y áreas de descanso.' },
+  { n:'Querétaro accesos 57D', sev:'media', lat:20.5888, lng:-100.3899, d:'Zona industrial El Marqués y entronques con alto tránsito de carga.' },
+];
+
+const MUNICIPIOS = [
+  { n:'Ecatepec (Edomex)', sev:'critica', lat:19.60, lng:-99.05, d:'Base de la mayoría de los robos del Edomex. Evitar paradas en accesos a parques industriales.' },
+  { n:'Puebla capital (Pue)', sev:'critica', lat:19.04, lng:-98.21, d:'Salidas y entronques 150D/150; usar casetas y evitar libramientos nocturnos.' },
+  { n:'Irapuato (Gto)', sev:'alta', lat:20.68, lng:-101.22, d:'Corredor 45D; robos de alimentos y autopartes. Operar de día y en convoy.' },
+  { n:'León (Gto)', sev:'alta', lat:21.12, lng:-101.68, d:'Zona industrial; incidencia en accesos y nodos de transferencia.' },
+  { n:'Tlalnepantla (Edomex)', sev:'alta', lat:19.53, lng:-99.20, d:'Parques industriales del corredor; robo en vialidades de acceso.' },
+  { n:'Atitalaquia (Hgo)', sev:'alta', lat:20.05, lng:-99.22, d:'Punto de convergencia con Arco Norte y la 57D.' },
+  { n:'Orizaba (Ver)', sev:'alta', lat:18.85, lng:-97.10, d:'Tramo montañoso; desvíos y asaltos en las pendientes de la 150D.' },
+  { n:'Guadalajara (Jal)', sev:'media', lat:20.66, lng:-103.35, d:'Periferia y accesos 80/15D; robo en paraderos y semáforos.' },
+  { n:'San Luis Potosí capital', sev:'media', lat:22.15, lng:-100.98, d:'Accesos de la 57 y entronques; evitar área industrial nocturna.' },
+  { n:'Monterrey (NL)', sev:'media', lat:25.68, lng:-100.32, d:'Libramientos y periferia; robo de mercancías en nodos de transferencia.' },
+];
+
+const VIALES = [
+  { n:'Cumbres de Maltrata (Veracruz)', lat:18.89, lng:-97.24, d:'Pendientes extremas y curvas cerradas; frenos y vuelcos de unidades pesadas.' },
+  { n:'Autopista Durango–Mazatlán (Espinazo del Diablo)', lat:23.53, lng:-105.38, d:'Sierra con puentes altos, niebla y clima severo.' },
+  { n:'La Pera–Cuautla (Morelos)', lat:18.94, lng:-98.92, d:'Curvas peligrosas y pendientes en carretera de montaña.' },
+  { n:'Pico de Orizaba (niebla)', lat:19.03, lng:-97.27, d:'Niebla densa frecuente en el corredor Puebla–Veracruz.' },
+  { n:'Sierra Juárez / Istmo (Oaxaca)', lat:17.30, lng:-96.60, d:'Derrumbes, lluvia y niebla en tramos serranos.' },
+  { n:'Carreteras de Chiapas', lat:16.75, lng:-93.10, d:'Lluvias intensas, derrumbes y bloqueos (también delictivos).' },
+  { n:'Heladas invernales (Chihuahua–Durango–Coahuila)', lat:26.50, lng:-104.50, d:'Hielo y nevadas en sierras durante el invierno; cierres eventuales.' },
+];
+
+const APOYO = [
+  { n:'Aduana Nuevo Laredo (Tamps)', lat:27.4964, lng:-99.5074, d:'Cruce fronterizo principal de carga; saturación, demoras y riesgo en patios y accesos.' },
+  { n:'Aduana Tijuana (BC)', lat:32.5427, lng:-117.0384, d:'Frontera con California; alto volumen, revisión exhaustiva y demoras.' },
+  { n:'Aduana Ciudad Juárez (Chih)', lat:31.7336, lng:-106.4427, d:'Frontera con El Paso; puentes en corredor de alto riesgo.' },
+  { n:'Aduana Matamoros (Tamps)', lat:25.8742, lng:-97.4997, d:'Frontera del Golfo; revisión de contenedores.' },
+  { n:'Aduana Reynosa (Tamps)', lat:26.0923, lng:-98.2983, d:'Puentes hacia McAllen (Texas).' },
+  { n:'Aduana Nogales (Son)', lat:31.3093, lng:-110.9426, d:'Frontera con Arizona; carga agrícola y electrónica.' },
+  { n:'Aduana Mexicali (BC)', lat:32.6559, lng:-115.4644, d:'Frontera con California; acceso al Valle de Mexicali.' },
+  { n:'Puerto Manzanillo (Col)', lat:19.0575, lng:-104.3163, d:'Puerto de altura del Pacífico; contenedores y graneles.' },
+  { n:'Puerto Lázaro Cárdenas (Mich)', lat:17.9645, lng:-102.2023, d:'Puerto del Pacífico con aduana marítima.' },
+  { n:'Puerto Veracruz (Ver)', lat:19.1738, lng:-96.1342, d:'Puerto del Golfo; rutas al sureste con incidencia de robo.' },
+  { n:'Puerto Altamira (Tamps)', lat:22.3970, lng:-97.9416, d:'Puerto industrial multimodal.' },
+];
+const APOYOS = [
+  { n:'Palmillas (Méx–Qro)', lat:20.1393, lng:-100.1003, d:'Plaza de cobro en la M57D con servicios 24 h; punto de descanso frecuentado.' },
+  { n:'San Marcos (Qro–SLP)', lat:20.8000, lng:-100.4400, d:'Plaza de cobro de la M57 con servicios.' },
+  { n:'San Juan del Río (Qro)', lat:20.3900, lng:-99.9900, d:'Ciudad de servicios 24 h sobre el corredor M57.' },
+  { n:'Salamanca (Gto)', lat:20.5700, lng:-101.1900, d:'Ciudad de servicios y paraderos del Bajío.' },
+  { n:'Zapotlanejo (Jal)', lat:20.6100, lng:-103.0800, d:'Encrucijada M80/M15D con servicios; verificar seguridad antes de pernoctar.' },
+  { n:'Hermosillo (Son)', lat:29.0800, lng:-110.9600, d:'Ciudad de servicios del corredor noroeste.' },
+  { n:'Torreón (Coah)', lat:25.5700, lng:-103.4400, d:'Encrucijada norte con patios y servicios.' },
+  { n:'Durango (Dgo)', lat:24.1300, lng:-104.5400, d:'Servicios antes del tramo de montaña Durango–Mazatlán.' },
+  { n:'Mazatlán (Sin)', lat:23.2200, lng:-106.4000, d:'Punto de descanso al pie de la Durango–Mazatlán.' },
+];
+
+const map = L.map('map').setView([23.63,-102.55], 6);
+
+function tileConFallback(primary, fallback, options){
+  const tile = L.tileLayer(primary, options);
+  if (!fallback) return tile;
+  let usado = false;
+  tile.on('tileerror', () => {
+    if (usado) return;
+    usado = true;
+    tile.setUrl(fallback);
+    tile.redraw();
+  });
+  return tile;
+}
+
+const BASES = {
+  google:   { label:'Google Satélite', url:'https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',         fb:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr:'Imagery &copy; Google · fallback Esri', sub:['mt0','mt1','mt2','mt3'], maxz:20 },
+  calles:   { label:'Calles',    url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',        fb:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attr:'Tiles &copy; Esri · OSM' },
+  satelite: { label:'Satélite',  url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',         fb:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', attr:'Imagery &copy; Esri · fallback Esri' },
+  topo:     { label:'Topo',      url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',        fb:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', attr:'Topo &copy; Esri' },
+  oscuro:   { label:'Oscuro',    url:'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', fb:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', attr:'&copy; Esri', ref:'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}' },
+};
+let baseActual = null;
+let baseRef = null;
+function cambiarBase(nombre) {
+  const b = BASES[nombre] || BASES.google;
+  if (baseActual) map.removeLayer(baseActual);
+  if (baseRef) { map.removeLayer(baseRef); baseRef = null; }
+  const opts = { attribution: b.attr, maxZoom: b.maxz || 19 };
+  if (b.sub) opts.subdomains = b.sub;
+  baseActual = tileConFallback(b.url, b.fb, opts).addTo(map);
+  if (b.ref) baseRef = L.tileLayer(b.ref, { maxZoom: b.maxz || 19 }).addTo(map);
+}
+tileConFallback(
+  'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
+  '',
+  { attribution:'&copy; Esri', opacity:0.5, maxZoom:20 }
+).addTo(map);
+cambiarBase('google');
+
+const groups = {
+  estados: L.layerGroup().addTo(map),
+  carreteras: L.layerGroup().addTo(map),
+  puntos: L.layerGroup().addTo(map),
+  viales: L.layerGroup().addTo(map),
+  municipios: L.layerGroup().addTo(map),
+  paradores: L.layerGroup().addTo(map),
+  samsara: L.layerGroup(),
+  incidentes: L.layerGroup().addTo(map),
+};
+
+const esc = (v) => String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const gmaps = (lat, lng) => 'https://www.google.com/maps?q=' + lat + ',' + lng;
+
+function popup(title, color, meta, desc){
+  return `<strong class="sev" style="color:${color}">⚠️ ${title}</strong><br/>
+    <span class="meta">${meta}</span><br/>
+    <div style="margin-top:6px">${desc}</div>`;
+}
+
+const APOYO_ALL = APOYO.map(p => ({ ...p, tipo: 'APOYO' })).concat(APOYOS.map(p => ({ ...p, tipo: 'APOYOS' })));
+
+// ===== Casetas y plazas de peaje =====
+groups.casetas = L.layerGroup().addTo(map);
+groups.casetasE = L.layerGroup().addTo(map);
+const casetaIcon = (color) => L.divIcon({
+  className: '', iconSize: [18, 18], iconAnchor: [9, 9],
+  html: `<div style="width:16px;height:16px;display:flex;align-items:center;justify-content:center;font-size:11px;background:${color};border:2px solid #fff;border-radius:3px;transform:rotate(45deg);box-shadow:0 0 8px ${color}"><span style="transform:rotate(-45deg)">€</span></div>`
+});
+function renderCasetas(list, color, group, label) {
+  group.clearLayers();
+  list.forEach(c => {
+    const m = L.marker([c.lat, c.lng], { icon: casetaIcon(color), zIndexOffset: 500 }).addTo(group);
+    m.bindPopup(`<div style="min-width:180px"><strong style="color:${color}">€ ${esc(label)}</strong><br/><b>${esc(c.n)}</b><br/><span class="meta">${esc(c.corr)}</span>${c.d ? '<br/><span class="meta">' + esc(c.d) + '</span>' : ''}</div>`);
+    m.bindTooltip(c.n, { direction: 'top' });
+  });
+}
+renderCasetas(CASETAS, '#f59e0b', groups.casetas, 'Caseta federal');
+renderCasetas(CASETAS_E, '#22d3ee', groups.casetasE, 'Caseta estatal');
+
+function renderEstados(list) {
+  groups.estados.clearLayers();
+  list.forEach(s => {
+    const c = SEV[s.sev];
+    const R = Math.sqrt(s.pct) * 24000;
+    const circle = L.circle([s.lat, s.lng], {
+      radius: R, color: c.color, fillColor: c.color, fillOpacity: 0.14, weight: 2, dashArray: '6,5'
+    }).addTo(groups.estados);
+    circle.bindPopup(popup(`${s.n}`, c.color, `${s.pct}% de la incidencia nacional · ${c.label}`, s.d));
+    L.marker([s.lat, s.lng], {
+      icon: L.divIcon({className: '', html: `<div style="font-size:13px;font-weight:800;color:${c.color};background:rgba(10,15,13,.85);border:1px solid ${c.color};padding:3px 7px;border-radius:7px;white-space:nowrap">${s.n} · ${s.pct}%</div>`, iconSize: [0, 0]})
+    }).addTo(groups.estados).bindTooltip(`${s.n}: ${s.pct}%`, {direction: 'top'});
+  });
+}
+
+function renderCarreteras(list) {
+  groups.carreteras.clearLayers();
+  list.forEach(h => {
+    const c = SEV[h.sev];
+    const line = L.polyline(h.pts, { color: c.color, weight: c.weight, opacity: 0.9, dashArray: h.sev === 'critica' ? '' : '6,6' }).addTo(groups.carreteras);
+    line.bindPopup(popup(h.n, c.color, `${h.sev === 'critica' ? 'Riesgo crítico' : 'Riesgo ' + c.label.toLowerCase()} · ${h.km} km aprox.`, `<b style="color:var(--green)">Recomendación:</b> ${h.reco}<br/><br/>${h.d}`));
+    line.on('mouseover', () => line.setStyle({weight: c.weight + 2, opacity: 1}));
+    line.on('mouseout', () => line.setStyle({weight: c.weight, opacity: 0.9}));
+  });
+}
+
+function renderPuntos(list) {
+  groups.puntos.clearLayers();
+  list.forEach(p => {
+    const c = SEV[p.sev];
+    const size = p.sev === 'critica' ? 16 : p.sev === 'alta' ? 13 : 11;
+    const icon = L.divIcon({className: '', html: `<div style="width:${size}px;height:${size}px;background:${c.color};border:2px solid #fff;border-radius:50%;box-shadow:0 0 10px ${c.color}"></div>`, iconSize: [size, size], iconAnchor: [size / 2, size / 2]});
+    L.marker([p.lat, p.lng], {icon}).addTo(groups.puntos)
+      .bindPopup(popup(p.n, c.color, `${c.label}`, p.d));
+  });
+}
+
+function renderMunicipios(list) {
+  groups.municipios.clearLayers();
+  list.forEach(m => {
+    const c = SEV[m.sev];
+    const size = m.sev === 'critica' ? 16 : m.sev === 'alta' ? 13 : 11;
+    const icon = L.divIcon({className: '', html: `<div style="width:${size}px;height:${size}px;background:${c.color};border:2px solid #fff;transform:rotate(45deg);border-radius:3px;box-shadow:0 0 10px ${c.color}"></div>`, iconSize: [size, size], iconAnchor: [size / 2, size / 2]});
+    L.marker([m.lat, m.lng], {icon}).addTo(groups.municipios)
+      .bindPopup(popup(m.n, c.color, `Municipio · ${c.label}`, m.d));
+  });
+}
+
+function renderViales(list) {
+  groups.viales.clearLayers();
+  list.forEach(v => {
+    const c = SEV.vial;
+    const icon = L.divIcon({className: '', html: `<div style="font-size:16px;text-shadow:0 0 8px rgba(0,0,0,.9)">⚠︎</div>`, iconSize: [16, 16], iconAnchor: [8, 8]});
+    L.marker([v.lat, v.lng], {icon}).addTo(groups.viales)
+      .bindPopup(popup(v.n, c.color, c.label, v.d));
+  });
+}
+
+renderEstados(ESTADOS);
+renderCarreteras(CARRETERAS);
+renderPuntos(PUNTOS);
+renderMunicipios(MUNICIPIOS);
+renderViales(VIALES);
+
+// ===== Puntos de apoyo y aduanas =====
+groups.apoyo = L.layerGroup().addTo(map);
+const apoyohtml = (emoji, tipo, n, d) => `<div style="min-width:180px"><strong>${emoji} ${tipo}</strong><br/><b>${esc(n)}</b><br/><span class="meta">${esc(d)}</span></div>`;
+const apoyoIcon = (emoji, color) => L.divIcon({
+  className: '', iconSize: [22, 22], iconAnchor: [11, 11],
+  html: `<div style="width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:12px;background:${color};border:2px solid #fff;border-radius:50%;box-shadow:0 0 8px ${color}">${emoji}</div>`
+});
+function renderApoyo(list) {
+  groups.apoyo.clearLayers();
+  list.forEach(p => {
+    const esAduana = p.tipo === 'APOYO';
+    const emoji = esAduana ? '🛃' : '⛽';
+    const color = esAduana ? '#8b5cf6' : '#06b6d4';
+    L.marker([p.lat, p.lng], { icon: apoyoIcon(emoji, color) }).addTo(groups.apoyo)
+      .bindPopup(apoyohtml(emoji, esAduana ? 'Aduana / puerto' : 'Punto de apoyo (referencia)', p.n, esAduana ? p.d : p.d + ' · Verificar seguridad actual antes de detenerse.'));
+  });
+}
+renderApoyo(APOYO_ALL);
+
+// ===== Paradores SuKarne (GERS) =====
+const SUKARNE = window.SUKARNE_PARADORES || {};
+function renderParadores(cats) {
+  groups.paradores.clearLayers();
+  Object.keys(cats || {}).forEach(cat => {
+    const cfg = cats[cat];
+    const color = cfg.color || '#888';
+    cfg.pts.forEach(p => {
+      const icon = L.divIcon({
+        className: '', iconSize: [14, 14], iconAnchor: [7, 7],
+        html: `<div style="width:12px;height:12px;background:${color};border:2px solid #fff;border-radius:50%;box-shadow:0 0 6px ${color}"></div>`
+      });
+      L.marker([p.lat, p.lng], { icon })
+        .addTo(groups.paradores)
+        .bindPopup(`<div style="min-width:180px"><strong style="color:${color}">${cat}</strong><br/><b>${esc(p.n)}</b><br/><a href="${gmaps(p.lat, p.lng)}" target="_blank" rel="noopener" class="poptab">📲 Ver en Google Maps</a></div>`)
+        .bindTooltip(p.n, { direction: 'top' });
+    });
+  });
+}
+renderParadores(SUKARNE);
+
+// ===== Estaciones OXXO GAS (OpenStreetMap, con respaldo) =====
+groups.oxxo = L.layerGroup().addTo(map);
+const oxxoIcon = () => L.divIcon({
+  className: '', iconSize: [20, 20], iconAnchor: [10, 10],
+  html: '<div style="width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:11px;background:#e5484d;border:2px solid #fff;border-radius:50%;color:#fff;box-shadow:0 0 8px #e5484d">⛽</div>'
+});
+const popupOxxo = (name, extra, lat, lng) => `<div style="min-width:180px"><strong style="color:#e5484d">OXXO GAS</strong><br/><b>${esc(name || 'Estación OXXO GAS')}</b><br/><span class="meta">Gasolina y diésel · verificar horario y disponibilidad.${extra ? ' ' + extra : ''}</span><br/><a href="${gmaps(lat, lng)}" target="_blank" rel="noopener" class="poptab">📲 Ver en Google Maps</a></div>`;
+const OXXO_MUESTRA = [
+  { n:'Tijuana (BC)', lat:32.5149, lng:-117.0382 },
+  { n:'Mexicali (BC)', lat:32.6633, lng:-115.4680 },
+  { n:'Hermosillo (Son)', lat:29.0729, lng:-110.9559 },
+  { n:'Chihuahua (Chih)', lat:28.6353, lng:-106.0889 },
+  { n:'Monterrey (NL)', lat:25.6866, lng:-100.3161 },
+  { n:'Saltillo (Coah)', lat:25.4264, lng:-100.9918 },
+  { n:'Torreón (Coah)', lat:25.5428, lng:-103.4068 },
+  { n:'Culiacán (Sin)', lat:24.8083, lng:-107.3940 },
+  { n:'Guadalajara (Jal)', lat:20.6597, lng:-103.3496 },
+  { n:'Querétaro (Qro)', lat:20.5888, lng:-100.3899 },
+  { n:'León (Gto)', lat:21.1239, lng:-101.6800 },
+  { n:'Puebla (Pue)', lat:19.0414, lng:-98.2063 },
+  { n:'Mérida (Yuc)', lat:20.9674, lng:-89.5926 },
+  { n:'Cancún (QRoo)', lat:21.1619, lng:-86.8515 },
+];
+let oxxoList = [];
+function renderOxxo(list) {
+  groups.oxxo.clearLayers();
+  list.forEach(s => {
+    L.marker([s.lat, s.lng], { icon: oxxoIcon() }).addTo(groups.oxxo)
+      .bindPopup(popupOxxo(s.n, `${s.e || ''} · ${s.m || ''}${s.d ? ' · diésel sí' : ' · diésel no'}`, s.lat, s.lng));
+  });
+}
+function pintarOxxoMuestra(){
+  oxxoList = OXXO_MUESTRA.map(s => ({ ...s }));
+  renderOxxo(oxxoList);
+  const h = document.getElementById('oxxo-hint');
+  if (h) h.textContent = 'OXXO GAS: OSM no disponible · ' + OXXO_MUESTRA.length + ' muestras de referencia';
+}
+async function cargarOxxo(){
+  const h = document.getElementById('oxxo-hint');
+  const local = window.OXXO_EOX;
+  if (Array.isArray(local) && local.length) {
+    oxxoList = local;
+    const conDiesel = oxxoList.filter(s => s.d).length;
+    renderOxxo(oxxoList);
+    const o2 = document.getElementById('oxxo-hint'); if (o2) o2.textContent =
+      oxxoList.length + ' estaciones OXXO GAS (Red EOX) · ' + conDiesel + ' con diésel, ' + (oxxoList.length - conDiesel) + ' solo gasolina';
+    return;
+  }
+  try {
+    const q = '[out:json][timeout:25];node["amenity"="fuel"]["brand"~"oxxo",i](14.5,-118,33,-86);out;';
+    const res = await fetch('https://overpass-api.de/api/interpreter', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'data=' + encodeURIComponent(q)
+    });
+    const j = await res.json();
+    const seen = new Map();
+    (j.elements || []).forEach(n => {
+      if (typeof n.lat !== 'number' || typeof n.lon !== 'number') return;
+      const key = n.lat.toFixed(4) + ',' + n.lon.toFixed(4);
+      if (!seen.has(key)) seen.set(key, n);
+    });
+    if (seen.size) {
+      oxxoList = [...seen.values()].map(n => ({ n: (n.tags && n.tags.name) || 'OXXO GAS', lat: n.lat, lng: n.lon, d: false }));
+      renderOxxo(oxxoList);
+      if (h) h.textContent = seen.size + ' estaciones OXXO GAS cargadas de OpenStreetMap';
+    } else {
+      pintarOxxoMuestra();
+    }
+  } catch (e) {
+    pintarOxxoMuestra();
+  }
+}
+cargarOxxo();
+
+// ===== Ruta origen-destino con nivel de riesgo =====
+const RAD = Math.PI / 180;
+const haversine = (aLat, aLng, bLat, bLng) => {
+  const dLat = (bLat - aLat) * RAD, dLng = (bLng - aLng) * RAD;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(aLat * RAD) * Math.cos(bLat * RAD) * Math.sin(dLng / 2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+const distToLine = (lat, lng, pts) => {
+  const k = Math.cos(lat * RAD) || 1;
+  let min = Infinity;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [x1, y1] = [pts[i][1], pts[i][0]];
+    const [x2, y2] = [pts[i + 1][1], pts[i + 1][0]];
+    const cx = x2 - x1, cy = y2 - y1, len = cx * cx + cy * cy;
+    let t = len ? ((lng - x1) * cx + (lat - y1) * cy) / len : -1;
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+    const d = Math.hypot((lng - (x1 + t * cx)) * k * 111320, (lat - (y1 + t * cy)) * 111320);
+    if (d < min) min = d;
+  }
+  return min;
+};
+const rank = { critica: 2, alta: 1, media: 0 };
+const sevOrder = { critica: 3, alta: 2, media: 1 };
+function zonaPara(lat, lng) {
+  let worst = null;
+  const add = (name, sev, desc) => {
+    if (!worst || rank[sev] > rank[worst.sev]) worst = { name, sev, desc };
+  };
+  ESTADOS.forEach(s => { if (haversine(lat, lng, s.lat, s.lng) <= Math.sqrt(s.pct) * 24000) add(s.n, s.sev, s.d); });
+  PUNTOS.forEach(p => { if (haversine(lat, lng, p.lat, p.lng) <= 15000) add(p.n, p.sev, p.d); });
+  CARRETERAS.forEach(h => { if (distToLine(lat, lng, h.pts) <= 8000) add(h.n, h.sev, h.d); });
+  return worst;
+}
+
+groups.ruta = L.layerGroup().addTo(map);
+const worstOf = (a, b) => !b ? a : (!a ? b : (sevOrder[b] >= sevOrder[a] ? b : a));
+function setRuta(msg, err) { const el = document.getElementById('route-result'); el.innerHTML = msg || ''; el.style.color = err ? 'var(--red)' : 'var(--muted)'; }
+const fmtKm = x => Math.round(x).toLocaleString('es-MX') + ' km';
+function fmtDur(s){ s = Math.round(s || 0); const h = Math.floor(s/3600), m = Math.round((s%3600)/60); return h ? `${h} h ${m} min` : m + ' min'; }
+const pctK = (k, km) => (km ? Math.round(k/km*100) : 0);
+
+function pintarGeometria(geom, pts, group, weight) {
+  const toLL = g => ({ lat: g[1], lng: g[0] });
+  const dG = [0];
+  for (let i = 1; i < geom.length; i++) dG.push(dG[i - 1] + haversine(toLL(geom[i - 1]).lat, toLL(geom[i - 1]).lng, toLL(geom[i]).lat, toLL(geom[i]).lng));
+  const dP = [0];
+  for (let i = 1; i < pts.length; i++) dP.push(dP[i - 1] + haversine(pts[i - 1].lat, pts[i - 1].lng, pts[i].lat, pts[i].lng));
+  const target = group || groups.ruta;
+  let curColor = null, run = [];
+  const flush = () => { if (run.length >= 2) L.polyline(run, { color: curColor, weight: weight || 6, opacity: .9 }).addTo(target); run = []; };
+  for (let i = 0; i < geom.length; i++) {
+    const d = dG[i];
+    let k = 0;
+    for (let j = 1; j < dP.length; j++) if (dP[j] <= d) k = j;
+    const sev = worstOf(pts[k].sev, pts[Math.min(k + 1, pts.length - 1)].sev);
+    const c = sev ? SEV[sev].color : '#4ade80';
+    if (i === 0) { curColor = c; run.push(toLL(geom[0])); }
+    else if (c !== curColor) { flush(); run.push(toLL(geom[i - 1])); curColor = c; }
+    run.push(toLL(geom[i]));
+  }
+  flush();
+}
+
+function calcRuta(coords){
+  const pts = coords.map(c => ({ lat: c[1], lng: c[0] }));
+  const sampled = [pts[0]];
+  let prev = pts[0];
+  for (let i = 1; i < pts.length; i++) {
+    if (haversine(prev.lat, prev.lng, pts[i].lat, pts[i].lng) >= 3000 || i === pts.length - 1) { sampled.push(pts[i]); prev = pts[i]; }
+  }
+  const cls = sampled.map(p => { const z = zonaPara(p.lat, p.lng); return { lat: p.lat, lng: p.lng, sev: z ? z.sev : null }; });
+  let km = 0; const stat = { critica: 0, alta: 0, media: 0, segura: 0 };
+  for (let i = 0; i < cls.length - 1; i++) {
+    const sev = worstOf(cls[i].sev, cls[i + 1].sev);
+    const d = haversine(cls[i].lat, cls[i].lng, cls[i + 1].lat, cls[i + 1].lng) / 1000;
+    km += d; stat[sev || 'segura'] += d;
+  }
+  const score = Math.round((stat.critica * 100 + stat.alta * 60 + stat.media * 30) / (km || 1));
+  return { pts: cls, km, stat, score };
+}
+
+let rutasCache = [], rutaState = { o: null, d: null }, rutaSel = 0, rutaOriLab = '', rutaDesLab = '';
+async function nominatim(q) {
+  const r = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=mx&q=' + encodeURIComponent(q));
+  return r.json();
+}
+
+async function trazarRuta() {
+  const ori = document.getElementById('ruta-origen').value.trim();
+  const des = document.getElementById('ruta-destino').value.trim();
+  if (!ori || !des) { setRuta('Ingresa origen y destino.', true); return; }
+  viaPts = [];
+  setRuta('Localizando lugares…');
+  try {
+    const [a, b] = await Promise.all([nominatim(ori), nominatim(des)]);
+    if (!a || !a.length || !b || !b.length) { setRuta('No se encontró ' + (b && b.length ? 'el origen' : 'el destino') + '. Prueba con ciudad o municipio.', true); return; }
+    const o = a[0], d = b[0];
+    await trazarDesdeCoords(+o.lat, +o.lon, +d.lat, +d.lon, o.display_name, d.display_name);
+  } catch (e) { setRuta('Error al trazar la ruta: ' + e.message, true); }
+}
+
+async function trazarDesdeCoords(olat, olng, dlat, dlng, oriLabel, desLabel) {
+  rebajar();
+  groups.ruta.clearLayers();
+  rutasCache = [];
+  document.getElementById('rutas-opts').innerHTML = '';
+  rutaState.o = { lat: olat, lng: olng, label: oriLabel };
+  rutaState.d = { lat: dlat, lng: dlng, label: desLabel };
+  setRuta('Calculando hasta 3 alternativas…');
+  const via = viaPts.map(v => v.lng + ',' + v.lat).join(';').replace(/;+$/, '');
+  const ptsStr = [olng + ',' + olat, via, dlng + ',' + dlat].filter(Boolean).join(';');
+  try {
+    const res = await fetch('https://router.project-osrm.org/route/v1/driving/' + ptsStr + '?overview=full&geometries=geojson&alternatives=true');
+    const j = await res.json();
+    if (!j.routes || !j.routes.length) { setRuta('No hay ruta carretera entre esos puntos.', true); return; }
+    rutasCache = j.routes.slice(0, 3).map(r => ({
+      km: r.distance / 1000, dur: r.duration, geom: r.geometry.coordinates, det: calcRuta(r.geometry.coordinates)
+    }));
+    mostrarRutas(oriLabel, desLabel);
+  } catch (e) { setRuta('Error al trazar la ruta: ' + e.message, true); }
+}
+
+function mostrarRutas(ori, des) {
+  const optsEl = document.getElementById('rutas-opts');
+  optsEl.innerHTML = '';
+  let best = 0, bestScore = 1e9;
+  rutasCache.forEach((r, i) => { if (r.det.score < bestScore) { bestScore = r.det.score; best = i; } });
+  const sel = document.getElementById('pref-segura').checked ? best : 0;
+  rutasCache.forEach((r, i) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'ropt' + (i === sel ? ' active' : '');
+    b.innerHTML = `<b>${fmtKm(r.km)}</b> · ${fmtDur(r.dur)} · índice de riesgo <b>${r.det.score}</b>/100` + (i === best ? ' <span class="badge">★ más segura</span>' : '');
+    b.onclick = () => { optsEl.querySelectorAll('.ropt').forEach(x => x.classList.remove('active')); b.classList.add('active'); drawRuta(i, ori, des); };
+    optsEl.appendChild(b);
+  });
+  setRuta('');
+  drawRuta(sel, ori, des);
+}
+
+function drawRuta(sel, ori, des) {
+  rutaSel = sel; rutaOriLab = ori; rutaDesLab = des;
+  groups.ruta.clearLayers();
+  rutasCache.forEach((r, i) => {
+    if (i === sel) return;
+    const g = r.geom || r.det.pts.map(p => [p.lng, p.lat]);
+    for (let k = 0; k < g.length - 1; k++) {
+      L.polyline([[g[k][1], g[k][0]], [g[k + 1][1], g[k + 1][0]]], { color: '#94a3b8', weight: 2, opacity: .5, dashArray: '4,5' }).addTo(groups.ruta);
+    }
+  });
+  const rota = rutasCache[sel], pts = rota.det.pts, stat = rota.det.stat, km = rota.det.km, score = rota.det.score;
+  pintarGeometria(rota.geom || pts.map(p => [p.lng, p.lat]), pts);
+  const finMarker = (pts0, i) => L.marker(pts0, {
+    draggable: true, zIndexOffset: 1000,
+    icon: L.divIcon({
+      className: '', iconSize: [22, 22], iconAnchor: [11, 11],
+      html: `<div style="width:22px;height:22px;border-radius:50%;background:${i === 0 ? '#22c55e' : '#3b82f6'};border:3px solid #fff;box-shadow:0 0 10px rgba(0,0,0,.5)"></div>`
+    })
+  }).addTo(groups.ruta)
+    .bindPopup(i === 0 ? '<b>Origen</b><br/>' + esc(ori) + '<br/><span class="meta">Arrastra el punto para moverlo.</span>' : '<b>Destino</b><br/>' + esc(des) + '<br/><span class="meta">Arrastra el punto para moverlo.</span>');
+  finMarker([pts[0].lat, pts[0].lng], 0)
+    .on('dragend', e => { const p = e.target.getLatLng(); finClick(0, p.lat, p.lng); });
+  finMarker([pts[pts.length - 1].lat, pts[pts.length - 1].lng], 1)
+    .on('dragend', e => { const p = e.target.getLatLng(); finClick(1, p.lat, p.lng); });
+  try { map.fitBounds(L.latLngBounds(pts.map(p => [p.lat, p.lng])), { padding: [50, 50], maxZoom: 9 }); } catch (e) {}
+  if (viaPts.length) pintarViasEn(groups.ruta);
+  lineaDeCaptura(pts.map(p => ({ lat: p.lat, lng: p.lng })));
+  const vc = document.getElementById('btn-via-clear');
+  if (vc) vc.style.display = viaPts.length ? '' : 'none';
+  rutaActualPts = pts; // filtrar capas a lo que esté por esta ruta
+  mostrarSoloRuta();
+  setRuta(
+    `Ruta: <b>${esc(ori)} → ${esc(des)}</b><br/>` +
+    `Distancia: <b>${fmtKm(km)}</b> · Tiempo: <b>${fmtDur(rota.dur)}</b> · Índice de riesgo: <b>${score}/100</b>` +
+    (stat.critica > 0 ? `<br/><span style="color:var(--red)">⚠ ${stat.critica.toFixed(1)} km en zona crítica</span>` : '') +
+    `<br/>` +
+    `<span style="color:var(--red)">Crítica ${stat.critica.toFixed(0)} km (${pctK(stat.critica, km)}%)</span> · ` +
+    `<span style="color:var(--orange)">Alta ${stat.alta.toFixed(0)} km (${pctK(stat.alta, km)}%)</span> · ` +
+    `<span style="color:var(--yellow)">Media ${stat.media.toFixed(0)} km</span> · ` +
+    `<span style="color:var(--green)">Segura ${stat.segura.toFixed(0)} km</span>`
+  );
+}
+
+function finClick(i, lat, lng) {
+  const label = lat.toFixed(5) + ', ' + lng.toFixed(5);
+  const inp = document.getElementById(i === 0 ? 'ruta-origen' : 'ruta-destino');
+  inp.value = label;
+  if (i === 0) rutaState.o = { lat, lng, label }; else rutaState.d = { lat, lng, label };
+  if (rutaState.o && rutaState.d) trazarDesdeCoords(rutaState.o.lat, rutaState.o.lng, rutaState.d.lat, rutaState.d.lng, rutaState.o.label, rutaState.d.label);
+}
+
+function limpiarRuta() { viaPts = []; rebajar(); groups.ruta.clearLayers(); rutasCache = []; document.getElementById('rutas-opts').innerHTML = ''; const vc = document.getElementById('btn-via-clear'); if (vc) vc.style.display = 'none'; rutaActualPts = null; mostrarTodo(); setRuta(''); }
+
+// ===== Ruta desde Google My Maps =====
+const mmapHint = () => document.getElementById('mmap-hint');
+function extraerMid(url) {
+  const m = (url || '').match(/[?&]mid=([A-Za-z0-9_\-]+)/);
+  return m ? m[1] : (url || '').trim().replace(/^.*mid=/, '').replace(/[?&].*$/, '').trim() || null;
+}
+function parsearLineStrings(kmlText) {
+  const doc = new DOMParser().parseFromString(kmlText, 'text/xml');
+  if (doc.getElementsByTagName('parsererror').length) throw new Error('El contenido no parece un KML válido.');
+  const KML = 'http://www.opengis.net/kml/2.2';
+  const q = name => {
+    let el = doc.getElementsByTagNameNS(KML, name);
+    if (!el.length) el = doc.getElementsByTagName(name);
+    return el;
+  };
+  const rutas = [];
+  const pms = q('Placemark');
+  for (let i = 0; i < pms.length; i++) {
+    const pm = pms[i];
+    let ls = pm.getElementsByTagNameNS(KML, 'LineString');
+    if (!ls.length) ls = pm.getElementsByTagName('LineString');
+    if (!ls.length) continue;
+    let cs = ls[0].getElementsByTagNameNS(KML, 'coordinates');
+    if (!cs.length) cs = ls[0].getElementsByTagName('coordinates');
+    if (!cs.length) continue;
+    const coords = (cs[0].textContent || '').trim().split(/\s+/).map(t => {
+      const p = t.split(',');
+      return [+p[0], +p[1]];
+    }).filter(c => isFinite(c[0]) && isFinite(c[1]));
+    if (coords.length >= 2) {
+      let nEl = pm.getElementsByTagNameNS(KML, 'name');
+      if (!nEl.length) nEl = pm.getElementsByTagName('name');
+      rutas.push({ n: (nEl[0] && nEl[0].textContent) || 'Ruta sin nombre', coords });
+    }
+  }
+  return rutas;
+}
+async function cargarMyMaps() {
+  const link = document.getElementById('mmap-link').value.trim();
+  const mid = extraerMid(link);
+  if (!mid) { mmapHint().textContent = 'No se encontró el mid. Pega el enlace completo del mapa (o el KML).'; return; }
+  mmapHint().textContent = 'Descargando el mapa…';
+  try {
+    const res = await fetch('https://www.google.com/maps/d/kml?mid=' + encodeURIComponent(mid) + '&forcekml=1');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const kml = await res.text();
+    await procesarKml(kml, link);
+  } catch (e) {
+    mmapHint().textContent = 'El navegador no permite descargarlo automáticamente. Abre el mapa → Menú (⋮) → Exportar a KML, y pega aquí el contenido.';
+  }
+}
+async function snapACarreteras(coords) {
+  const uniq = [];
+  coords.forEach(c => {
+    const last = uniq[uniq.length - 1];
+    if (!last || last[0] !== c[0] || last[1] !== c[1]) uniq.push(c);
+  });
+  if (uniq.length < 2) return { coords: uniq, snapped: false };
+  const intentar = async n => {
+    const step = Math.ceil(uniq.length / n);
+    const c = [];
+    for (let i = 0; i < uniq.length; i += step) c.push(uniq[i]);
+    const last = uniq[uniq.length - 1];
+    if (c[c.length - 1][0] !== last[0] || c[c.length - 1][1] !== last[1]) c.push(last);
+    const s = c.map(p => p[0] + ',' + p[1]).join(';');
+    const res = await fetch('https://router.project-osrm.org/route/v1/driving/' + s + '?overview=full&geometries=geojson&alternatives=false');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const j = await res.json();
+    if (!j.routes || !j.routes.length || !j.routes[0].geometry) throw new Error('sin ruta');
+    const g = j.routes[0].geometry.coordinates;
+    return g && g.length >= 2 ? g : coords;
+  };
+  for (const n of [60, 30, 15]) {
+    try { const g = await intentar(n); return { coords: g, snapped: g && g.length >= 2 }; }
+    catch (e) { /* reintenta con menos waypoints */ }
+  }
+  return { coords: uniq, snapped: false };
+}
+async function procesarKml(kmlText, origen) {
+  let rutas;
+  try { rutas = parsearLineStrings(kmlText); } catch (e) { mmapHint().textContent = e.message; return; }
+  if (!rutas.length) { mmapHint().textContent = 'El mapa no tiene rutas con líneas (LineString). Dibuja tu ruta con la herramienta "Dibujar una línea" en Google My Maps.'; return; }
+  mmapHint().textContent = 'Ajustando la ruta a las carreteras…';
+  viaPts = [];
+  let algunoAjustado = false;
+  const preparadas = await Promise.all(rutas.map(async r => {
+    const s = await snapACarreteras(r.coords);
+    if (s.snapped) algunoAjustado = true;
+    return { n: r.n, coords: s.coords, snapped: s.snapped };
+  }));
+  rutasCache = preparadas.map(r => ({ n: r.n, km: 0, dur: 0, geom: r.coords, snapped: r.snapped, det: calcRuta(r.coords) }));
+  document.getElementById('rutas-opts').innerHTML = '';
+  if (rutasCache.length > 1) {
+    rutasCache.forEach((r, i) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'ropt' + (i === 0 ? ' active' : '');
+      b.innerHTML = `<b>${esc(r.n)}</b> · ${fmtKm(r.det.km)} · riesgo <b>${r.det.score}</b>/100`;
+      b.onclick = () => { document.querySelectorAll('#rutas-opts .ropt').forEach(x => x.classList.remove('active')); b.classList.add('active'); dibujarRutaKml(i); };
+      document.getElementById('rutas-opts').appendChild(b);
+    });
+  }
+  dibujarRutaKml(0);
+  mmapHint().textContent = (algunoAjustado
+    ? 'Ruta de My Maps ajustada a la red vial (Sigue calles y carreteras reales). '
+    : '⚠ No se pudo ajustar a la red vial (sin conexión con OSRM); se dibuja el trazo original. ') + (origen ? origen.replace(/^.*mid=/, 'mid=') : '') + ' · puedes arrastrar la línea para recalcular con OSRM.';
+  document.getElementById('btn-via-clear').style.display = 'none';
+}
+function dibujarRutaKml(sel) {
+  const r = rutasCache[sel], pts = r.det.pts, stat = r.det.stat, km = r.det.km, score = r.det.score;
+  rutaState.o = { lat: pts[0].lat, lng: pts[0].lng, label: pts[0].lat.toFixed(5) + ', ' + pts[0].lng.toFixed(5) };
+  rutaState.d = { lat: pts[pts.length - 1].lat, lng: pts[pts.length - 1].lng, label: pts[pts.length - 1].lat.toFixed(5) + ', ' + pts[pts.length - 1].lng.toFixed(5) };
+  groups.ruta.clearLayers();
+  rutasCache.forEach((x, i) => {
+    if (i === sel) return;
+    const g = x.geom || x.det.pts.map(p => [p.lng, p.lat]);
+    for (let k = 0; k < g.length - 1; k++) {
+      L.polyline([[g[k][1], g[k][0]], [g[k + 1][1], g[k + 1][0]]], { color: '#94a3b8', weight: 2, opacity: .5, dashArray: '4,5' }).addTo(groups.ruta);
+    }
+  });
+  pintarGeometria(r.geom || pts.map(p => [p.lng, p.lat]), pts);
+  try { map.fitBounds(L.latLngBounds(pts.map(p => [p.lat, p.lng])), { padding: [50, 50], maxZoom: 9 }); } catch (e) {}
+  lineaDeCaptura(pts.map(p => ({ lat: p.lat, lng: p.lng })));
+  const capStyle = i => `<div style="width:18px;height:18px;border-radius:50%;background:${i === 0 ? '#22c55e' : '#3b82f6'};border:3px solid #fff;box-shadow:0 0 8px rgba(0,0,0,.5)"></div>`;
+  L.marker([pts[0].lat, pts[0].lng], { icon: L.divIcon({ className: '', iconSize: [18, 18], iconAnchor: [9, 9], html: capStyle(0) }), zIndexOffset: 900 }).addTo(groups.ruta).bindPopup('<b>Inicio</b><br/>' + esc(r.n));
+  L.marker([pts[pts.length - 1].lat, pts[pts.length - 1].lng], { icon: L.divIcon({ className: '', iconSize: [18, 18], iconAnchor: [9, 9], html: capStyle(1) }), zIndexOffset: 900 }).addTo(groups.ruta).bindPopup('<b>Fin</b><br/>' + esc(r.n));
+  rutaActualPts = pts;
+  mostrarSoloRuta();
+  setRuta(
+    `Ruta My Maps: <b>${esc(r.n)}</b> · ${r.snapped ? '<span class="badge">🚚 ajustada a la red vial</span>' : '<span style="color:var(--orange)">trazo original (sin red vial)</span>'}<br/>` +
+    `Distancia: <b>${fmtKm(km)}</b> · Índice de riesgo: <b>${score}/100</b>` +
+    (stat.critica > 0 ? `<br/><span style="color:var(--red)">⚠ ${stat.critica.toFixed(1)} km en zona crítica</span>` : '') +
+    `<br/>` +
+    `<span style="color:var(--red)">Crítica ${stat.critica.toFixed(0)} km (${pctK(stat.critica, km)}%)</span> · ` +
+    `<span style="color:var(--orange)">Alta ${stat.alta.toFixed(0)} km (${pctK(stat.alta, km)}%)</span> · ` +
+    `<span style="color:var(--yellow)">Media ${stat.media.toFixed(0)} km</span> · ` +
+    `<span style="color:var(--green)">Segura ${stat.segura.toFixed(0)} km</span>`
+  );
+}
+document.getElementById('btn-mmap').addEventListener('click', () => cargarMyMaps());
+document.getElementById('btn-mmap-kml').addEventListener('click', () => {
+  const kml = document.getElementById('mmap-kml').value;
+  if (!kml.trim()) { mmapHint().textContent = 'Pega primero el contenido del KML.'; return; }
+  procesarKml(kml, '');
+});
+document.getElementById('mmap-link').addEventListener('keydown', e => { if (e.key === 'Enter') cargarMyMaps(); });
+
+document.getElementById('btn-ruta').addEventListener('click', trazarRuta);
+document.getElementById('btn-ruta-clear').addEventListener('click', limpiarRuta);
+const btnViaClear = document.getElementById('btn-via-clear');
+if (btnViaClear) btnViaClear.addEventListener('click', () => { viaPts = []; if (rutaState.o && rutaState.d) trazarDesdeCoords(rutaState.o.lat, rutaState.o.lng, rutaState.d.lat, rutaState.d.lng, rutaState.o.label, rutaState.d.label); });
+document.getElementById('ruta-origen').addEventListener('keydown', e => { if (e.key === 'Enter') trazarRuta(); });
+document.getElementById('ruta-destino').addEventListener('keydown', e => { if (e.key === 'Enter') trazarRuta(); });
+
+let pickStep = 0; // 0 = inactivo, 1 = fijar origen, 2 = fijar destino
+const pickBtn = document.getElementById('btn-pick');
+function pickSalir() {
+  pickStep = 0;
+  pickBtn.classList.remove('active');
+  pickBtn.textContent = 'Elegir en el mapa';
+  document.getElementById('map').style.cursor = '';
+  setRuta('');
+}
+pickBtn.addEventListener('click', () => {
+  if (pickStep) { pickSalir(); return; }
+  pickStep = 1;
+  pickBtn.classList.add('active');
+  pickBtn.textContent = 'Cancelar selección';
+  document.getElementById('map').style.cursor = 'crosshair';
+  setRuta('Haz clic en el mapa para fijar el ORIGEN…');
+});
+map.on('click', e => {
+  if (!pickStep) return;
+  const { lat, lng } = e.latlng;
+  const label = lat.toFixed(5) + ', ' + lng.toFixed(5);
+  if (pickStep === 1) {
+    document.getElementById('ruta-origen').value = label;
+    rutaState.o = { lat, lng, label };
+    pickStep = 2;
+    setRuta('Ahora haz clic para fijar el DESTINO…');
+  } else {
+    document.getElementById('ruta-destino').value = label;
+    rutaState.d = { lat, lng, label };
+    pickStep = 0;
+    pickBtn.classList.remove('active');
+    pickBtn.textContent = 'Elegir en el mapa';
+    document.getElementById('map').style.cursor = '';
+    if (rutaState.o) trazarDesdeCoords(rutaState.o.lat, rutaState.o.lng, lat, lng, rutaState.o.label, label);
+  }
+});
+
+// ===== Arrastrar la ruta para re-trasarla por donde la sueltes =====
+let viaPts = [], capLine = null, dragCap = null, dragHandlers = [];
+const dropIcon = () => L.divIcon({
+  className: '', iconSize: [16, 16], iconAnchor: [8, 8],
+  html: '<div style="width:16px;height:16px;border-radius:50%;background:transparent;border:3px dashed #fff;box-shadow:0 0 10px rgba(0,0,0,.7)"></div>'
+});
+function rebajar() {
+  if (capLine) { map.off('mousemove', dragHandlers[0]); map.off('mouseup mouseout', dragHandlers[1]); capLine.remove(); capLine = null; }
+  if (dragCap) { dragCap.remove(); dragCap = null; }
+  dragHandlers = [];
+}
+function lineaDeCaptura(pts) {
+  rebajar();
+  capLine = L.polyline(pts.map(p => [p.lat, p.lng]), { color: '#000', weight: 16, opacity: 0.01, stroke: true }).addTo(groups.ruta);
+  let down = false, dragMark = null;
+  const onMove = e => {
+    if (!down) return;
+    if (!dragMark) dragMark = L.marker([e.latlng.lat, e.latlng.lng], { icon: dropIcon(), zIndexOffset: 2100 }).addTo(map);
+    else dragMark.setLatLng(e.latlng);
+  };
+  const onUp = () => {
+    if (!down) return;
+    down = false;
+    if (dragMark) {
+      const ll = dragMark.getLatLng(); dragMark.remove(); dragMark = null;
+      if (rutaState.o && rutaState.d) {
+        if (viaPts.length >= 10) { setRuta('Máximo 10 puntos de paso. Quita uno con clic derecho.'); }
+        else { viaPts.push({ lat: ll.lat, lng: ll.lng }); trazarDesdeCoords(rutaState.o.lat, rutaState.o.lng, rutaState.d.lat, rutaState.d.lng, rutaState.o.label, rutaState.d.label); }
+      }
+    }
+    map.dragging.enable(); map.getContainer().style.cursor = '';
+  };
+  capLine.on('mousedown', e => {
+    L.DomEvent.stopPropagation(e.originalEvent);
+    L.DomEvent.preventDefault(e.originalEvent);
+    down = true;
+    map.dragging.disable();
+    map.getContainer().style.cursor = 'grabbing';
+  });
+  map.on('mousemove', onMove);
+  map.on('mouseup mouseout', onUp);
+  dragHandlers = [onMove, onUp];
+}
+function pintarViasEn(u) {
+  viaPts.forEach(v => {
+    const idx = viaPts.indexOf(v);
+    L.circleMarker([v.lat, v.lng], { radius: 6, color: '#fff', weight: 2, fillColor: '#a855f7', fillOpacity: 1, zIndexOffset: 1200 })
+      .addTo(u)
+      .bindPopup('Punto de paso ' + (idx + 1) + '<br/><span class="meta">Clic derecho aquí para quitarlo.</span>')
+      .on('contextmenu', ev => {
+        ev.originalEvent.preventDefault();
+        viaPts.splice(idx, 1);
+        if (rutaState.o && rutaState.d) trazarDesdeCoords(rutaState.o.lat, rutaState.o.lng, rutaState.d.lat, rutaState.d.lng, rutaState.o.label, rutaState.d.label);
+      });
+  });
+}
+
+// ===== Unidades Samsara =====
+let samsaraUnits = [], samsaraTimer = null;
+const samsaraStatus = () => document.getElementById('samsara-status');
+const samsaraAlertas = () => document.getElementById('samsara-alertas');
+function samsaraSeveridad(u) {
+  const z = zonaPara(u.lat, u.lng);
+  if (!z) return null;
+  const c = SEV[z.sev] ? SEV[z.sev].color : null;
+  return { sev: z.sev, color: c, zona: z.name };
+}
+function renderUnidades(list) {
+  groups.samsara.clearLayers();
+  Object.keys(samsaraMarkers).forEach(k => delete samsaraMarkers[k]);
+  list.forEach(u => {
+    const s = samsaraSeveridad(u);
+    const color = s && s.color ? s.color : '#22c55e';
+    const hdg = (typeof u.heading === 'number' && isFinite(u.heading)) ? ((u.heading % 360) + 360) % 360 : null;
+    const html = `<div class="sam-wrap" style="width:32px;height:32px;border-radius:50%;position:relative;display:flex;align-items:center;justify-content:center">
+      <div style="width:26px;height:26px;border-radius:50%;background:${color};border:3px solid #fff;box-shadow:0 0 10px ${color};display:flex;align-items:center;justify-content:center;font-size:13px">🚛</div>
+      ${hdg !== null ? `<div style="position:absolute;top:-7px;left:50%;margin-left:-6px;width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:11px solid ${color};filter:drop-shadow(0 0 3px ${color});transform:rotate(${hdg}deg);transform-origin:6px 18px"></div>` : ''}
+      ${u.onTrip ? `<div style="position:absolute;bottom:-2px;right:-3px;width:12px;height:12px;border-radius:50%;background:#fff;border:2px solid ${color};font-size:7px;display:flex;align-items:center;justify-content:center">▶</div>` : ''}
+    </div>`;
+    const m = L.marker([u.lat, u.lng], {
+      icon: L.divIcon({ className: '', iconSize: [32, 32], iconAnchor: [16, 16], html }),
+      zIndexOffset: 1900
+    }).addTo(groups.samsara);
+    samsaraMarkers[u.id] = m;
+    const extra = s ? `<br/><span class="meta" style="color:${color}">⚠ En zona de riesgo: ${esc(s.zona)} (${s.sev})</span>` : '';
+    const dest = u.destinoPts ? `<br/><span class="meta">🎯 Destino: ${esc(u.destino)}</span>` : '';
+    m.bindPopup(
+      '<b>' + esc(u.name) + '</b>' +
+      (u.onTrip ? '<br/><span class="badge">en ruta (onTrip)</span>' : '') +
+      '<br/><span class="meta">Velocidad: ' + (u.speed != null ? u.speed.toFixed(0) + ' mph' : '—') + '</span>' +
+      '<br/><span class="meta">Lat ' + u.lat.toFixed(5) + ', Lng ' + u.lng.toFixed(5) + '</span>' +
+      (u.time ? '<br/><span class="meta">Reportado: ' + new Date(u.time).toLocaleTimeString('es-MX') + '</span>' : '') +
+      dest +
+      extra
+    );
+  });
+}
+function pintarAlertas(list) {
+  const el = samsaraAlertas();
+  const cnt = document.getElementById('tab-cnt-samsara');
+  const graves = list.map(u => ({ u, s: samsaraSeveridad(u) }))
+    .filter(x => x.s && (x.s.sev === 'critica' || x.s.sev === 'alta'))
+    .sort((a, b) => (a.s.sev === b.s.sev ? 0 : a.s.sev === 'critica' ? -1 : 1));
+  if (cnt) cnt.classList.toggle('show', graves.length > 0);
+  if (cnt) cnt.textContent = graves.length;
+  const enRuta = graves.filter(x => x.u.onTrip);
+  if (!graves.length) { el.innerHTML = ''; return; }
+  const chip = (sev, zona) => '<span class="chip" style="background:' + (SEV[sev] ? SEV[sev].color : '#888') + '">' +
+    (SEV[sev] ? esc(SEV[sev].label) : esc(sev)) + '</span>';
+  el.innerHTML = '<h2 style="margin-top:12px;color:var(--red)">⚠ Unidades en zona de peligro</h2>' +
+    '<div class="hint" style="margin-bottom:4px">' +
+    (enRuta.length ? enRuta.length + ' en movimiento · ' : '') +
+    graves.length + ' unidad(es) en zona ' + (graves[0].s.sev === 'critica' ? 'crítica' : 'alta') +
+    '</div>' +
+    '<table><thead><tr><th>Unidad</th><th>Zona</th><th>Nivel</th><th>Vel</th></tr></thead><tbody>' +
+    graves.map(x => {
+      const u = x.u, s = x.s;
+      return '<tr title="Centrar en ' + esc(u.name) + '" onclick="centrarUnidad(' + u.lat + ',' + u.lng + ')">' +
+        '<td><b>' + esc(u.name) + '</b>' + (u.onTrip ? '<br/><span class="dust">en movimiento</span>' : '') + '</td>' +
+        '<td>' + esc(s.zona) + '</td>' +
+        '<td>' + chip(s.sev, s.zona) + '</td>' +
+        '<td>' + (u.speed != null ? u.speed.toFixed(0) + ' mph' : '—') + '</td>' +
+        '<td><button type="button" class="btn-destino" title="Asignar destino" onclick="event.stopPropagation();prepararDestino(' + u.id + ')">🎯</button></td>' +
+        '</tr>';
+    }).join('') +
+    '</tbody></table>' +
+    '<div class="hint" style="margin-top:4px">Clic en una fila para centrar el mapa en la unidad.</div>';
+}
+function actualizarCntSamsara() {
+  const cnt = document.getElementById('tab-cnt-samsara');
+  if (!cnt) return;
+  const graves = samsaraUnits.map(u => samsaraSeveridad(u)).filter(s => s && (s.sev === 'critica' || s.sev === 'alta')).length;
+  cnt.textContent = graves;
+  cnt.classList.toggle('show', graves > 0);
+}
+let samsaraQuery = '';
+function samsaraMatchea(u, q) {
+  q = (q || '').toLowerCase();
+  return (u.name || '').toLowerCase().includes(q) ||
+    String(u.id).includes(q) ||
+    (u.vin || '').toLowerCase().includes(q);
+}
+function aplicarFiltroUnidades(esRefresco) {
+  const solo = document.getElementById('samsara-agrupar') && document.getElementById('samsara-agrupar').checked && rutaActualPts && rutaActualPts.length;
+  let lista = solo ? samsaraUnits.filter(u => estaCerca(u.lat, u.lng, 15)) : samsaraUnits;
+  if (samsaraQuery) lista = lista.filter(u => samsaraMatchea(u, samsaraQuery));
+  renderUnidades(lista);
+  pintarAlertas(lista);
+}
+function centrarUnidad(lat, lng) { map.flyTo([lat, lng], 9, { duration: 1 }); }
+async function cargarSamsara() {
+  const url = document.getElementById('samsara-url').value.trim() || 'http://localhost:8787/locations';
+  try {
+    samsaraStatus().textContent = 'Consultando Samsara…';
+    const res = await fetch(url);
+    const j = await res.json().catch(() => null);
+    if (!res.ok || !j || !j.ok) throw new Error((j && j.error) || (j && j.count != null ? j.count + ' unidades' : 'HTTP ' + res.status));
+    samsaraUnits = (j.units || []).filter(u => isFinite(u.lat) && isFinite(u.lng) && !(u.lat === 0 && u.lng === 0));
+    aplicarFiltroUnidades(true);
+    const vis = document.querySelector('#sidebar input[data-layer="samsara"]');
+    if (vis && !vis.checked) { vis.checked = true; groups.samsara.addTo(map); }
+    actualizarCntSamsara();
+    samsaraStatus().style.color = '';
+    samsaraStatus().textContent = j.count + ' unidad(es) conectadas · última: ' + (j.time ? new Date(j.time).toLocaleTimeString('es-MX') : '—');
+  } catch (e) {
+    samsaraStatus().style.color = 'var(--red)';
+    samsaraStatus().textContent = 'Sin conexión: ' + e.message + '. ¿Está corriendo samsara-proxy.ps1?';
+  }
+}
+function iniciarSamsara() {
+  if (samsaraTimer) { clearInterval(samsaraTimer); samsaraTimer = null; }
+  cargarSamsara();
+  const auto = document.getElementById('samsara-auto').checked;
+  const freq = +(document.getElementById('samsara-freq').value || 30000);
+  document.getElementById('btn-samsara').style.display = 'none';
+  document.getElementById('btn-samsara-stop').style.display = '';
+  if (auto) samsaraTimer = setInterval(cargarSamsara, freq);
+}
+function detenerSamsara() {
+  if (samsaraTimer) { clearInterval(samsaraTimer); samsaraTimer = null; }
+  document.getElementById('btn-samsara').style.display = '';
+  document.getElementById('btn-samsara-stop').style.display = 'none';
+  samsaraStatus().textContent = 'Conexión detenida.';
+  const vis = document.querySelector('#sidebar input[data-layer="samsara"]');
+  if (vis) vis.checked = false;
+  groups.samsara.clearLayers();
+  Object.keys(samsaraMarkers).forEach(k => delete samsaraMarkers[k]);
+  if (samsaraResultadosEl) samsaraResultadosEl.innerHTML = '';
+  const bx = document.getElementById('samsara-buscar'); if (bx) bx.value = '';
+  samsaraQuery = '';
+}
+document.getElementById('btn-samsara').addEventListener('click', iniciarSamsara);
+document.getElementById('btn-samsara-stop').addEventListener('click', detenerSamsara);
+document.getElementById('samsara-freq').addEventListener('change', () => { if (samsaraTimer) iniciarSamsara(); });
+
+// ===== Buscador de unidades =====
+const samsaraBuscarEl = document.getElementById('samsara-buscar');
+const samsaraResultadosEl = document.getElementById('samsara-resultados');
+const samsaraMarkers = {};
+function navegarAUnidad(u) {
+  centrarUnidad(u.lat, u.lng);
+  const m = samsaraMarkers[u.id];
+  if (m) setTimeout(() => m.openPopup(), 550);
+}
+function pintarResultados(q) {
+  q = (q || '').toLowerCase().trim();
+  samsaraQuery = q;
+  if (samsaraUnits.length) aplicarFiltroUnidades(false);
+  if (!samsaraResultadosEl) return;
+  if (!q) { samsaraResultadosEl.innerHTML = ''; return; }
+  const hits = samsaraUnits.filter(u => samsaraMatchea(u, q)).slice(0, 20);
+  if (!hits.length) { samsaraResultadosEl.innerHTML = '<div class="vacia">Sin coincidencias para «' + esc(q) + '»</div>'; return; }
+  samsaraResultadosEl.innerHTML = hits.map(u => {
+    const s = samsaraSeveridad(u);
+    const color = s && s.color ? s.color : '#22c55e';
+    const estado = u.onTrip ? 'en movimiento · ' : 'detenida · ';
+    return '<div class="hit" onclick="navegarAUnidad(' + u.id + ')">' +
+      '<span class="dot" style="background:' + color + ';color:' + color + '"></span>' +
+      '<span class="nmi"><b>' + esc(u.name) + '</b>' +
+      '<span>' + esc(estado) + (u.speed != null ? u.speed.toFixed(0) + ' mph' : '—') +
+      (s ? ' · ' + esc(s.zona) + ' (' + esc(s.sev) + ')' : '') + '</span></span>' +
+      '<button type="button" class="btn-destino" title="Asignar destino" onclick="event.stopPropagation();prepararDestino(' + u.id  + ')">🎯</button>' +
+      '</div>';
+  }).join('');
+}
+samsaraBuscarEl.addEventListener('input', () => pintarResultados(samsaraBuscarEl.value));
+samsaraBuscarEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && samsaraUnits.length) {
+    const u = samsaraUnits.find(x => (x.name || '').toLowerCase().includes((samsaraBuscarEl.value || '').toLowerCase()));
+    if (!u && samsaraUnits.length) u = samsaraUnits[0]; 
+    if (u) navegarAUnidad(u);
+  }
+});
+
+// ===== Asignar destino a una unidad =====
+let unidadDestino = null;
+const destinoPanel = () => document.getElementById('samsara-destino');
+const destinoCiudad = () => document.getElementById('samsara-destino-ciudad');
+const destinoNombre = () => document.getElementById('samsara-destino-nombre');
+const destinoInfo = () => document.getElementById('samsara-destino-info');
+function prepararDestino(id) {
+  const u = samsaraUnits.find(x => String(x.id) === String(id));
+  if (!u) return;
+  unidadDestino = u;
+  destinoNombre().textContent = u.name;
+  destinoCiudad().value = u.destino || '';
+  destinoInfo().textContent = u.destinoPts ? 'Ruta previa al destino ' + esc(u.destino) : '';
+  destinoPanel().style.display = '';
+  destinoCiudad().focus();
+}
+async function trazarDestino() {
+  const u = unidadDestino;
+  if (!u) return;
+  const q = destinoCiudad().value.trim();
+  if (!q) { destinoInfo().textContent = 'Escribe el destino.'; return; }
+  destinoInfo().style.color = '';
+  destinoInfo().textContent = 'Localizando «' + q + '»…';
+  try {
+    const plc = extraerPlusCode(q, u);
+    if (plc) {
+      const area = OpenLocationCode.decode(plc);
+      const lat = area.latitudeCenter, lng = area.longitudeCenter;
+      u.destino = plc;
+      u.destinoPts = { lat, lng, label: 'Plus Code ' + plc };
+      await trazarDesdeCoords(u.lat, u.lng, lat, lng, u.name + ' (unidad)', 'Plus Code ' + plc);
+      destinoInfo().style.color = '';
+      destinoInfo().textContent = '✓ Ruta ' + u.name + ' → Plus Code ' + plc + ' trazada. Toca la 🎯 de otra unidad para cambiar de destino.';
+      document.querySelector('#tabs .tab[data-tab="ruta"]').click();
+      return;
+    }
+    const r = await nominatim(q);
+    if (!r || !r.length) { destinoInfo().style.color = 'var(--red)'; destinoInfo().textContent = 'No se encontró «' + esc(q) + '». Prueba con ciudad o municipio, o un Plus Code de Google Maps.'; return; }
+    const d = r[0];
+    u.destino = d.display_name;
+    u.destinoPts = { lat: +d.lat, lng: +d.lon, label: d.display_name };
+    await trazarDesdeCoords(u.lat, u.lng, +d.lat, +d.lon, u.name + ' (unidad)', d.display_name);
+    destinoInfo().style.color = '';
+    destinoInfo().textContent = '✓ Ruta ' + u.name + ' → ' + d.display_name + ' trazada. Toca la 🎯 de otra unidad para cambiar de destino.';
+    document.querySelector('#tabs .tab[data-tab="ruta"]').click();
+  } catch (e) {
+    destinoInfo().style.color = 'var(--red)';
+    destinoInfo().textContent = 'Error: ' + e.message;
+  }
+}
+function extraerPlusCode(q, u) {
+  if (!q || q.indexOf('+') === -1) return null;
+  const palabras = q.split(/[\s,;]+/);
+  for (let i = 0; i < palabras.length; i++) {
+    const p = palabras[i];
+    if (p.indexOf('+') !== -1) {
+      let c = p.toUpperCase();
+      if (!/^[23456789CFGHJMPQRVWX+]+$/.test(c)) continue;
+      if (OpenLocationCode.isFull(c)) return c;
+      if (OpenLocationCode.isShort(c) && u) {
+        return OpenLocationCode.recoverNearest(c, +u.lat, +u.lng).toUpperCase();
+      }
+    }
+  }
+  return null;
+}
+document.getElementById('samsara-destino-btn').addEventListener('click', trazarDestino);
+destinoCiudad().addEventListener('keydown', e => { if (e.key === 'Enter') trazarDestino(); });
+
+// ===== Incidentes viales y cierres (HERE Traffic v7 via proxy) =====
+let incTimer = null, incData = [], incMoveT = null;
+const incStatus = () => document.getElementById('inc-status');
+const INC_COLOR = { accident:'#ef4444', roadClosure:'#b91c1c', construction:'#f59e0b', congestion:'#eab308', disabledVehicle:'#14b8a6', roadHazard:'#f97316', weather:'#3b82f6', plannedEvent:'#8b5cf6', massTransit:'#a855f7', laneRestriction:'#f43f5e', other:'#94a3b8' };
+const INC_LABEL = { accident:'Accidente', roadClosure:'Cierre de vía', construction:'Obras / construcción', congestion:'Congestión', disabledVehicle:'Vehículo averiado', roadHazard:'Peligro en la vía', weather:'Clima', plannedEvent:'Evento programado', massTransit:'Tránsito masivo', laneRestriction:'Restricción de carril', other:'Otro' };
+const incColor = t => INC_COLOR[t] || '#94a3b8';
+const incLabel = t => INC_LABEL[t] || (t ? t : 'Incidente');
+function incBounds() {
+  const b = map.getBounds();
+  return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map(x => x.toFixed(4)).join(',');
+}
+function incPopup(it) {
+  const color = incColor(it.type);
+  const closed = !!it.roadClosed || it.type === 'roadClosure';
+  const t = it.startTime ? new Date(it.startTime).toLocaleString('es-MX') : '';
+  return `<div style="min-width:200px"><strong style="color:${color}">${closed ? '⛔' : '⚠'} ${esc(incLabel(it.type))}</strong>` +
+    (it.criticality ? ` <span class="meta">(${esc(it.criticality)})</span>` : '') +
+    `<br/><b>${esc(it.road || '')}</b>` +
+    (it.summary ? `<br/><span class="meta">${esc(it.summary)}</span>` : '') +
+    (it.description && it.description !== it.summary ? `<br/><div style="margin-top:5px">${esc(it.description)}</div>` : '') +
+    (t ? `<br/><span class="meta">Desde ${esc(t)}</span>` : '') +
+    (it.length ? `<br/><span class="meta">${Math.round(it.length)} m</span>` : '') +
+    `</div>`;
+}
+function renderIncidentes(list) {
+  groups.incidentes.clearLayers();
+  list.forEach(it => {
+    const color = incColor(it.type);
+    const closed = !!it.roadClosed || it.type === 'roadClosure';
+    const pts = (it.pts || []).filter(p => isFinite(p[0]) && isFinite(p[1]));
+    if (pts.length > 1) {
+      L.polyline(pts, { color: closed ? '#b91c1c' : color, weight: closed ? 6 : 4, opacity: 0.9, dashArray: closed ? '' : '5,5' })
+        .addTo(groups.incidentes).bindPopup(incPopup(it));
+    }
+    if (pts.length) {
+      const anchor = pts[Math.floor(pts.length / 2)];
+      const icon = L.divIcon({ className:'', iconSize:[22,22], iconAnchor:[11,11],
+        html:`<div style="width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:12px;background:${color};border:2px solid #fff;border-radius:50%;box-shadow:0 0 10px ${color}">${closed ? '⛔' : '⚠'}</div>` });
+      L.marker(anchor, { icon, zIndexOffset: 700 }).addTo(groups.incidentes).bindPopup(incPopup(it));
+    }
+  });
+}
+async function cargarIncidentes() {
+  const url = (document.getElementById('inc-url').value.trim() || 'http://localhost:8787/traffic');
+  const types = document.getElementById('inc-types').value.trim();
+  const crit = document.getElementById('inc-crit').value;
+  const qs = 'bbox=' + incBounds() + (types ? '&types=' + encodeURIComponent(types) : '') + (crit ? '&crit=' + encodeURIComponent(crit) : '');
+  incStatus().style.color = ''; incStatus().textContent = 'Consultando HERE…';
+  try {
+    const res = await fetch(url + '?' + qs);
+    const j = await res.json();
+    if (j.needKey) { incStatus().style.color = 'var(--yellow)'; incStatus().textContent = 'Falta la API key de HERE: agrega "hereKey" en samsara-config.json y reinicia el proxy.'; return; }
+    if (j.badKey) { incStatus().style.color = 'var(--red)'; incStatus().textContent = 'La API key de HERE no es válida o no tiene permisos para Traffic v7.'; return; }
+    if (!j.ok) throw new Error(j.error || 'Error del proxy');
+    incData = j.items || [];
+    const vis = document.querySelector('#sidebar input[data-layer="incidentes"]');
+    if (vis && vis.checked) {
+      if (incData.length && !groups.incidentes.getLayers().length) groups.incidentes.addTo(map);
+      renderIncidentes(incData);
+    }
+    incStatus().style.color = '';
+    incStatus().textContent = incData.length + ' incidente(s) en el área · actualizado ' + new Date().toLocaleTimeString('es-MX');
+  } catch (e) {
+    incStatus().style.color = 'var(--red)';
+    incStatus().textContent = 'Sin conexión: ' + e.message + '. ¿Está corriendo samsara-proxy.ps1?';
+  }
+}
+function iniciarIncidentes() {
+  if (incTimer) { clearInterval(incTimer); incTimer = null; }
+  cargarIncidentes();
+  const auto = document.getElementById('inc-auto').checked;
+  const freq = +(document.getElementById('inc-freq').value || 120000);
+  document.getElementById('btn-inc').style.display = 'none';
+  document.getElementById('btn-inc-stop').style.display = '';
+  if (auto) incTimer = setInterval(cargarIncidentes, freq);
+}
+function detenerIncidentes() {
+  if (incTimer) { clearInterval(incTimer); incTimer = null; }
+  document.getElementById('btn-inc').style.display = '';
+  document.getElementById('btn-inc-stop').style.display = 'none';
+  incStatus().textContent = 'Actualización detenida.';
+}
+document.getElementById('btn-inc').addEventListener('click', iniciarIncidentes);
+document.getElementById('btn-inc-stop').addEventListener('click', detenerIncidentes);
+document.getElementById('inc-freq').addEventListener('change', () => { if (incTimer) iniciarIncidentes(); });
+document.getElementById('inc-types').addEventListener('change', () => { if (incTimer) cargarIncidentes(); });
+document.getElementById('inc-crit').addEventListener('change', () => { if (incTimer) cargarIncidentes(); });
+map.on('moveend', () => {
+  if (!incTimer) return;
+  if (incMoveT) clearTimeout(incMoveT);
+  incMoveT = setTimeout(cargarIncidentes, 2500);
+});
+iniciarIncidentes();
+
+// ===== Mostrar solo lo que está por la ruta =====
+let rutaActualPts = null; // pts [{lat,lng}] de la ruta seleccionada
+function estaCerca(lat, lng, km) {
+  if (!rutaActualPts || !rutaActualPts.length) return true;
+  return distToLine(lat, lng, rutaActualPts.map(p => [p.lat, p.lng])) <= km * 1000;
+}
+function mostrarSoloRuta() {
+  if (!rutaActualPts || !rutaActualPts.length) return;
+  const km = 15;
+  renderEstados(ESTADOS.filter(s => estaCerca(s.lat, s.lng, 60)));
+  renderCarreteras(CARRETERAS.filter(h => h.pts.some(pt => estaCerca(pt[0], pt[1], km))));
+  renderCasetas(CASETAS.filter(c => estaCerca(c.lat, c.lng, km)), '#f59e0b', groups.casetas, 'Caseta federal');
+  renderCasetas(CASETAS_E.filter(c => estaCerca(c.lat, c.lng, km)), '#22d3ee', groups.casetasE, 'Caseta estatal');
+  renderPuntos(PUNTOS.filter(p => estaCerca(p.lat, p.lng, km)));
+  renderMunicipios(MUNICIPIOS.filter(m => estaCerca(m.lat, m.lng, km)));
+  renderViales(VIALES.filter(v => estaCerca(v.lat, v.lng, km)));
+  renderApoyo(APOYO_ALL.filter(a => estaCerca(a.lat, a.lng, km + 10)));
+  renderOxxo(oxxoList.filter(o => estaCerca(o.lat, o.lng, km)));
+  renderParadores(SUKARNE_FILTRADO(p => estaCerca(p.lat, p.lng, km)));
+  renderIncidentes(incData.filter(it => { const p = (it.pts || [])[0]; return p ? estaCerca(p[0], p[1], km) : false; }));
+  if (samsaraUnits.length) aplicarFiltroUnidades(false);
+  const o2 = document.getElementById('oxxo-hint'); if (o2) {
+    const vis = oxxoList.filter(o => estaCerca(o.lat, o.lng, km));
+    o2.textContent = 'OXXO GAS por esta ruta: ' + vis.length + ' estación(es) en ~15 km';
+  }
+}
+function SUKARNE_FILTRADO(fn) {
+  const out = {};
+  Object.keys(SUKARNE).forEach(cat => {
+    const cfg = SUKARNE[cat];
+    const pts = cfg.pts.filter(fn);
+    if (pts.length) out[cat] = { color: cfg.color, pts };
+  });
+  return out;
+}
+function mostrarTodo() {
+  renderEstados(ESTADOS);
+  renderCarreteras(CARRETERAS);
+  renderCasetas(CASETAS, '#f59e0b', groups.casetas, 'Caseta federal');
+  renderCasetas(CASETAS_E, '#22d3ee', groups.casetasE, 'Caseta estatal');
+  renderPuntos(PUNTOS);
+  renderMunicipios(MUNICIPIOS);
+  renderViales(VIALES);
+  renderApoyo(APOYO_ALL);
+  renderOxxo(oxxoList);
+  renderParadores(SUKARNE);
+  renderIncidentes(incData);
+  if (samsaraUnits.length) aplicarFiltroUnidades(false);
+  const o2 = document.getElementById('oxxo-hint'); if (o2) {
+    const conDiesel = oxxoList.filter(s => s.d).length;
+    o2.textContent = oxxoList.length + ' estaciones OXXO GAS · ' + conDiesel + ' con diésel';
+  }
+}
+
+// ===== Panel lateral dinámico =====
+const t = document.getElementById('toggle');
+const sb = document.getElementById('sidebar');
+t.addEventListener('click',()=>{ sb.classList.toggle('closed'); t.textContent = sb.classList.contains('closed')?'☰ Panel':'✕'; });
+
+document.querySelectorAll('#tabs .tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('#tabs .tab').forEach(x => x.classList.remove('active'));
+    tab.classList.add('active');
+    document.querySelectorAll('#sidebar .tabpane').forEach(p => p.classList.toggle('active', p.dataset.pane === tab.dataset.tab));
+  });
+});
+document.querySelectorAll('#base-pick .base-pill').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#base-pick .base-pill').forEach(x => x.classList.remove('active'));
+    btn.classList.add('active');
+    cambiarBase(btn.dataset.base);
+  });
+});
+const agruparCtrl = document.getElementById('samsara-agrupar');
+if (agruparCtrl) agruparCtrl.addEventListener('change', () => { if (samsaraUnits.length) aplicarFiltroUnidades(false); });
+
+const themeBtn = document.getElementById('theme-btn');
+function setTheme(mode){
+  document.body.classList.toggle('light', mode === 'light');
+  themeBtn.textContent = mode === 'light' ? '🌙' : '☀️';
+  themeBtn.title = mode === 'light' ? 'Cambiar a tema oscuro' : 'Cambiar a tema claro';
+  try { localStorage.setItem('gers-mapa-tema', mode); } catch (e) {}
+}
+setTheme((()=>{ try { return localStorage.getItem('gers-mapa-tema') || 'dark'; } catch (e) { return 'dark'; } })());
+themeBtn.addEventListener('click', () => setTheme(document.body.classList.contains('light') ? 'dark' : 'light'));
+
+document.querySelectorAll('#sidebar input[data-layer]').forEach(inp=>{
+  inp.addEventListener('change',()=>{
+    const g = groups[inp.dataset.layer];
+    if(inp.checked) g.addTo(map); else map.removeLayer(g);
+  });
+});
+
+const barsEl = document.getElementById('bars');
+[...ESTADOS].sort((a,b)=>b.pct-a.pct).forEach(s=>{
+  const c = SEV[s.sev].color;
+  barsEl.insertAdjacentHTML('beforeend', `
+    <div class="bar">
+      <div class="top"><b style="color:${c}">${s.n}</b><span>${s.pct}%</span></div>
+      <div class="track"><div class="fill" style="width:${s.pct/16.3*100}%;background:${c}"></div></div>
+    </div>`);
+});
+
+const hbarsEl = document.getElementById('hbars');
+[...CARRETERAS].sort((a,b)=>(sevOrder[b.sev]-sevOrder[a.sev])||(b.km-a.km)).forEach(h=>{
+  const c = SEV[h.sev].color;
+  hbarsEl.insertAdjacentHTML('beforeend', `
+    <div class="bar">
+      <div class="top"><b style="color:${c}">${h.n}</b><span>${h.km} km</span></div>
+      <div class="track"><div class="fill" style="width:${h.km/223*100}%;background:${c}"></div></div>
+    </div>`);
+});
+
+map.fitBounds([[14.5,-117.2],[32.7,-86.7]]);
+</script>
+</body>
+</html>

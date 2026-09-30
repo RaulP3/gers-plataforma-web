@@ -1,0 +1,64 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: gers-backend
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    env_file:
+      - ./backend/.env.docker
+      - ./.env
+    environment:
+      ALLOW_PRIVATE_NETWORK_ORIGINS: "true"
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME is required}
+      DATABASE_PATH: /app/data/gers.db
+      FRONTEND_URL: http://localhost:3000
+      NODE_ENV: production
+      SAMSARA_WEBHOOK_SECRET: ${SAMSARA_WEBHOOK_SECRET:?SAMSARA_WEBHOOK_SECRET is required}
+      TZ: America/Mexico_City
+    volumes:
+      - gers-data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "const r=require('http').get('http://localhost:3001/health',res=>{res.resume();process.exit(res.statusCode===200?0:1)});r.on('error',()=>process.exit(1));r.setTimeout(2000,()=>r.destroy())"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - gers-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+    container_name: gers-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      HOSTNAME: 0.0.0.0
+      NODE_ENV: production
+      TZ: America/Mexico_City
+    healthcheck:
+      test: ["CMD", "node", "-e", "const r=require('http').get('http://localhost:3000/',res=>{res.resume();process.exit(res.statusCode>=200&&res.statusCode<400?0:1)});r.on('error',()=>process.exit(1));r.setTimeout(2000,()=>r.destroy())"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - gers-network
+
+volumes:
+  gers-data:
+
+networks:
+  gers-network:
+    driver: bridge
