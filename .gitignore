@@ -1,7 +1,13 @@
 node_modules/
 *.db
+*.db.bak-*
 .env*
 !**/.env.example
 dist/
 .next/
 *.log
+
+# secretos (token real de Samsara)
+mapa-riesgo/samsara/samsara-config.json*
+# backups locales
+backend/backups/

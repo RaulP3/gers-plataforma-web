@@ -92,7 +92,12 @@ function listGeofenceEvents({ vehicle_id, geofence_id, limit }) {
   let query = 'SELECT * FROM geofence_events WHERE 1=1';
   const params = [];
   if (vehicle_id) { query += ' AND vehicle_id = ?'; params.push(vehicle_id); }
-  if (geofence_id) { query += ' AND geofence_id = ?'; params.push(geofence_id); }
+  if (geofence_id) {
+    const gid = String(geofence_id);
+    const bare = gid.replace(/^samsara:/, '');
+    query += ' AND (geofence_id = ? OR geofence_id = ? OR geofence_id = ?)';
+    params.push(gid, `samsara:${bare}`, bare);
+  }
   query += ' ORDER BY created_at DESC';
   if (limit) { query += ' LIMIT ?'; params.push(Number(limit)); }
   return new Promise((resolve, reject) => {

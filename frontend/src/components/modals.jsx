@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React from 'react';
 import dynamic from 'next/dynamic';
@@ -96,7 +96,7 @@ export function ProgramarViajeModal({
                     </div>
                   </div>
                   <div className="trip-delivery-type" role="group" aria-label="Tipo de entrega">
-                    <button type="button" className={formViaje.tipo_entrega !== 'reparto' ? 'active' : ''} onClick={() => setFormViaje(prev => ({ ...prev, tipo_entrega: 'directo', destino: parseDestinos(prev.destinos).at(-1) || prev.destino }))}>Destino único</button>
+                    <button type="button" className={formViaje.tipo_entrega !== 'reparto' ? 'active' : ''} onClick={() => setFormViaje(prev => ({ ...prev, tipo_entrega: 'directo', destino: parseDestinos(prev.destinos).at(-1) || prev.destino }))}>Destino Ãºnico</button>
                     <button type="button" className={formViaje.tipo_entrega === 'reparto' ? 'active' : ''} onClick={() => setFormViaje(prev => ({ ...prev, tipo_entrega: 'reparto', destinos: parseDestinos(prev.destinos).length >= 2 ? prev.destinos : [prev.destino || '', ''] }))}>Reparto</button>
                   </div>
                   {formViaje.tipo_entrega === 'reparto' ? (
@@ -144,7 +144,7 @@ export function ProgramarViajeModal({
                 </form>
               </div>
               <div style={s.card}>
-                <h3 style={{ marginTop: 0, marginBottom: '1rem', fontSize: '1rem', color: '#e0e0e0' }}>Vehículo Seleccionado</h3>
+                <h3 style={{ marginTop: 0, marginBottom: '1rem', fontSize: '1rem', color: '#e0e0e0' }}>VehÃ­culo Seleccionado</h3>
                 {formViaje.vehicle_id ? (() => {
                   const v = vehiculos.find(vh => String(vh.id) === formViaje.vehicle_id);
                   if (!v) return <div style={{ color: '#4a8a4a' }}>No encontrado</div>;
@@ -176,12 +176,12 @@ export function ProgramarViajeModal({
                         </div>
                         <div style={{ color: '#d4d4d4', fontSize: '0.78rem', lineHeight: 1.4 }}>
                           <strong style={{ color: '#10b981' }}>{viaje.origen || 'Sin origen'}</strong>
-                          <span style={{ color: '#4a8a4a' }}> → </span>
+                          <span style={{ color: '#4a8a4a' }}> â†’ </span>
                           <strong style={{ color: '#60a5fa' }}>{viaje.tipo_entrega === 'reparto' ? `${destinos.length} paradas` : (destinos[0] || 'Sin destino')}</strong>
                         </div>
                         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.35rem', color: '#6a9b6a', fontSize: '0.68rem' }}>
                           <span>{viaje.conductor || 'Sin conductor'}</span>
-                          {viaje.remolque && <span>· {viaje.remolque}</span>}
+                          {viaje.remolque && <span>Â· {viaje.remolque}</span>}
                         </div>
                         {paradas.length > 0 && <div style={{ marginTop: '0.4rem', color: completadas === paradas.length ? '#00ff41' : '#f59e0b', fontSize: '0.7rem', fontWeight: 700 }}>{completadas} de {paradas.length} paradas completadas</div>}
                       </div>
@@ -192,9 +192,9 @@ export function ProgramarViajeModal({
                       <div style={{ padding: '0.75rem', background: '#111', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
                         <div style={{ fontWeight: '600', color: '#00ff41', fontSize: '1rem', marginBottom: '0.5rem' }}>{v.name}</div>
                         <div style={{ color: '#c0c0c0' }}>Operador: {operadores[String(v.id)]?.nombre || 'Sin asignar'}</div>
-                        <div style={{ color: '#c0c0c0' }}>Ubicación: {v.location?.location || 'Sin datos'}</div>
+                        <div style={{ color: '#c0c0c0' }}>UbicaciÃ³n: {v.location?.location || 'Sin datos'}</div>
                         <div style={{ color: '#c0c0c0' }}>Diesel: {v.fuelLevelPercent !== null ? `${Math.round(v.fuelLevelPercent * 100)}%` : 'N/D'}</div>
-                        <div style={{ color: v.isOnline ? '#00ff41' : '#f59e0b' }}>Estado: {v.isOnline ? 'Online' : 'Sin señal'}</div>
+                        <div style={{ color: v.isOnline ? '#00ff41' : '#f59e0b' }}>Estado: {v.isOnline ? 'Online' : 'Sin seÃ±al'}</div>
                       </div>
                       <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: '#0d0d0d', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem' }}>
@@ -224,7 +224,7 @@ export function ProgramarViajeModal({
                       )}
                       {viajeEta && !calculandoViajeEta && (
                         <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #10b98133' }}>
-                           <div style={{ fontWeight: '600', fontSize: '0.8rem', color: '#10b981', marginBottom: '0.5rem', textTransform: 'uppercase' }}>{formViaje.tipo_entrega === 'reparto' ? 'ETA a primera parada (Tractocamión)' : 'ETA Calculado (Tractocamión)'}</div>
+                           <div style={{ fontWeight: '600', fontSize: '0.8rem', color: '#10b981', marginBottom: '0.5rem', textTransform: 'uppercase' }}>{formViaje.tipo_entrega === 'reparto' ? 'ETA a primera parada (TractocamiÃ³n)' : 'ETA Calculado (TractocamiÃ³n)'}</div>
                           <div style={{ display: 'flex', justifyContent: 'space-around', textAlign: 'center' }}>
                             <div>
                               <div style={{ fontSize: '0.65rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Llegada</div>
@@ -252,15 +252,93 @@ export function ProgramarViajeModal({
                   );
                 })() : (
                   <div style={{ textAlign: 'center', padding: '2rem', color: '#4a8a4a' }}>
-                    <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🚚</div>
-                    <p>Selecciona un vehículo para ver sus datos</p>
-                    <p style={{ fontSize: '0.8rem', marginTop: '0.5rem' }}>También verás sus viajes activos y programados</p>
+                    <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>ðŸšš</div>
+                    <p>Selecciona un vehÃ­culo para ver sus datos</p>
+                    <p style={{ fontSize: '0.8rem', marginTop: '0.5rem' }}>TambiÃ©n verÃ¡s sus viajes activos y programados</p>
                   </div>
                 )}
               </div>
             </div>
                 </div>
-              </div>);
+</div>);
+}
+
+export function AlertaComentarioModal({ alert, opciones, cerrar, resolver, enviando, s }) {
+  const [comentario, setComentario] = React.useState('');
+  const [error, setError] = React.useState('');
+
+  const seleccionarOpcion = (texto) => { setComentario(texto); setError(''); };
+  const confirmar = async () => {
+    if (!String(comentario || '').trim()) {
+      setError('Selecciona una opciÃ³n o escribe un motivo para cerrar la alerta');
+      return;
+    }
+    await resolver(alert.id, comentario);
+  };
+
+  return (<div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2300 }} onClick={cerrar}>
+    <div className="modal-panel" role="dialog" aria-modal="true" aria-label="Cerrar alerta con comentario" style={{ background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '16px', width: '560px', maxWidth: '95vw', padding: '1.5rem' }} onClick={(e) => e.stopPropagation()}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+        <h2 style={{ margin: 0, color: '#00ff41', fontSize: '1.1rem' }}>Cerrar alerta</h2>
+        <button onClick={cerrar} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer' }}>âœ•</button>
+      </div>
+      <div style={{ fontSize: '0.85rem', color: '#e0e0e0', background: '#141414', border: '1px solid #1e3a1e', borderRadius: '10px', padding: '0.75rem 0.9rem', marginBottom: '1rem', lineHeight: 1.5 }}>
+        {alert.vehicle_name ? <strong style={{ color: '#00ff41' }}>{alert.vehicle_name}: </strong> : null}{alert.mensaje}
+      </div>
+      <label style={s.label}>Motivo de cierre (obligatorio)</label>
+      <div style={{ display: 'grid', gap: '0.45rem', marginBottom: '0.85rem' }}>
+        {(opciones && opciones.length > 0) && opciones.map(opcion => {
+          const activa = String(comentario) === String(opcion);
+          return (
+            <button key={opcion} type="button" onClick={() => seleccionarOpcion(opcion)} style={{ textAlign: 'left', padding: '0.55rem 0.8rem', borderRadius: '8px', border: `1px solid ${activa ? '#00ff41' : '#1f3d1f'}`, background: activa ? '#00ff4114' : '#141414', color: activa ? '#00ff41' : '#cfe3cf', fontSize: '0.8rem', cursor: 'pointer' }}>
+              {activa ? 'âœ“ ' : ''}{opcion}
+            </button>
+          );
+        })}
+      </div>
+      <label style={s.label}>Otro motivo (o ajusta el seleccionado)</label>
+      <textarea style={{ ...s.input, minHeight: '64px', width: '100%', resize: 'vertical' }} value={comentario} onChange={(e) => { setComentario(e.target.value); setError(''); }} placeholder="Escribe el motivo..." />
+      {error && <div style={{ color: '#f87171', fontSize: '0.8rem', marginTop: '0.5rem' }}>{error}</div>}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem' }}>
+        <button type="button" onClick={cerrar} style={s.button('#6b7280')}>Cancelar</button>
+        <button type="button" onClick={confirmar} disabled={enviando} style={s.button('#00ff41')}>{enviando ? 'Cerrando...' : 'Confirmar y cerrar'}</button>
+      </div>
+    </div>
+  </div>);
+}
+
+export function AlertaOpcionesModal({ cerrar, opciones, guardar, s }) {
+  const [draft, setDraft] = React.useState(Array.isArray(opciones) ? [...opciones] : []);
+
+  const guardarYcerrar = async () => {
+    const ok = await guardar(draft);
+    if (ok) cerrar();
+  };
+
+  return (<div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2300 }} onClick={cerrar}>
+    <div className="modal-panel" role="dialog" aria-modal="true" aria-label="Editar opciones de comentario" style={{ background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '16px', width: '620px', maxWidth: '95vw', padding: '1.5rem' }} onClick={(e) => e.stopPropagation()}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <div>
+          <h2 style={{ margin: 0, color: '#00ff41', fontSize: '1.1rem' }}>Comentarios rÃ¡pidos de cierre</h2>
+          <p style={{ margin: '0.2rem 0 0', color: '#6a9b6a', fontSize: '0.78rem' }}>Estas opciones aparecerÃ¡n al cerrar una alerta. Se guardan en la base.</p>
+        </div>
+        <button onClick={cerrar} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer' }}>âœ•</button>
+      </div>
+      <div style={{ display: 'grid', gap: '0.5rem', maxHeight: '50vh', overflowY: 'auto', paddingRight: '0.25rem' }}>
+        {draft.map((opcion, index) => (
+          <div key={index} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <input style={{ ...s.input, flex: 1 }} value={opcion} onChange={(e) => setDraft(prev => prev.map((item, itemIndex) => itemIndex === index ? e.target.value : item))} />
+            <button type="button" onClick={() => setDraft(prev => prev.filter((_, itemIndex) => itemIndex !== index))} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1rem' }}>âœ•</button>
+          </div>
+        ))}
+        <button type="button" onClick={() => setDraft(prev => [...prev, ''])} style={{ alignSelf: 'flex-start', padding: '0.4rem 0.8rem', borderRadius: '8px', border: '1px dashed #1f3d1f', background: 'transparent', color: '#72d98a', fontSize: '0.78rem', cursor: 'pointer' }}>+ Agregar opciÃ³n</button>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem' }}>
+        <button type="button" onClick={cerrar} style={s.button('#6b7280')}>Cancelar</button>
+        <button type="button" onClick={guardarYcerrar} disabled={draft.some(o => !String(o).trim())} style={s.button('#00ff41')}>Guardar opciones</button>
+      </div>
+    </div>
+  </div>);
 }
 
 export function CitaDetalleModal({
@@ -285,12 +363,12 @@ export function CitaDetalleModal({
               onClick={e => e.stopPropagation()}>
               <div style={{ padding: '1.5rem', borderBottom: '1px solid #1a3d1a', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
-                  <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#e0e0e0' }}>📍 Cita de {unidadCitaLabel(citaSeleccionada) || citaSeleccionada.unidad || 'unidad'}</h3>
+                  <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#e0e0e0' }}>ðŸ“ Cita de {unidadCitaLabel(citaSeleccionada) || citaSeleccionada.unidad || 'unidad'}</h3>
                   <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.85rem' }}>
                     {findGeofence(citaSeleccionada.destino)?.nombre || geocercasCoincidentes(citaSeleccionada.destino)[0] || citaSeleccionada.destino || 'Sin destino'}
                   </p>
                 </div>
-                <button onClick={() => setCitaSeleccionada(null)} style={{ background: 'none', border: 'none', color: '#6a9b6a', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
+                <button onClick={() => setCitaSeleccionada(null)} style={{ background: 'none', border: 'none', color: '#6a9b6a', fontSize: '1.5rem', cursor: 'pointer' }}>âœ•</button>
               </div>
               <div style={{ padding: '1.5rem' }}>
                 {(() => {
@@ -301,14 +379,14 @@ export function CitaDetalleModal({
                     <>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
                         <div style={{ background: '#1a1a1a', borderRadius: '10px', padding: '1rem' }}>
-                          <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Estado del vehículo</div>
+                          <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Estado del vehÃ­culo</div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             <span style={s.badge(estadoVeh.color)}>{estadoVeh.label}</span>
                             {vehicle?.location && <span style={{ fontSize: '0.85rem', color: '#e0e0e0' }}>{velocidadKmh(vehicle.location.speed)} km/h</span>}
                           </div>
                           {estadoVeh.label === 'En destino' && citaLlegada && (
                             <div style={{ fontSize: '0.85rem', color: '#00ff41', marginTop: '0.5rem' }}>
-                              Llegó a destino: {citaLlegada.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })}
+                              LlegÃ³ a destino: {citaLlegada.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })}
                             </div>
                           )}
                         </div>
@@ -321,13 +399,13 @@ export function CitaDetalleModal({
                         </div>
                       </div>
                       <div style={{ background: '#1a1a1a', borderRadius: '10px', padding: '1rem', marginBottom: '1rem' }}>
-                        <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Ubicación actual</div>
+                        <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.25rem' }}>UbicaciÃ³n actual</div>
                         {vehicle?.location ? (
                           <>
-                            <div style={{ fontSize: '0.9rem', color: '#e0e0e0', fontWeight: '600' }}>{vehicle.location.location || 'Sin dirección'}</div>
+                            <div style={{ fontSize: '0.9rem', color: '#e0e0e0', fontWeight: '600' }}>{vehicle.location.location || 'Sin direcciÃ³n'}</div>
                             <div style={{ fontSize: '0.75rem', color: '#4a8a4a', marginTop: '0.25rem' }}>
                               {Number(vehicle.location.latitude).toFixed(5)}, {Number(vehicle.location.longitude).toFixed(5)}
-                              {vehicle.lastSeen != null && vehicle.lastSeen < 999 ? ` · hace ${vehicle.lastSeen} min` : ''}
+                              {vehicle.lastSeen != null && vehicle.lastSeen < 999 ? ` Â· hace ${vehicle.lastSeen} min` : ''}
                             </div>
                           </>
                         ) : (
@@ -341,7 +419,7 @@ export function CitaDetalleModal({
                       )}
                       <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
                         <button onClick={() => marcarCitaCompletada(citaSeleccionada)} disabled={marcandoCitaId === citaSeleccionada.id} style={{ flex: 1, padding: '0.7rem', background: '#10b981', color: '#000', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600 }}>
-                          {marcandoCitaId === citaSeleccionada.id ? 'Guardando...' : '✓ Marcar completada'}
+                          {marcandoCitaId === citaSeleccionada.id ? 'Guardando...' : 'âœ“ Marcar completada'}
                         </button>
                         <button onClick={() => setCitaSeleccionada(null)} style={{ flex: 1, padding: '0.7rem', background: '#00ff41', color: '#000', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600 }}>Cerrar</button>
                       </div>
@@ -383,7 +461,7 @@ export function WppReporteModal({
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                   <input type="date" style={{ ...s.input, width: 'auto' }} value={wppReporteDia} onChange={e => { const d = e.target.value; setWppReporteDia(d); recalcularReporteWpp(d); }} />
                   <button type="button" onClick={() => recalcularReporteWpp(wppReporteDia)} style={s.button('#f59e0b')}>Regenerar textos</button>
-                  <button type="button" onClick={() => setShowWppReporte(false)} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.4rem', cursor: 'pointer' }}>✕</button>
+                  <button type="button" onClick={() => setShowWppReporte(false)} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.4rem', cursor: 'pointer' }}>âœ•</button>
                 </div>
               </div>
 
@@ -413,7 +491,7 @@ export function WppReporteModal({
                 return (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                     <div style={{ color: '#6a9b6a', fontSize: '0.85rem' }}>
-                      {labelDiaEntrega(wppReporteDia)} · {itemsDelDia.length} cita{itemsDelDia.length === 1 ? '' : 's'} · {clientesReporte.length} cliente{clientesReporte.length === 1 ? '' : 's'}
+                      {labelDiaEntrega(wppReporteDia)} Â· {itemsDelDia.length} cita{itemsDelDia.length === 1 ? '' : 's'} Â· {clientesReporte.length} cliente{clientesReporte.length === 1 ? '' : 's'}
                     </div>
 
                     {clientesReporte.map(({ cliente, items }) => {
@@ -437,7 +515,7 @@ export function WppReporteModal({
                           <div style={{ marginBottom: '0.7rem' }}>
                             <div style={{ color: '#4a8a4a', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.35rem' }}>Grupos de WhatsApp</div>
                             {disponibles.length === 0 ? (
-                              <div style={{ color: '#6a9b6a', fontSize: '0.8rem' }}>{cliente ? 'El cliente no tiene grupos configurados. Agrégale grupos en la pestaña Clientes.' : 'La cita no tiene un cliente asociado para grupos de WhatsApp.'}</div>
+                              <div style={{ color: '#6a9b6a', fontSize: '0.8rem' }}>{cliente ? 'El cliente no tiene grupos configurados. AgrÃ©gale grupos en la pestaÃ±a Clientes.' : 'La cita no tiene un cliente asociado para grupos de WhatsApp.'}</div>
                             ) : (
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem' }}>
                                 {disponibles.map(grupo => {
@@ -487,8 +565,8 @@ export function ZoneModal({
           <div className="modal-panel" role="dialog" aria-modal="true" aria-label="Nueva zona de riesgo" style={{ background: '#0d0d0d', borderRadius: '16px', width: '420px', maxHeight: '85vh', overflow: 'auto', boxShadow: '0 25px 50px rgba(0,0,0,0.5), 0 0 30px rgba(248,113,113,0.1)', border: '1px solid #3d1a1a' }}
             onClick={e => e.stopPropagation()}>
             <div style={{ padding: '1.5rem', borderBottom: '1px solid #3d1a1a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#e0e0e0' }}>⚠️ Nueva Zona de Riesgo</h3>
-              <button onClick={() => setShowZoneModal(false)} style={{ background: 'none', border: 'none', color: '#6a9b6a', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#e0e0e0' }}>âš ï¸ Nueva Zona de Riesgo</h3>
+              <button onClick={() => setShowZoneModal(false)} style={{ background: 'none', border: 'none', color: '#6a9b6a', fontSize: '1.5rem', cursor: 'pointer' }}>âœ•</button>
             </div>
             <form onSubmit={crearZonaRiesgo} style={{ padding: '1.5rem' }}>
               <div style={{ marginBottom: '1rem' }}>
@@ -496,7 +574,7 @@ export function ZoneModal({
                 <input style={s.input} value={newZone.name} onChange={e => setNewZone({ ...newZone, name: e.target.value })} required placeholder="Ej: Carretera Peligrosa" />
               </div>
               <div style={{ marginBottom: '1rem' }}>
-                <label style={s.label}>Descripción</label>
+                <label style={s.label}>DescripciÃ³n</label>
                 <textarea style={{ ...s.input, minHeight: '60px', resize: 'vertical' }} value={newZone.description} onChange={e => setNewZone({ ...newZone, description: e.target.value })} placeholder="Describe el tipo de peligro..." />
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
@@ -513,7 +591,7 @@ export function ZoneModal({
                 <div>
                   <label style={s.label}>Severidad</label>
                   <select style={s.select} value={newZone.severity} onChange={e => setNewZone({ ...newZone, severity: e.target.value })}>
-                    <option value="critical">Crítica</option>
+                    <option value="critical">CrÃ­tica</option>
                     <option value="high">Alta</option>
                     <option value="medium">Media</option>
                   </select>
@@ -524,7 +602,7 @@ export function ZoneModal({
                 </div>
               </div>
               <button type="submit" disabled={!newZone.lat || !newZone.lng} style={{ width: '100%', padding: '0.7rem', background: (!newZone.lat || !newZone.lng) ? '#333' : '#f87171', color: '#fff', border: 'none', borderRadius: '8px', cursor: (!newZone.lat || !newZone.lng) ? 'not-allowed' : 'pointer', fontSize: '0.9rem', fontWeight: 600 }}>
-                ⚠️ Crear Zona de Riesgo
+                âš ï¸ Crear Zona de Riesgo
               </button>
             </form>
           </div>
@@ -544,8 +622,8 @@ export function UnidadModal({
           <div className="modal-panel" role="dialog" aria-modal="true" aria-label={editUnidad ? 'Editar unidad' : 'Nueva unidad'} style={{ background: '#0d0d0d', borderRadius: '16px', width: '440px', maxHeight: '85vh', overflow: 'auto', boxShadow: '0 25px 50px rgba(0,0,0,0.5), 0 0 30px rgba(0,255,65,0.1)', border: '1px solid #1a3d1a' }}
             onClick={e => e.stopPropagation()}>
             <div style={{ padding: '1.5rem', borderBottom: '1px solid #1a3d1a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#e0e0e0' }}>{editUnidad ? '✏️ Editar Unidad' : '➕ Nueva Unidad'}</h3>
-              <button onClick={() => setShowUnidadModal(false)} style={{ background: 'none', border: 'none', color: '#6a9b6a', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#e0e0e0' }}>{editUnidad ? 'âœï¸ Editar Unidad' : 'âž• Nueva Unidad'}</h3>
+              <button onClick={() => setShowUnidadModal(false)} style={{ background: 'none', border: 'none', color: '#6a9b6a', fontSize: '1.5rem', cursor: 'pointer' }}>âœ•</button>
             </div>
             <form onSubmit={guardarUnidad} style={{ padding: '1.5rem' }}>
               <div style={{ marginBottom: '1rem' }}>
@@ -563,7 +641,7 @@ export function UnidadModal({
               </div>
               <div style={{ marginBottom: '1rem' }}>
                 <label style={s.label}>Notas</label>
-                <textarea style={{ ...s.input, minHeight: '70px', resize: 'vertical' }} value={formUnidad.notas} onChange={e => setFormUnidad({ ...formUnidad, notas: e.target.value })} placeholder="Descripción, detalles..." />
+                <textarea style={{ ...s.input, minHeight: '70px', resize: 'vertical' }} value={formUnidad.notas} onChange={e => setFormUnidad({ ...formUnidad, notas: e.target.value })} placeholder="DescripciÃ³n, detalles..." />
               </div>
               <div style={{ marginBottom: '1rem' }}>
                 <label style={s.label}>ID Samsara (opcional)</label>
@@ -615,16 +693,16 @@ export function DetalleUnidadModal({
                   <h2 style={{ margin: 0, fontSize: '1.25rem', color: '#e0e0e0' }}>{selectedVehicle.name}</h2>
                   <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.85rem' }}>{selectedVehicle.id}</p>
                 </div>
-                <button onClick={() => setSelectedVehicle(null)} style={{ background: '#1a1a1a', border: '1px solid #00ff41', borderRadius: '8px', width: '32px', height: '32px', cursor: 'pointer', fontSize: '1.1rem', color: '#00ff41' }}>✕</button>
+                <button onClick={() => setSelectedVehicle(null)} style={{ background: '#1a1a1a', border: '1px solid #00ff41', borderRadius: '8px', width: '32px', height: '32px', cursor: 'pointer', fontSize: '1.1rem', color: '#00ff41' }}>âœ•</button>
               </div>
             </div>
 
             <div style={{ padding: '1.5rem' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
                 <div style={{ background: '#1a1a1a', borderRadius: '10px', padding: '1rem' }}>
-                  <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Ubicación</div>
+                  <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.25rem' }}>UbicaciÃ³n</div>
                   <div style={{ fontSize: '0.85rem', color: '#e0e0e0', fontWeight: '500' }}>
-                    {selectedVehicle.location ? selectedVehicle.location.location || 'Sin dirección' : 'Sin datos'}
+                    {selectedVehicle.location ? selectedVehicle.location.location || 'Sin direcciÃ³n' : 'Sin datos'}
                   </div>
                   {selectedVehicle.location && (
                     <div style={{ fontSize: '0.75rem', color: '#4a8a4a', marginTop: '0.25rem' }}>
@@ -692,7 +770,7 @@ export function DetalleUnidadModal({
                   const esFull = asignado && obtenerMiembrosFull(asignado).length > 1;
                   return asignado ? (
                     <div style={{ color: '#f59e0b', fontWeight: 700, marginBottom: '0.75rem' }}>
-                      {esFull ? `Full · ${displayRemolque(asignado)}` : numeroRemolque(asignado.numero)}
+                      {esFull ? `Full Â· ${displayRemolque(asignado)}` : numeroRemolque(asignado.numero)}
                     </div>
                   ) : null;
                 })()}
@@ -757,7 +835,7 @@ export function DetalleUnidadModal({
                            {v.tipo_entrega === 'reparto' && <span className="trip-reparto-badge">Reparto</span>}
                           <span style={{ fontSize: '0.7rem', color: '#6a9b6a' }}>{v.fecha_inicio ? parseFechaProgramada(v.fecha_inicio).toLocaleDateString('es-MX') : '-'}</span>
                         </div>
-                         {v.tipo_entrega === 'reparto' ? <><div style={{ fontSize: '0.82rem', color: '#e0e0e0' }}><strong>{v.origen}</strong> →</div><div className="trip-stops-display">{destinosViaje(v).map((destino, stopIndex) => <div key={`${v.id}-vehicle-stop-${stopIndex}`}><span>{stopIndex + 1}</span>{destino}</div>)}</div></> : <div style={{ fontSize: '0.82rem', color: '#e0e0e0' }}><strong>{v.origen}</strong> → <strong>{v.destino}</strong></div>}
+                         {v.tipo_entrega === 'reparto' ? <><div style={{ fontSize: '0.82rem', color: '#e0e0e0' }}><strong>{v.origen}</strong> â†’</div><div className="trip-stops-display">{destinosViaje(v).map((destino, stopIndex) => <div key={`${v.id}-vehicle-stop-${stopIndex}`}><span>{stopIndex + 1}</span>{destino}</div>)}</div></> : <div style={{ fontSize: '0.82rem', color: '#e0e0e0' }}><strong>{v.origen}</strong> â†’ <strong>{v.destino}</strong></div>}
                         {v.conductor && <div style={{ fontSize: '0.72rem', color: '#6a9b6a', marginTop: '0.15rem' }}>Conductor: {v.conductor}</div>}
                         <div style={{ fontSize: '0.7rem', color: '#4a8a4a', marginTop: '0.15rem' }}>
                           {v.fecha_inicio ? parseFechaProgramada(v.fecha_inicio).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : '--'} - {v.fecha_fin ? parseFechaProgramada(v.fecha_fin).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : '--'}
@@ -779,7 +857,7 @@ export function DetalleUnidadModal({
                                  {v.tipo_entrega === 'reparto' && <span className="trip-reparto-badge">Reparto</span>}
                                 <span style={{ fontSize: '0.7rem', color: '#6a9b6a' }}>{v.fecha_fin ? parseFechaProgramada(v.fecha_fin).toLocaleDateString('es-MX') : '-'}</span>
                               </div>
-                               {v.tipo_entrega === 'reparto' ? <><div style={{ fontSize: '0.82rem', color: '#a3a3a3' }}><strong>{v.origen}</strong> →</div><div className="trip-stops-display">{destinosViaje(v).map((destino, stopIndex) => <div key={`${v.id}-history-stop-${stopIndex}`}><span>{stopIndex + 1}</span>{destino}</div>)}</div></> : <div style={{ fontSize: '0.82rem', color: '#a3a3a3' }}><strong>{v.origen}</strong> → <strong>{v.destino}</strong></div>}
+                               {v.tipo_entrega === 'reparto' ? <><div style={{ fontSize: '0.82rem', color: '#a3a3a3' }}><strong>{v.origen}</strong> â†’</div><div className="trip-stops-display">{destinosViaje(v).map((destino, stopIndex) => <div key={`${v.id}-history-stop-${stopIndex}`}><span>{stopIndex + 1}</span>{destino}</div>)}</div></> : <div style={{ fontSize: '0.82rem', color: '#a3a3a3' }}><strong>{v.origen}</strong> â†’ <strong>{v.destino}</strong></div>}
                             </div>
                           );
                         })}
@@ -799,12 +877,12 @@ export function DetalleUnidadModal({
                     <div>
                       <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Estado</div>
                       <div style={{ fontSize: '1rem', fontWeight: '600', color: selectedVehicle.isOnline ? '#10b981' : '#f59e0b' }}>
-                        {selectedVehicle.isOnline ? 'Online' : 'Sin señal'}
+                        {selectedVehicle.isOnline ? 'Online' : 'Sin seÃ±al'}
                       </div>
                     </div>
                     {selectedVehicle.lastSeen !== null && selectedVehicle.lastSeen !== undefined && (
                       <div>
-                        <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Última señal</div>
+                        <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Ãšltima seÃ±al</div>
                         <div style={{ fontSize: '1rem', fontWeight: '600' }}>hace {selectedVehicle.lastSeen}min</div>
                       </div>
                     )}
@@ -854,7 +932,7 @@ export function ViajeModal({
                     <button onClick={() => setViajeEditando(true)} style={{ ...s.button('#f59e0b'), padding: '0.3rem 0.8rem', fontSize: '0.8rem' }}>Editar</button>
                   </>
                 )}
-                 <button onClick={() => { setShowViajeModal(false); setViajeEditando(false); setViajeForm({}); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.5rem' }}>✕</button>
+                 <button onClick={() => { setShowViajeModal(false); setViajeEditando(false); setViajeForm({}); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.5rem' }}>âœ•</button>
               </div>
             </div>
 
@@ -884,12 +962,12 @@ export function ViajeModal({
                     <select style={s.select} value={viajeForm.estado || ''} onChange={(e) => setViajeForm({ ...viajeForm, estado: e.target.value })}>
                       <option value="disponible">Disponible</option>
                       <option value="programado">Programado</option>
-                      <option value="en_ruta_vacio">En Ruta Vacío</option>
+                      <option value="en_ruta_vacio">En Ruta VacÃ­o</option>
                       <option value="en_ruta_cargado">En Ruta Cargado</option>
                       <option value="espera_ingreso">En Espera de Ingreso</option>
                       <option value="proceso_carga">En Proceso de Carga</option>
                       <option value="proceso_descarga">En Proceso de Descarga</option>
-                      <option value="proceso_liberacion">En Proceso de Liberación</option>
+                      <option value="proceso_liberacion">En Proceso de LiberaciÃ³n</option>
                       <option value="en_resguardo">En Resguardo</option>
                       <option value="completado">Completado</option>
                       <option value="cancelado">Cancelado</option>
@@ -903,7 +981,7 @@ export function ViajeModal({
                 </div>
 
                 <div style={{ marginBottom: '1rem' }}>
-                  <label style={s.label}>Teléfono</label>
+                  <label style={s.label}>TelÃ©fono</label>
                   <input style={s.input} value={viajeForm.telefono || ''} onChange={(e) => setViajeForm({ ...viajeForm, telefono: e.target.value })} />
                 </div>
 
@@ -915,7 +993,7 @@ export function ViajeModal({
                   </div>
 
                   <div className="trip-delivery-type" role="group" aria-label="Tipo de entrega">
-                    <button type="button" className={viajeForm.tipo_entrega !== 'reparto' ? 'active' : ''} onClick={() => setViajeForm(prev => ({ ...prev, tipo_entrega: 'directo', destino: parseDestinos(prev.destinos).at(-1) || prev.destino }))}>Destino único</button>
+                    <button type="button" className={viajeForm.tipo_entrega !== 'reparto' ? 'active' : ''} onClick={() => setViajeForm(prev => ({ ...prev, tipo_entrega: 'directo', destino: parseDestinos(prev.destinos).at(-1) || prev.destino }))}>Destino Ãºnico</button>
                     <button type="button" className={viajeForm.tipo_entrega === 'reparto' ? 'active' : ''} onClick={() => setViajeForm(prev => ({ ...prev, tipo_entrega: 'reparto', destinos: parseDestinos(prev.destinos).length >= 2 ? prev.destinos : [prev.destino || '', ''] }))}>Reparto</button>
                   </div>
                   {viajeForm.tipo_entrega === 'reparto' ? (
@@ -975,7 +1053,7 @@ export function ViajeModal({
                     <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Unidad</div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', flexWrap: 'wrap' }}>
                       <span style={{ fontSize: '1rem', fontWeight: '600', color: '#00ff41' }}>{viajeDetalle.vehicle_name || viajeDetalle.vehicle_id}</span>
-                      <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#f59e0b', background: '#332200', border: '1px solid #f59e0b55', borderRadius: '10px', padding: '2px 8px' }}>🚛 {viajeDetalle.remolque || viajeDetalle.seg_remolque || 'Sin remolque'}</span>
+                      <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#f59e0b', background: '#332200', border: '1px solid #f59e0b55', borderRadius: '10px', padding: '2px 8px' }}>ðŸš› {viajeDetalle.remolque || viajeDetalle.seg_remolque || 'Sin remolque'}</span>
                     </div>
                   </div>
                   <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a' }}>
@@ -990,7 +1068,7 @@ export function ViajeModal({
                 <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a', marginBottom: '1rem' }}>
                   <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Conductor</div>
                   <div style={{ fontSize: '0.95rem', fontWeight: '600' }}>{viajeDetalle.conductor || 'Sin asignar'}</div>
-                  {viajeDetalle.telefono && <div style={{ fontSize: '0.8rem', color: '#6a9b6a', marginTop: '0.2rem' }}>📱 {viajeDetalle.telefono}</div>}
+                  {viajeDetalle.telefono && <div style={{ fontSize: '0.8rem', color: '#6a9b6a', marginTop: '0.2rem' }}>ðŸ“± {viajeDetalle.telefono}</div>}
                 </div>
 
                 <div style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '8px', border: '1px solid #1a3d1a', marginBottom: '1rem' }}>
@@ -1001,12 +1079,12 @@ export function ViajeModal({
                       <div style={{ fontSize: '0.9rem', fontWeight: '600' }}>{viajeDetalle.origen || '-'}</div>
                       {(viajeDetalle.hora_llegada_origen || viajeDetalle.hora_salida_origen) && (
                         <div style={{ marginTop: '0.35rem', color: '#94a3b8', fontSize: '0.65rem', lineHeight: 1.45 }}>
-                          {viajeDetalle.hora_llegada_origen && <div>Entró al origen: {parseFecha(viajeDetalle.hora_llegada_origen)?.toLocaleString('es-MX')}</div>}
-                          {viajeDetalle.hora_salida_origen && <div>Salió del origen: {parseFecha(viajeDetalle.hora_salida_origen)?.toLocaleString('es-MX')}</div>}
+                          {viajeDetalle.hora_llegada_origen && <div>EntrÃ³ al origen: {parseFecha(viajeDetalle.hora_llegada_origen)?.toLocaleString('es-MX')}</div>}
+                          {viajeDetalle.hora_salida_origen && <div>SaliÃ³ del origen: {parseFecha(viajeDetalle.hora_salida_origen)?.toLocaleString('es-MX')}</div>}
                         </div>
                       )}
                     </div>
-                    <div style={{ fontSize: '1.5rem', color: '#00ff41' }}>→</div>
+                    <div style={{ fontSize: '1.5rem', color: '#00ff41' }}>â†’</div>
                     <div>
                         <div style={{ fontSize: '0.75rem', color: '#6a9b6a', marginBottom: '0.2rem' }}>{viajeDetalle.tipo_entrega === 'reparto' ? 'Paradas' : 'Destino'}</div>
                         {viajeDetalle.tipo_entrega === 'reparto' ? (
@@ -1040,12 +1118,12 @@ export function ViajeModal({
                                             <strong style={{ color: '#e5e7eb', fontSize: '0.78rem', overflowWrap: 'anywhere' }}>{parada.destino}</strong>
                                             <span style={s.badge(meta.color)}>{meta.label}</span>
                                           </div>
-                                          {geocercasCoincidentes(parada.destino).map(name => <div key={name} style={{ color: '#6a9b6a', fontSize: '0.67rem', marginTop: '0.2rem' }}>📍 {name}</div>)}
+                                          {geocercasCoincidentes(parada.destino).map(name => <div key={name} style={{ color: '#6a9b6a', fontSize: '0.67rem', marginTop: '0.2rem' }}>ðŸ“ {name}</div>)}
                                           {(parada.hora_programada || parada.hora_llegada || parada.hora_salida) && (
                                             <div style={{ marginTop: '0.35rem', color: '#94a3b8', fontSize: '0.65rem', lineHeight: 1.45 }}>
                                               {parada.hora_programada && <div style={{ color: '#8b5cf6' }}>Programada: {parseFecha(parada.hora_programada)?.toLocaleString('es-MX')}</div>}
                                               {parada.hora_llegada && <div>Primer contacto: {parseFecha(parada.hora_llegada)?.toLocaleString('es-MX')}</div>}
-                                              {parada.hora_salida && <div>Último contacto: {parseFecha(parada.hora_salida)?.toLocaleString('es-MX')}</div>}
+                                              {parada.hora_salida && <div>Ãšltimo contacto: {parseFecha(parada.hora_salida)?.toLocaleString('es-MX')}</div>}
                                             </div>
                                           )}
                                           {parada.id && ['en_camino', 'llego'].includes(parada.estado) && (
@@ -1064,11 +1142,11 @@ export function ViajeModal({
                         ) : (
                           <div>
                             <div style={{ fontSize: '0.9rem', fontWeight: '600', color: '#60a5fa' }}>{viajeDetalle.destino || '-'}</div>
-                            {geocercasCoincidentes(viajeDetalle.destino).map(name => <div key={name} style={{ color: '#6a9b6a', fontSize: '0.67rem', marginTop: '0.2rem' }}>📍 {name}</div>)}
+                            {geocercasCoincidentes(viajeDetalle.destino).map(name => <div key={name} style={{ color: '#6a9b6a', fontSize: '0.67rem', marginTop: '0.2rem' }}>ðŸ“ {name}</div>)}
                             {(viajeDetalle.hora_llegada || viajeDetalle.hora_salida) && (
                               <div style={{ marginTop: '0.35rem', color: '#94a3b8', fontSize: '0.65rem', lineHeight: 1.45 }}>
                                 {viajeDetalle.hora_llegada && <div>Primer contacto: {parseFecha(viajeDetalle.hora_llegada)?.toLocaleString('es-MX')}</div>}
-                                {viajeDetalle.hora_salida && <div>Último contacto: {parseFecha(viajeDetalle.hora_salida)?.toLocaleString('es-MX')}</div>}
+                                {viajeDetalle.hora_salida && <div>Ãšltimo contacto: {parseFecha(viajeDetalle.hora_salida)?.toLocaleString('es-MX')}</div>}
                   </div>
                 )}
               </div>
@@ -1195,7 +1273,7 @@ export function SeguimientoUpdateModal({
                             <span style={s.badge(u.isLocal ? '#8b5cf6' : u.isOnline ? '#10b981' : '#ef4444')}>{u.isLocal ? 'Local' : u.isOnline ? 'Online' : 'Offline'}</span>
                           </div>
                           <div style={{ fontSize: '0.72rem', color: '#6a9b6a', marginTop: '0.25rem' }}>
-                            {fila?.grupo ? `Grupo: ${fila.grupo} · ` : ''}{fila?.estatus || u.estatus || 'Sin estatus'}
+                            {fila?.grupo ? `Grupo: ${fila.grupo} Â· ` : ''}{fila?.estatus || u.estatus || 'Sin estatus'}
                           </div>
                         </button>
                       );
@@ -1228,13 +1306,13 @@ export function SeguimientoUpdateModal({
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}>
                           <div>
                             <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#e0e0e0' }}>{nombreUnidad}</div>
-                            <div style={{ fontSize: '0.8rem', color: '#6a9b6a' }}>{operadores[String(unidad?.id)]?.nombre || fila?.operador || 'Sin operador'}{fila?.remolque ? ` · Remolque ${fila.remolque}` : ''}</div>
+                            <div style={{ fontSize: '0.8rem', color: '#6a9b6a' }}>{operadores[String(unidad?.id)]?.nombre || fila?.operador || 'Sin operador'}{fila?.remolque ? ` Â· Remolque ${fila.remolque}` : ''}</div>
                           </div>
                           <span style={s.badge(fila?.estatus === 'Disponible' ? '#6b7280' : '#10b981')}>{fila?.estatus || 'Sin seguimiento'}</span>
                         </div>
 
                         <div style={{ padding: '1rem', background: '#111111', border: '1px solid #1a3d1a', borderRadius: '12px' }}>
-                          <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.6rem' }}>Telemetría en vivo</div>
+                          <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.6rem' }}>TelemetrÃ­a en vivo</div>
                           {(() => {
                             const loc = unidad?.location;
                             const tieneUbicacion = loc && (Number(loc.latitude) || Number(loc.longitude));
@@ -1246,16 +1324,16 @@ export function SeguimientoUpdateModal({
                             const lng = loc ? Number(loc.longitude) : null;
                             const coords = (Number.isFinite(lat) && Number.isFinite(lng) && lat && lng) ? ` (${lat.toFixed(5)}, ${lng.toFixed(5)})` : '';
                             if (!tieneUbicacion) {
-                              return <div style={{ fontSize: '0.85rem', color: '#f87171' }}>Sin señal de ubicación</div>;
+                              return <div style={{ fontSize: '0.85rem', color: '#f87171' }}>Sin seÃ±al de ubicaciÃ³n</div>;
                             }
                             return (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.85rem', color: '#c0c0c0' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
                                   <span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', flexShrink: 0, background: circulando ? '#00ff41' : '#9ca3af', boxShadow: circulando ? '0 0 8px #00ff41' : 'none' }} />
                                   <strong style={{ color: circulando ? '#00ff41' : '#9ca3af' }}>{circulando ? 'Circulando' : 'Detenida'}</strong>
-                                  <span style={{ color: '#6a9b6a' }}>· {velKmh} km/h</span>
+                                  <span style={{ color: '#6a9b6a' }}>Â· {velKmh} km/h</span>
                                 </div>
-                                <div style={{ color: '#e0e0e0', lineHeight: 1.4 }}>{ubicacion || 'Sin dirección disponible'}{coords}</div>
+                                <div style={{ color: '#e0e0e0', lineHeight: 1.4 }}>{ubicacion || 'Sin direcciÃ³n disponible'}{coords}</div>
                               </div>
                             );
                           })()}
@@ -1265,12 +1343,12 @@ export function SeguimientoUpdateModal({
                           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.8rem', flexWrap: 'wrap' }}>
                             <div>
                               <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Viaje Actual</div>
-                              <div style={{ color: '#e0e0e0', fontWeight: 700 }}>{viajeActual ? `${viajeActual.origen || '-'} → ${viajeActual.destino || '-'}` : 'Sin viaje activo'}</div>
+                              <div style={{ color: '#e0e0e0', fontWeight: 700 }}>{viajeActual ? `${viajeActual.origen || '-'} â†’ ${viajeActual.destino || '-'}` : 'Sin viaje activo'}</div>
                               {viajeActual && <div style={{ fontSize: '0.75rem', color: '#6a9b6a', marginTop: '0.2rem' }}>{viajeActual.conductor || 'Sin conductor'}</div>}
                             </div>
                             <div style={{ textAlign: 'right' }}>
                               <div style={{ fontSize: '0.7rem', color: '#4a8a4a', textTransform: 'uppercase' }}>Siguiente</div>
-                              <div style={{ color: '#f59e0b', fontWeight: 700 }}>{viajeSiguiente ? `${viajeSiguiente.origen || '-'} → ${viajeSiguiente.destino || '-'}` : 'Sin viaje siguiente'}</div>
+                              <div style={{ color: '#f59e0b', fontWeight: 700 }}>{viajeSiguiente ? `${viajeSiguiente.origen || '-'} â†’ ${viajeSiguiente.destino || '-'}` : 'Sin viaje siguiente'}</div>
                             </div>
                           </div>
 
@@ -1322,11 +1400,11 @@ export function SeguimientoUpdateModal({
                               style={{ ...s.input, width: '100%', boxSizing: 'border-box' }}
                             />
                           </div>
-                          <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.5rem' }}>Observación</div>
+                          <div style={{ fontSize: '0.75rem', color: '#4a8a4a', textTransform: 'uppercase', marginBottom: '0.5rem' }}>ObservaciÃ³n</div>
                           <textarea
                             value={seguimientoModalNota}
                             onChange={(e) => setSeguimientoModalNota(e.target.value)}
-                            placeholder="Escribe aquí la observación de seguimiento..."
+                            placeholder="Escribe aquÃ­ la observaciÃ³n de seguimiento..."
                             style={{ width: '100%', minHeight: '120px', resize: 'vertical', borderRadius: '10px', border: '1px solid #1a3d1a', background: '#fff', color: '#000', padding: '0.8rem', fontFamily: 'inherit' }}
                           />
                           {seguimientoModalError && <div style={{ color: '#f87171', marginTop: '0.6rem', fontSize: '0.85rem' }}>{seguimientoModalError}</div>}
@@ -1361,7 +1439,7 @@ export function MensajeModal({
           <div className="modal-panel" role="dialog" aria-modal="true" aria-label="Generar mensaje de seguimiento" style={{ background: '#0d1a0d', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '1.5rem', maxWidth: '700px', width: '90%', maxHeight: '80vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <h2 style={{ margin: 0, fontSize: '1.3rem', color: '#00ff41' }}>Generar Mensaje de Seguimiento</h2>
-              <button onClick={() => setShowMensajeModal(false)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.5rem' }}>✕</button>
+              <button onClick={() => setShowMensajeModal(false)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.5rem' }}>âœ•</button>
             </div>
 
             <div style={{ marginBottom: '1rem' }}>
@@ -1387,8 +1465,8 @@ export function MensajeModal({
 
             {mensajeTexto && (
               <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                <button onClick={copiarMensaje} style={s.button('#10b981')}>📋 Copiar</button>
-                <button onClick={enviarWhatsApp} style={s.button('#25D366')}>📲 WhatsApp</button>
+                <button onClick={copiarMensaje} style={s.button('#10b981')}>ðŸ“‹ Copiar</button>
+                <button onClick={enviarWhatsApp} style={s.button('#25D366')}>ðŸ“² WhatsApp</button>
               </div>
             )}
           </div>
@@ -1413,15 +1491,15 @@ export function PendienteModal({
           <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="pendiente-modal-title" style={{ background: '#0d1a0d', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '1.5rem', maxWidth: '500px', width: '90%', maxHeight: '80vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <h2 id="pendiente-modal-title" style={{ margin: 0, fontSize: '1.2rem', color: '#00ff41' }}>{pendienteEditando ? 'Detalles del Pendiente' : 'Nuevo Pendiente'}</h2>
-              <button aria-label="Cerrar" onClick={cerrarPendiente} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.5rem' }}>✕</button>
+              <button aria-label="Cerrar" onClick={cerrarPendiente} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.5rem' }}>âœ•</button>
             </div>
             <form onSubmit={guardarPendiente}>
               <div style={{ marginBottom: '0.75rem' }}>
-                <label style={s.label}>Título *</label>
+                <label style={s.label}>TÃ­tulo *</label>
                 <input style={s.input} placeholder="Ej: Revisar unidad GERS-243" value={formPendiente.titulo} onChange={(e) => setFormPendiente({ ...formPendiente, titulo: e.target.value })} required readOnly={!!pendienteEditando} autoFocus />
               </div>
               <div style={{ marginBottom: '0.75rem' }}>
-                <label style={s.label}>Descripción</label>
+                <label style={s.label}>DescripciÃ³n</label>
                 <textarea style={{ ...s.input, minHeight: '60px', resize: 'vertical' }} placeholder="Detalles del pendiente..." value={formPendiente.descripcion} onChange={(e) => setFormPendiente({ ...formPendiente, descripcion: e.target.value })} readOnly={!!pendienteEditando} />
               </div>
               <div className="form-grid-2" style={{ display: 'grid', gridTemplateColumns: pendienteEditando ? '1fr 1fr 1fr' : '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
@@ -1434,7 +1512,7 @@ export function PendienteModal({
                 <div>
                   <label style={s.label}>Turno</label>
                   <select style={s.select} value={formPendiente.turno} onChange={(e) => setFormPendiente({ ...formPendiente, turno: e.target.value })} disabled={!!pendienteEditando}>
-                    <option value="">Sin turno</option><option value="mañana">Mañana</option><option value="tarde">Tarde</option><option value="noche">Noche</option>
+                    <option value="">Sin turno</option><option value="maÃ±ana">MaÃ±ana</option><option value="tarde">Tarde</option><option value="noche">Noche</option>
                   </select>
                 </div>
                 {pendienteEditando && <div>
@@ -1450,7 +1528,7 @@ export function PendienteModal({
               </div>
               {pendienteEditando && pendienteEditando.fecha_creacion && (
                 <div style={{ marginBottom: '1rem', padding: '0.6rem 0.8rem', background: '#102510', border: '1px solid #1a3d1a', borderRadius: '8px', color: '#6a9b6a', fontSize: '0.8rem' }}>
-                  📅 Creado el {parseFecha(pendienteEditando.fecha_creacion)?.toLocaleString('es-MX', { dateStyle: 'long', timeStyle: 'short' }) || '-'}
+                  ðŸ“… Creado el {parseFecha(pendienteEditando.fecha_creacion)?.toLocaleString('es-MX', { dateStyle: 'long', timeStyle: 'short' }) || '-'}
                   {' por '}{pendienteEditando.created_by_username || pendienteEditando.creado_por || 'Sistema'}
                 </div>
               )}
@@ -1471,7 +1549,7 @@ export function PendienteModal({
                       pendienteEditando.comentarios.map(c => (
                         <div key={c.id} style={{ padding: '0.75rem', background: '#1a1a1a', borderRadius: '6px', marginBottom: '0.5rem', border: '1px solid #1a3d1a' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                            <span style={{ fontSize: '0.75rem', color: '#00ff41', fontWeight: '600' }}>{c.created_by_username || c.autor || 'Anónimo'}</span>
+                            <span style={{ fontSize: '0.75rem', color: '#00ff41', fontWeight: '600' }}>{c.created_by_username || c.autor || 'AnÃ³nimo'}</span>
                             <span style={{ fontSize: '0.7rem', color: '#4a4a4a' }}>{parseFecha(c.fecha_creacion)?.toLocaleString('es-MX') || '-'}</span>
                           </div>
                           <div style={{ fontSize: '0.85rem', color: '#e0e0e0', whiteSpace: 'pre-wrap' }}>{c.contenido}</div>
@@ -1499,7 +1577,7 @@ export function HistorialModal({
           <div className="modal-panel" role="dialog" aria-modal="true" aria-label="Historial de pendientes" style={{ background: '#0d1a0d', border: '1px solid #1a3d1a', borderRadius: '12px', padding: '1.5rem', maxWidth: '1100px', width: '95%', maxHeight: '85vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
               <h2 style={{ margin: 0, fontSize: '1.2rem', color: '#00ff41' }}>Historial de pendientes</h2>
-              <button onClick={() => setShowHistorialModal(false)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.5rem' }}>✕</button>
+              <button onClick={() => setShowHistorialModal(false)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.5rem' }}>âœ•</button>
             </div>
             {historialPendientes.length === 0 ? (
               <div style={{ padding: '2rem', textAlign: 'center', color: '#6a9b6a' }}>No hay pendientes archivados.</div>
@@ -1508,7 +1586,7 @@ export function HistorialModal({
                 <table style={s.table}>
                   <thead>
                     <tr>
-                      <th style={s.th}>Título</th>
+                      <th style={s.th}>TÃ­tulo</th>
                       <th style={s.th}>Prioridad</th>
                       <th style={s.th}>Estado</th>
                       <th style={s.th}>Asignado</th>
@@ -1557,13 +1635,13 @@ export function ExistingGeofenceModal({
           <form className="modal-panel" role="dialog" aria-modal="true" aria-label={`Seleccionar geocerca para ${selectedCliente.nombre}`} onSubmit={vincularExistingGeofence} style={{ background: '#0d0d0d', border: '1px solid #285b35', borderRadius: '16px', width: '720px', maxWidth: '95vw', maxHeight: '90vh', display: 'flex', flexDirection: 'column', padding: '1.35rem', boxShadow: '0 24px 70px rgba(0,0,0,0.6)' }} onClick={event => event.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', marginBottom: '1rem' }}>
               <div>
-                <div style={{ color: '#4ade80', fontSize: '0.68rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Catálogo de geocercas</div>
+                <div style={{ color: '#4ade80', fontSize: '0.68rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase' }}>CatÃ¡logo de geocercas</div>
                 <h2 style={{ margin: '0.25rem 0 0', color: '#f0fdf4' }}>Asociar a {selectedCliente.nombre}</h2>
                 <p style={{ margin: '0.3rem 0 0', color: '#6a9b6a', fontSize: '0.82rem' }}>Incluye geocercas manuales, predefinidas y Samsara.</p>
               </div>
-              <button type="button" disabled={existingGeofenceSaving} onClick={cerrarExistingGeofenceModal} aria-label="Cerrar" style={{ background: 'none', border: 0, color: '#ef4444', fontSize: '1.4rem', cursor: 'pointer' }}>✕</button>
+              <button type="button" disabled={existingGeofenceSaving} onClick={cerrarExistingGeofenceModal} aria-label="Cerrar" style={{ background: 'none', border: 0, color: '#ef4444', fontSize: '1.4rem', cursor: 'pointer' }}>âœ•</button>
             </div>
-            <input type="search" autoFocus style={{ ...s.input, marginBottom: '0.75rem' }} value={existingGeofenceSearch} onChange={event => setExistingGeofenceSearch(event.target.value)} placeholder="Buscar por nombre, dirección o categoría..." />
+            <input type="search" autoFocus style={{ ...s.input, marginBottom: '0.75rem' }} value={existingGeofenceSearch} onChange={event => setExistingGeofenceSearch(event.target.value)} placeholder="Buscar por nombre, direcciÃ³n o categorÃ­a..." />
             <div role="group" aria-label="Geocercas disponibles" style={{ minHeight: '180px', maxHeight: '48vh', overflowY: 'auto', border: '1px solid #1a3d1a', borderRadius: '10px', background: '#080d08', padding: '0.4rem' }}>
               {allGeofences
                 .filter(geofence => geofence.activa !== 0)
@@ -1618,9 +1696,9 @@ export function ClienteGeofenceModal({
               <div>
                 <div style={{ color: '#4ade80', fontSize: '0.68rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Geocerca de cliente</div>
                 <h2 style={{ margin: '0.25rem 0 0', color: '#f0fdf4' }}>{selectedCliente.nombre}</h2>
-                <p style={{ margin: '0.3rem 0 0', color: '#6a9b6a', fontSize: '0.82rem' }}>Puedes usar una dirección o capturar las coordenadas directamente.</p>
+                <p style={{ margin: '0.3rem 0 0', color: '#6a9b6a', fontSize: '0.82rem' }}>Puedes usar una direcciÃ³n o capturar las coordenadas directamente.</p>
               </div>
-              <button type="button" disabled={clienteGeofenceSaving} onClick={cerrarClienteGeofenceModal} aria-label="Cerrar" style={{ background: 'none', border: 0, color: '#ef4444', fontSize: '1.4rem', cursor: 'pointer' }}>✕</button>
+              <button type="button" disabled={clienteGeofenceSaving} onClick={cerrarClienteGeofenceModal} aria-label="Cerrar" style={{ background: 'none', border: 0, color: '#ef4444', fontSize: '1.4rem', cursor: 'pointer' }}>âœ•</button>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.9rem' }}>
               <div style={{ gridColumn: '1 / -1' }}>
@@ -1628,8 +1706,8 @@ export function ClienteGeofenceModal({
                 <input autoFocus required style={s.input} value={formClienteGeofence.nombre} onChange={event => setFormClienteGeofence(current => ({ ...current, nombre: event.target.value }))} placeholder="Ej: CEDIS Cliente Chihuahua" />
               </div>
               <div style={{ gridColumn: '1 / -1' }}>
-                <label style={s.label}>Dirección</label>
-                <input style={s.input} value={formClienteGeofence.direccion} onChange={event => setFormClienteGeofence(current => ({ ...current, direccion: event.target.value }))} placeholder="Dirección completa para localizar automáticamente" />
+                <label style={s.label}>DirecciÃ³n</label>
+                <input style={s.input} value={formClienteGeofence.direccion} onChange={event => setFormClienteGeofence(current => ({ ...current, direccion: event.target.value }))} placeholder="DirecciÃ³n completa para localizar automÃ¡ticamente" />
               </div>
               <div>
                 <label style={s.label}>Latitud</label>
@@ -1648,7 +1726,7 @@ export function ClienteGeofenceModal({
                 <input type="color" style={{ ...s.input, height: '39px', padding: '4px' }} value={formClienteGeofence.color} onChange={event => setFormClienteGeofence(current => ({ ...current, color: event.target.value }))} />
               </div>
               <div style={{ gridColumn: '1 / -1' }}>
-                <label style={s.label}>Descripción</label>
+                <label style={s.label}>DescripciÃ³n</label>
                 <textarea rows={3} style={{ ...s.input, resize: 'vertical' }} value={formClienteGeofence.descripcion} onChange={event => setFormClienteGeofence(current => ({ ...current, descripcion: event.target.value }))} placeholder="Indicaciones o referencia operativa" />
               </div>
             </div>
@@ -1676,23 +1754,23 @@ export function ClienteModal({
                 <div style={{ color: '#4ade80', fontSize: '0.7rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{clienteEditando ? 'Actualizar registro' : 'Alta comercial'}</div>
                 <h2 style={{ margin: '0.25rem 0 0', color: '#f0fdf4' }}>{clienteEditando ? 'Editar cliente' : 'Nuevo cliente'}</h2>
               </div>
-              <button type="button" disabled={clienteSaving} onClick={cerrarClienteModal} aria-label="Cerrar" style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.4rem', cursor: 'pointer' }}>✕</button>
+              <button type="button" disabled={clienteSaving} onClick={cerrarClienteModal} aria-label="Cerrar" style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.4rem', cursor: 'pointer' }}>âœ•</button>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.9rem' }}>
               <div style={{ gridColumn: '1 / -1' }}>
                 <label style={s.label}>Nombre del cliente *</label>
-                <input autoFocus required maxLength={150} style={s.input} value={formCliente.nombre} onChange={event => setFormCliente(current => ({ ...current, nombre: event.target.value }))} placeholder="Empresa o razón comercial" />
+                <input autoFocus required maxLength={150} style={s.input} value={formCliente.nombre} onChange={event => setFormCliente(current => ({ ...current, nombre: event.target.value }))} placeholder="Empresa o razÃ³n comercial" />
               </div>
               <div>
                 <label style={s.label}>Persona de contacto</label>
                 <input maxLength={150} style={s.input} value={formCliente.contacto} onChange={event => setFormCliente(current => ({ ...current, contacto: event.target.value }))} placeholder="Nombre del contacto" />
               </div>
               <div>
-                <label style={s.label}>Teléfono</label>
+                <label style={s.label}>TelÃ©fono</label>
                 <input type="tel" maxLength={40} style={s.input} value={formCliente.telefono} onChange={event => setFormCliente(current => ({ ...current, telefono: event.target.value }))} placeholder="Ej: 614 123 4567" />
               </div>
               <div style={{ gridColumn: '1 / -1' }}>
-                <label style={s.label}>Correo electrónico</label>
+                <label style={s.label}>Correo electrÃ³nico</label>
                 <input type="email" maxLength={254} style={s.input} value={formCliente.email} onChange={event => setFormCliente(current => ({ ...current, email: event.target.value }))} placeholder="contacto@cliente.com" />
               </div>
               <div style={{ gridColumn: '1 / -1' }}>
@@ -1700,7 +1778,7 @@ export function ClienteModal({
                 {(formCliente.wpp_groups || []).map((grupo, index) => (
                   <div key={index} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.5rem', marginBottom: '0.5rem', alignItems: 'center' }}>
                     <input maxLength={150} style={s.input} value={grupo} onChange={event => setFormCliente(current => ({ ...current, wpp_groups: (current.wpp_groups || []).map((g, i) => i === index ? event.target.value : g) }))} placeholder="Nombre del grupo (ej: viajes GERS)" />
-                    <button type="button" aria-label={`Quitar grupo ${grupo || index + 1}`} onClick={() => setFormCliente(current => ({ ...current, wpp_groups: (current.wpp_groups || []).filter((g, i) => i !== index) }))} style={s.button('#ef4444')}>✕</button>
+                    <button type="button" aria-label={`Quitar grupo ${grupo || index + 1}`} onClick={() => setFormCliente(current => ({ ...current, wpp_groups: (current.wpp_groups || []).filter((g, i) => i !== index) }))} style={s.button('#ef4444')}>âœ•</button>
                   </div>
                 ))}
                 <button type="button" onClick={() => setFormCliente(current => ({ ...current, wpp_groups: [...(current.wpp_groups || []), ''] }))} style={{ ...s.button('#3b82f6'), marginTop: '0.15rem' }}>+ Agregar grupo de WhatsApp</button>
@@ -1726,15 +1804,15 @@ export function RemolqueModal({
           <div className="modal-panel" role="dialog" aria-modal="true" aria-label={remolqueEditando ? 'Editar remolque' : 'Nuevo remolque'} style={{ background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '16px', width: '520px', maxWidth: '95vw', padding: '1.5rem' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
               <h2 style={{ margin: 0, color: '#00ff41' }}>{remolqueEditando ? 'Editar remolque' : 'Nuevo remolque'}</h2>
-              <button onClick={cerrarRemolqueModal} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
+              <button onClick={cerrarRemolqueModal} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer' }}>âœ•</button>
             </div>
             <div style={{ display: 'grid', gap: '0.85rem' }}>
               <div>
-                <label style={s.label}>Número</label>
+                <label style={s.label}>NÃºmero</label>
                 <input style={s.input} value={formRemolque.numero} onChange={(e) => setFormRemolque({ ...formRemolque, numero: e.target.value })} placeholder="Ej: 12345" />
               </div>
               <div>
-                <label style={s.label}>Categoría</label>
+                <label style={s.label}>CategorÃ­a</label>
                 <select style={s.select} value={formRemolque.categoria} onChange={(e) => setFormRemolque({ ...formRemolque, categoria: e.target.value })}>
                   <option value="Thermo Refrigerado">Thermo Refrigerado</option>
                   <option value="Caja Seca">Caja Seca</option>
@@ -1772,7 +1850,7 @@ export function TurnoModal({
                 <h2 style={{ margin: 0, color: '#00ff41' }}>Entregar turno</h2>
                 <p style={{ margin: '0.25rem 0 0', color: '#6a9b6a', fontSize: '0.9rem' }}>Genera un resumen de lo mas importante sucedido en las ultimas horas</p>
               </div>
-              <button onClick={() => { setShowTurnoModal(false); setTurnoSummary(null); }} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
+              <button onClick={() => { setShowTurnoModal(false); setTurnoSummary(null); }} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer' }}>âœ•</button>
             </div>
 
             {!turnoSummary ? (
@@ -1815,7 +1893,7 @@ export function TurnoModal({
                     <button onClick={() => navigator.clipboard.writeText(turnoSummary.summary.texto)} style={s.button('#10b981')}>Copiar</button>
                     <button onClick={() => descargarPdfTurno(turnoSummary, turnoSummary.report)} style={s.button('#f59e0b')}>Descargar PDF</button>
                     <button onClick={() => { setTurnoSummary(null); }} style={s.button('#1d4ed8')}>Nuevo resumen</button>
-                    <button onClick={guardarCierreTurno} disabled={turnoSaving} style={s.button('#00ff41')}>{turnoSaving ? 'Guardando...' : 'Guardar reporte y cerrar sesión'}</button>
+                    <button onClick={guardarCierreTurno} disabled={turnoSaving} style={s.button('#00ff41')}>{turnoSaving ? 'Guardando...' : 'Guardar reporte y cerrar sesiÃ³n'}</button>
                     <button onClick={() => { setShowTurnoModal(false); setTurnoSummary(null); }} style={s.button('#6b7280')}>Cerrar</button>
                   </div>
                 </div>
@@ -1881,14 +1959,14 @@ export function RemolqueAsignarModal({
   return (<div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2200 }} onClick={cerrar}>
           <div className="modal-panel" role="dialog" aria-modal="true" aria-label="Asignar remolque" style={{ background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '16px', width: '560px', maxWidth: '95vw', maxHeight: '85vh', padding: '1.5rem', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexShrink: 0 }}>
-              <h2 style={{ margin: 0, color: '#00ff41', fontSize: '1.1rem' }}>Asignación de {obtenerMiembrosFull(remolque).length > 1 ? displayRemolque(remolque) : numeroRemolque(remolque.numero)}</h2>
-              <button onClick={cerrar} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
+              <h2 style={{ margin: 0, color: '#00ff41', fontSize: '1.1rem' }}>AsignaciÃ³n de {obtenerMiembrosFull(remolque).length > 1 ? displayRemolque(remolque) : numeroRemolque(remolque.numero)}</h2>
+              <button onClick={cerrar} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer' }}>âœ•</button>
             </div>
             <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {asignado ? (
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', padding: '0.75rem', background: '#002200', border: '1px solid #00ff4133', borderRadius: '8px' }}>
                   <span style={{ color: '#e0e0e0' }}>
-                    {obtenerMiembrosFull(remolque).length > 1 ? `FULL: ${displayRemolque(remolque)}` : numeroRemolque(remolque.numero)} · {remolque.unidad_asignada || remolque.vehicle_id_asignado}
+                    {obtenerMiembrosFull(remolque).length > 1 ? `FULL: ${displayRemolque(remolque)}` : numeroRemolque(remolque.numero)} Â· {remolque.unidad_asignada || remolque.vehicle_id_asignado}
                   </span>
                   <button type="button" onClick={() => desasignarRemolque(remolque.id)} style={s.button('#ef4444')}>Desasignar</button>
                 </div>
@@ -1929,10 +2007,10 @@ export function RemolqueAsignarModal({
                   {historialRemolque.map((h, i) => (
                     <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.6rem 0.75rem', background: h.activa ? '#002200' : '#1a1a1a', borderRadius: '8px', border: `1px solid ${h.activa ? '#00ff4133' : '#333'}` }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
-                        <span style={{ color: h.activa ? '#00ff41' : '#ccc', fontWeight: 600 }}>🚛 {h.vehicle_name || h.vehicle_id}</span>
+                        <span style={{ color: h.activa ? '#00ff41' : '#ccc', fontWeight: 600 }}>ðŸš› {h.vehicle_name || h.vehicle_id}</span>
                         <span style={{ color: '#888', fontSize: '0.8rem' }}>
                           {h.fecha_inicio ? `Inicio: ${parseFecha(h.fecha_inicio).toLocaleDateString('es-MX')}` : ''}
-                          {h.fecha_fin ? ` — Fin: ${parseFecha(h.fecha_fin).toLocaleDateString('es-MX')}` : h.activa ? ' — Activa' : ''}
+                          {h.fecha_fin ? ` â€” Fin: ${parseFecha(h.fecha_fin).toLocaleDateString('es-MX')}` : h.activa ? ' â€” Activa' : ''}
                         </span>
                       </div>
                       {h.activa && (
@@ -1964,12 +2042,12 @@ export function ImportarSeguimientoModal({
     try {
       const result = await importarSeguimientoDesdeCsv(url.trim());
       const creados = Array.isArray(result.viajesSync) ? result.viajesSync.filter(v => v && v.creado).length : 0;
-      setExito(`${result.imported} registros importados correctamente${creados ? ` · ${creados} viaje(s) creado(s)` : ''}`);
+      setExito(`${result.imported} registros importados correctamente${creados ? ` Â· ${creados} viaje(s) creado(s)` : ''}`);
       setTimeout(() => cerrar(), 1500);
     } catch (err) {
       const msg = err.message || 'Error al importar';
       if (msg.includes('HTML')) {
-        setError('La URL devolvió HTML. Use la URL de exportación CSV: Archivo → Compartir → Publicar en la web → CSV');
+        setError('La URL devolviÃ³ HTML. Use la URL de exportaciÃ³n CSV: Archivo â†’ Compartir â†’ Publicar en la web â†’ CSV');
       } else if (msg.includes('campos') || msg.includes('fields')) {
         setError(`Error de formato CSV: ${msg}. Verifique que la hoja tenga columnas con encabezados.`);
       } else {
@@ -1982,18 +2060,18 @@ export function ImportarSeguimientoModal({
           <div className="modal-panel" role="dialog" aria-modal="true" aria-label="Importar desde Google Sheets" style={{ background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '16px', width: '520px', maxWidth: '95vw', padding: '1.5rem' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
               <h2 style={{ margin: 0, color: '#00ff41', fontSize: '1.1rem' }}>Importar desde Google Sheets</h2>
-              <button onClick={cerrar} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
+              <button onClick={cerrar} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer' }}>âœ•</button>
             </div>
             <div style={{ display: 'grid', gap: '0.85rem' }}>
               <div style={{ fontSize: '0.8rem', color: '#888', lineHeight: 1.5 }}>
-                En Google Sheets ve a <strong style={{ color: '#e0e0e0' }}>Archivo → Compartir → Publicar en la web</strong>, selecciona la hoja, formato <strong style={{ color: '#e0e0e0' }}>CSV</strong>, y copia la URL generada.
+                En Google Sheets ve a <strong style={{ color: '#e0e0e0' }}>Archivo â†’ Compartir â†’ Publicar en la web</strong>, selecciona la hoja, formato <strong style={{ color: '#e0e0e0' }}>CSV</strong>, y copia la URL generada.
               </div>
               <div>
                 <label style={s.label}>URL del CSV publicado</label>
                 <input style={{ ...s.input, fontSize: '0.8rem' }} value={url} onChange={(e) => { setUrl(e.target.value); setError(''); setExito(''); }} placeholder="https://docs.google.com/spreadsheets/d/.../export?format=csv&gid=0" />
                 {url && !url.includes('/export?format=csv') && !url.includes('output=csv') && (
                   <div style={{ color: '#f59e0b', fontSize: '0.75rem', marginTop: '0.3rem' }}>
-                    ⚠️ La URL parece no ser de exportación CSV. Debe contener <code>/export?format=csv</code> o <code>output=csv</code>
+                    âš ï¸ La URL parece no ser de exportaciÃ³n CSV. Debe contener <code>/export?format=csv</code> o <code>output=csv</code>
                   </div>
                 )}
               </div>
@@ -2010,4 +2088,84 @@ export function ImportarSeguimientoModal({
             </div>
           </div>
         </div>);
+}
+
+export function UnidadEtiquetasOpcionesModal({ cerrar, opciones, guardar, s }) {
+  const [draft, setDraft] = React.useState(Array.isArray(opciones) ? [...opciones] : ['Patio', 'Operación', 'Taller', 'En ruta']);
+
+  const guardarYcerrar = async () => {
+    const ok = await guardar(draft);
+    if (ok) cerrar();
+  };
+
+  return (<div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2300 }} onClick={cerrar}>
+    <div className="modal-panel" role="dialog" aria-modal="true" aria-label="Editar etiquetas de unidades" style={{ background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '16px', width: '560px', maxWidth: '95vw', padding: '1.5rem' }} onClick={(e) => e.stopPropagation()}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <div>
+          <h2 style={{ margin: 0, color: '#00ff41', fontSize: '1.1rem' }}>Etiquetas predeterminadas de unidades</h2>
+          <p style={{ margin: '0.2rem 0 0', color: '#6a9b6a', fontSize: '0.78rem' }}>Estas etiquetas se ofrecerán como sugerencias al clasificar cada unidad.</p>
+        </div>
+        <button onClick={cerrar} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
+      </div>
+      <div style={{ display: 'grid', gap: '0.5rem', maxHeight: '50vh', overflowY: 'auto', paddingRight: '0.25rem' }}>
+        {draft.map((opcion, index) => (
+          <div key={index} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <input style={{ ...s.input, flex: 1 }} value={opcion} onChange={(e) => setDraft(prev => prev.map((item, itemIndex) => itemIndex === index ? e.target.value : item))} />
+            <button type="button" onClick={() => setDraft(prev => prev.filter((_, itemIndex) => itemIndex !== index))} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1rem' }}>✕</button>
+          </div>
+        ))}
+        <button type="button" onClick={() => setDraft(prev => [...prev, ''])} style={{ alignSelf: 'flex-start', padding: '0.4rem 0.8rem', borderRadius: '8px', border: '1px dashed #1f3d1f', background: 'transparent', color: '#72d98a', fontSize: '0.78rem', cursor: 'pointer' }}>+ Agregar etiqueta</button>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem' }}>
+        <button type="button" onClick={cerrar} style={s.button('#6b7280')}>Cancelar</button>
+        <button type="button" onClick={guardarYcerrar} disabled={draft.some(o => !String(o).trim())} style={s.button('#00ff41')}>Guardar etiquetas</button>
+      </div>
+    </div>
+  </div>);
+}
+
+export function UnidadEtiquetasModal({ cerrar, unidadClave, opciones, actuales, guardar, s }) {
+  const [seleccionadas, setSeleccionadas] = React.useState(Array.isArray(actuales) ? [...actuales] : []);
+
+  const todas = Array.from(new Set([...(Array.isArray(opciones) ? opciones : []), ...seleccionadas]));
+
+  const toggle = (etiqueta) => {
+    setSeleccionadas(prev => prev.includes(etiqueta) ? prev.filter(e => e !== etiqueta) : [...prev, etiqueta]);
+  };
+
+  const guardarYcerrar = async () => {
+    const ok = await guardar(seleccionadas);
+    if (ok) cerrar();
+  };
+
+  return (<div className="modal-backdrop" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2300 }} onClick={cerrar}>
+    <div className="modal-panel" role="dialog" aria-modal="true" aria-label="Etiquetas de la unidad" style={{ background: '#0d0d0d', border: '1px solid #1a3d1a', borderRadius: '16px', width: '520px', maxWidth: '95vw', padding: '1.5rem' }} onClick={(e) => e.stopPropagation()}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <div>
+          <h2 style={{ margin: 0, color: '#00ff41', fontSize: '1.1rem' }}>Etiquetas de la unidad</h2>
+          <p style={{ margin: '0.2rem 0 0', color: '#6a9b6a', fontSize: '0.75rem', fontFamily: 'monospace' }}>{unidadClave}</p>
+        </div>
+        <button onClick={cerrar} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
+      </div>
+      {todas.length === 0 ? (
+        <p style={{ color: '#4a8a4a', fontSize: '0.8rem' }}>No hay etiquetas definidas. Admin: agrega etiquetas predeterminadas.</p>
+      ) : (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+          {todas.map(etiqueta => {
+            const activa = seleccionadas.includes(etiqueta);
+            return (
+              <button key={etiqueta} type="button" onClick={() => toggle(etiqueta)}
+                style={{ padding: '0.4rem 0.85rem', borderRadius: '999px', border: `1px solid ${activa ? '#00ff41' : '#2a2a2a'}`, background: activa ? '#00ff4120' : '#141414', color: activa ? '#00ff41' : '#9a9a9a', cursor: 'pointer', fontSize: '0.8rem', transition: 'all 0.15s' }}>
+                {activa ? '✓ ' : ''}{etiqueta}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.25rem' }}>
+        <button type="button" onClick={cerrar} style={s.button('#6b7280')}>Cancelar</button>
+        <button type="button" onClick={guardarYcerrar} style={s.button('#00ff41')}>Guardar etiquetas</button>
+      </div>
+    </div>
+  </div>);
 }

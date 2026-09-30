@@ -5,6 +5,8 @@ import {
 } from '../lib/viajes';
 
 import {
+  AlertaComentarioModal,
+  AlertaOpcionesModal,
   CitaDetalleModal,
   ClienteGeofenceModal,
   ClienteModal,
@@ -18,6 +20,8 @@ import {
   RemolqueModal,
   SeguimientoUpdateModal,
   TurnoModal,
+  UnidadEtiquetasModal,
+  UnidadEtiquetasOpcionesModal,
   UnidadModal,
   ViajeModal,
   WppReporteModal,
@@ -29,22 +33,31 @@ export function FloatingAlerts({
   setActiveTab,
   setAlertasView,
   setFloatingAlerts,
+  abrirComentarioAlerta,
 }) {
-  return (<div aria-live="assertive" aria-atomic="false" style={{ position: 'fixed', top: '1rem', right: '1rem', zIndex: 5000, width: 'min(390px, calc(100vw - 2rem))', display: 'grid', gap: '0.65rem', pointerEvents: 'none' }}>
+  return (<div aria-live="assertive" aria-atomic="false" style={{ position: 'fixed', top: '1rem', right: '1rem', zIndex: 5000, width: 'min(390px, calc(100vw - 2rem))', display: 'grid', gap: '0.65rem', pointerEvents: 'none', maxHeight: 'calc(100vh - 2rem)', overflowY: 'auto' }}>
           {floatingAlerts.map(alert => {
             const esError = alert.sync && alert.tipo === 'operador_samsara_err';
+            const requiereComentario = !alert.sync;
             return (
               <div key={alert.id} role="alert" style={{ pointerEvents: 'auto', padding: '1rem', borderRadius: '12px', border: `1px solid ${esError ? '#ff4d4d77' : '#00ff4177'}`, borderLeft: `4px solid ${esError ? '#ff4d4d' : '#00ff41'}`, background: esError ? 'linear-gradient(135deg, #1a0707f7, #2a1010f7)' : 'linear-gradient(135deg, #071407f7, #102510f7)', boxShadow: esError ? '0 16px 42px rgba(0,0,0,0.55), 0 0 24px rgba(255,77,77,0.12)' : '0 16px 42px rgba(0,0,0,0.55), 0 0 24px rgba(0,255,65,0.12)', backdropFilter: 'blur(10px)' }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-                  <div style={{ width: '34px', height: '34px', flex: '0 0 34px', display: 'grid', placeItems: 'center', borderRadius: '50%', background: esError ? '#ff4d4d18' : '#00ff4118', color: esError ? '#ff4d4d' : '#00ff41', fontSize: '1rem' }}>{esError ? '✕' : '✓'}</div>
+                  <div style={{ width: '34px', height: '34px', flex: '0 0 34px', display: 'grid', placeItems: 'center', borderRadius: '50%', background: esError ? '#ff4d4d18' : '#00ff4118', color: esError ? '#ff4d4d' : '#00ff41', fontSize: '1rem' }}>{esError ? '✕' : requiereComentario ? '⚠' : '✓'}</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ color: esError ? '#ff6b6b' : '#00ff41', fontSize: '0.7rem', fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase' }}>{tituloAlerta(alert.tipo)}</div>
                     <div style={{ color: '#f0fdf4', fontSize: '0.86rem', lineHeight: 1.45, marginTop: '0.25rem', overflowWrap: 'anywhere' }}>{alert.mensaje}</div>
-                    {!alert.sync && (
+                    {requiereComentario ? (
+                      <div style={{ display: 'flex', gap: '0.55rem', marginTop: '0.6rem', flexWrap: 'wrap' }}>
+                        <button type="button" onClick={() => abrirComentarioAlerta(alert)} style={{ padding: '0.4rem 0.8rem', borderRadius: '8px', border: '1px solid #00ff41', background: '#00ff41', color: '#061006', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer' }}>✎ Comentar y cerrar</button>
+                        <button type="button" onClick={() => { setAlertasView('activas'); setActiveTab('alertas'); }} style={{ padding: 0, border: 0, background: 'none', color: '#72d98a', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer' }}>Ver en Alertas</button>
+                      </div>
+                    ) : (
                       <button type="button" onClick={() => { setAlertasView('activas'); setActiveTab('alertas'); setFloatingAlerts(current => current.filter(item => item.id !== alert.id)); }} style={{ marginTop: '0.55rem', padding: 0, border: 0, background: 'none', color: '#72d98a', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer' }}>Ver en Alertas</button>
                     )}
                   </div>
-                  <button type="button" aria-label="Cerrar notificación" onClick={() => setFloatingAlerts(current => current.filter(item => item.id !== alert.id))} style={{ background: 'none', border: 0, color: '#6a9b6a', cursor: 'pointer', fontSize: '1rem' }}>✕</button>
+                  {!requiereComentario && (
+                    <button type="button" aria-label="Cerrar notificación" onClick={() => setFloatingAlerts(current => current.filter(item => item.id !== alert.id))} style={{ background: 'none', border: 0, color: '#6a9b6a', cursor: 'pointer', fontSize: '1rem' }}>✕</button>
+                  )}
                 </div>
               </div>
             );
@@ -75,12 +88,29 @@ export function ModalsRoot({
   clienteSaving,
   clientes,
   comentarioRapido,
+  comentariosOpciones,
+  comentarioTarget,
   copiarMensaje,
   copiarReporteWpp,
   copiarReporteWppEnvio,
   crearClienteGeofence,
   crearRemolque,
   crearZonaRiesgo,
+  resolverAlerta,
+  cerrarComentarioAlerta,
+  comentarioEnviando,
+  showOpcionesComentarioModal,
+  setShowOpcionesComentarioModal,
+  unidadEtiquetasOpciones,
+  unidadEtiquetasMap,
+  unidadEtiquetaTarget,
+  showUnidadEtiquetaModal,
+  setShowUnidadEtiquetaModal,
+  showOpcionesEtiquetasUnidadModal,
+  setShowOpcionesEtiquetasUnidadModal,
+  guardarOpcionesEtiquetasUnidad,
+  guardarEtiquetasUnidad,
+  guardarOpcionesComentario,
   currentUser,
   descargarPdfTurno,
   destinoInput,
@@ -546,6 +576,38 @@ export function ModalsRoot({
   cerrar={() => setShowImportarSeguimientoModal(false)}
   importarSeguimientoDesdeCsv={importarSeguimientoDesdeCsv}
   importarSeguimientoLoading={importarSeguimientoLoading}
+  s={s}
+/>}
+
+{comentarioTarget && <AlertaComentarioModal
+  alert={comentarioTarget}
+  opciones={comentariosOpciones}
+  cerrar={cerrarComentarioAlerta}
+  resolver={resolverAlerta}
+  enviando={comentarioEnviando}
+  s={s}
+/>}
+
+{showOpcionesComentarioModal && <AlertaOpcionesModal
+  cerrar={() => setShowOpcionesComentarioModal(false)}
+  opciones={comentariosOpciones}
+  guardar={guardarOpcionesComentario}
+  s={s}
+/>}
+
+{showOpcionesEtiquetasUnidadModal && <UnidadEtiquetasOpcionesModal
+  cerrar={() => setShowOpcionesEtiquetasUnidadModal(false)}
+  opciones={unidadEtiquetasOpciones}
+  guardar={guardarOpcionesEtiquetasUnidad}
+  s={s}
+/>}
+
+{showUnidadEtiquetaModal && unidadEtiquetaTarget && <UnidadEtiquetasModal
+  cerrar={() => { setShowUnidadEtiquetaModal(false); }}
+  unidadClave={unidadEtiquetaTarget}
+  opciones={unidadEtiquetasOpciones}
+  actuales={unidadEtiquetasMap[unidadEtiquetaTarget] || []}
+  guardar={(lista) => guardarEtiquetasUnidad(unidadEtiquetaTarget, lista)}
   s={s}
 />}
     </>

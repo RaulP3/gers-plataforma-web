@@ -136,7 +136,44 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
   )`);
   db.run('ALTER TABLE alertas ADD COLUMN archivada INTEGER DEFAULT 0', [], () => {});
   db.run('ALTER TABLE alertas ADD COLUMN archived_at DATETIME', [], () => {});
+  db.run('ALTER TABLE alertas ADD COLUMN comentario_cierre TEXT', [], () => {});
+  db.run('ALTER TABLE alertas ADD COLUMN cerrado_por TEXT', [], () => {});
+  db.run('ALTER TABLE alertas ADD COLUMN cerrado_at DATETIME', [], () => {});
   db.run('CREATE INDEX IF NOT EXISTS idx_alertas_archivada_timestamp ON alertas(archivada, timestamp)', [], () => {});
+
+  db.run(`CREATE TABLE IF NOT EXISTS configuracion (
+    clave TEXT PRIMARY KEY,
+    valor TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`, [], () => {
+    db.run(`INSERT OR IGNORE INTO configuracion (clave, valor) VALUES ('alerta_comentarios_opciones', ?)`, [
+      JSON.stringify([
+        'Sin novedad - operación normal',
+        'Autorizado: carga/descarga',
+        'Visita programada al cliente',
+        'Estancia prolongada / sin movimiento',
+        'Merodeo: revisar cámara',
+        'Problema con operador - contactar',
+      ]),
+    ], () => {});
+
+    db.run(`INSERT OR IGNORE INTO configuracion (clave, valor) VALUES ('unidad_etiquetas_opciones', ?)`, [
+      JSON.stringify([
+        'Patio',
+        'Operación',
+        'Utilitarios',
+        'Tractocamión',
+        'Remolque',
+        'Cisterna',
+      ]),
+    ], () => {});
+  });
+
+  db.run(`CREATE TABLE IF NOT EXISTS unidad_etiquetas (
+    unidad_clave TEXT PRIMARY KEY,
+    etiquetas TEXT DEFAULT '[]',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`, [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS pendientes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -481,9 +518,12 @@ const databaseReady = new Promise((resolve, reject) => db.serialize(() => {
     notas TEXT DEFAULT '',
     tipo TEXT DEFAULT 'manual',
     samsara_id TEXT,
+    etiquetas TEXT DEFAULT '[]',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+
+  db.run(`ALTER TABLE unidades ADD COLUMN etiquetas TEXT DEFAULT '[]'`, [], () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS risk_zones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

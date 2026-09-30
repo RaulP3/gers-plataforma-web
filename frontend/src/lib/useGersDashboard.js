@@ -55,6 +55,16 @@ export default function useGersDashboard() {
   const [alertasArchivadas, setAlertasArchivadas] = useState([]);
   const [alertasView, setAlertasView] = useState('activas');
   const [floatingAlerts, setFloatingAlerts] = useState([]);
+  const [comentariosOpciones, setComentariosOpciones] = useState([]);
+  const [comentarioTarget, setComentarioTarget] = useState(null);
+  const [showOpcionesComentarioModal, setShowOpcionesComentarioModal] = useState(false);
+  const [comentarioEnviando, setComentarioEnviando] = useState(false);
+  const [unidadEtiquetasOpciones, setUnidadEtiquetasOpciones] = useState([]);
+  const [unidadEtiquetasMap, setUnidadEtiquetasMap] = useState({});
+  const [unidadEtiquetaTarget, setUnidadEtiquetaTarget] = useState(null);
+  const [showUnidadEtiquetaModal, setShowUnidadEtiquetaModal] = useState(false);
+  const [showOpcionesEtiquetasUnidadModal, setShowOpcionesEtiquetasUnidadModal] = useState(false);
+  const [unidadEtiquetaGuardando, setUnidadEtiquetaGuardando] = useState(false);
   const [vehiculos, setVehiculos] = useState([]);
   const [reportes, setReportes] = useState([]);
   const [reporteLoading, setReporteLoading] = useState(false);
@@ -805,11 +815,13 @@ export default function useGersDashboard() {
       else if (selectedVehicle) setSelectedVehicle(null);
       else if (showUnidadModal) setShowUnidadModal(false);
       else if (showZoneModal) setShowZoneModal(false);
+      else if (comentarioTarget) setComentarioTarget(null);
+      else if (showOpcionesComentarioModal) setShowOpcionesComentarioModal(false);
       else if (citaSeleccionada) setCitaSeleccionada(null);
     };
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
-  }, [selectedVehicle, showClienteGeofenceModal, showClienteModal, showExistingGeofenceModal, showHistorialModal, showImportarSeguimientoModal, showMensajeModal, showPendienteModal, showProgramarViajeModal, showRemolqueAsignarModal, showRemolqueModal, showSeguimientoUpdateModal, showTurnoModal, showUnidadModal, showViajeModal, showZoneModal, citaSeleccionada]);
+  }, [selectedVehicle, showClienteGeofenceModal, showClienteModal, showExistingGeofenceModal, showHistorialModal, showImportarSeguimientoModal, showMensajeModal, showPendienteModal, showProgramarViajeModal, showRemolqueAsignarModal, showRemolqueModal, showSeguimientoUpdateModal, showTurnoModal, showUnidadModal, showViajeModal, showZoneModal, citaSeleccionada, comentarioTarget, showOpcionesComentarioModal]);
 
   useEffect(() => {
     if (!apiUrl) return;
@@ -839,7 +851,12 @@ export default function useGersDashboard() {
   }, [apiUrl]);
 
   useEffect(() => {
-    if (apiUrl && currentUser) loadAll();
+    if (apiUrl && currentUser) {
+      loadAll();
+      cargarOpcionesComentario();
+      cargarOpcionesEtiquetasUnidad();
+      cargarMapEtiquetasUnidad();
+    }
   }, [apiUrl, currentUser]);
 
   useEffect(() => {
@@ -1168,6 +1185,9 @@ export default function useGersDashboard() {
   const refreshAlertas = async () => {
     const rows = await fetch(`${apiUrl}/alertas`).then(r => r.json()).catch(() => []);
     setAlertas(Array.isArray(rows) ? rows : []);
+    cargarOpcionesComentario();
+    cargarOpcionesEtiquetasUnidad();
+    cargarMapEtiquetasUnidad();
   };
 
   const refreshAlertasArchivadas = async () => {
@@ -1816,12 +1836,120 @@ export default function useGersDashboard() {
     }
   };
 
+  const cargarOpcionesEtiquetasUnidad = async () => {
+    try {
+      const res = await fetch(`${apiUrl}/unidades/etiquetas-predeterminadas`);
+      const data = await res.json().catch(() => null);
+      if (data && Array.isArray(data.opciones)) setUnidadEtiquetasOpciones(data.opciones);
+    } catch {}
+  };
+
+  const guardarOpcionesEtiquetasUnidad = async (opciones) => {
+    const normalized = (Array.isArray(opciones) ? opciones : []).map(o => String(o).trim()).filter(Boolean);
+    try {
+      const res = await apiJson(`${apiUrl}/unidades/etiquetas-predeterminadas`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ opciones: normalized }),
+      });
+      if (res && Array.isArray(res.opciones)) setUnidadEtiquetasOpciones(res.opciones);
+      return true;
+    } catch (err) {
+      alert(err.message || 'No se pudieron guardar las opciones');
+      return false;
+    }
+  };
+
+  const cargarMapEtiquetasUnidad = async () => {
+    try {
+      const res = await fetch(`${apiUrl}/unidades/etiquetas`);
+      const map = await res.json().catch(() => null);
+      if (map && typeof map === 'object' && !Array.isArray(map)) {
+        setUnidadEtiquetasMap(map);
+      }
+    } catch {}
+  };
+
+  const guardarEtiquetasUnidad = async (clave, etiquetas) => {
+    const normalized = (Array.isArray(etiquetas) ? etiquetas : []).map(e => String(e).trim()).filter(Boolean);
+    try {
+      const res = await apiJson(`${apiUrl}/unidades/etiquetas`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ unidad_clave: clave, etiquetas: normalized }),
+      });
+      if (res && res.unidad_clave) {
+        setUnidadEtiquetasMap(prev => ({ ...prev, [res.unidad_clave]: normalized }));
+      }
+      return true;
+    } catch (err) {
+      alert(err.message || 'No se pudieron guardar las etiquetas');
+      return false;
+    }
+  };
+
   const restaurarAlerta = async (id) => {
     try {
       await apiJson(`${apiUrl}/alertas/${id}/restaurar`, { method: 'PUT' });
       await Promise.all([refreshAlertas(), refreshAlertasArchivadas()]);
     } catch (err) {
       alert(err.message || 'No se pudo restaurar la alerta');
+    }
+  };
+
+  const resolverAlerta = async (id, comentario) => {
+    const text = String(comentario || '').trim();
+    if (!text) {
+      alert('El comentario es obligatorio para cerrar la alerta');
+      return false;
+    }
+    setComentarioEnviando(true);
+    try {
+      await apiJson(`${apiUrl}/alertas/${id}/resolver`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comentario: text }),
+      });
+      setFloatingAlerts(current => current.filter(item => String(item.id) !== String(id)));
+      setComentarioTarget(null);
+      await refreshAlertas();
+      return true;
+    } catch (err) {
+      alert(err.message || 'No se pudo cerrar la alerta');
+      return false;
+    } finally {
+      setComentarioEnviando(false);
+    }
+  };
+
+  const abrirComentarioAlerta = (alert) => {
+    if (!alert?.id) return;
+    setComentarioTarget(alert);
+  };
+
+  const cerrarComentarioAlerta = () => setComentarioTarget(null);
+
+  const cargarOpcionesComentario = async () => {
+    try {
+      const res = await fetch(`${apiUrl}/alertas/comentarios-predeterminados`);
+      const data = await res.json().catch(() => null);
+      if (data && Array.isArray(data.opciones)) setComentariosOpciones(data.opciones);
+    } catch {}
+  };
+
+  const guardarOpcionesComentario = async (opciones) => {
+    const normalized = (Array.isArray(opciones) ? opciones : []).map(o => String(o).trim()).filter(Boolean);
+    try {
+      const res = await apiJson(`${apiUrl}/alertas/comentarios-predeterminados`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ opciones: normalized }),
+      });
+      if (res && Array.isArray(res.opciones)) setComentariosOpciones(res.opciones);
+      return true;
+    } catch (err) {
+      alert(err.message || 'No se pudieron guardar las opciones');
+      return false;
     }
   };
 
@@ -3680,6 +3808,26 @@ export default function useGersDashboard() {
     setAlertasView,
     floatingAlerts,
     setFloatingAlerts,
+    comentariosOpciones,
+    setComentariosOpciones,
+    comentarioTarget,
+    setComentarioTarget,
+    showOpcionesComentarioModal,
+    setShowOpcionesComentarioModal,
+    comentarioEnviando,
+    setComentarioEnviando,
+    unidadEtiquetasOpciones,
+    setUnidadEtiquetasOpciones,
+    unidadEtiquetasMap,
+    setUnidadEtiquetasMap,
+    unidadEtiquetaTarget,
+    setUnidadEtiquetaTarget,
+    showUnidadEtiquetaModal,
+    setShowUnidadEtiquetaModal,
+    showOpcionesEtiquetasUnidadModal,
+    setShowOpcionesEtiquetasUnidadModal,
+    unidadEtiquetaGuardando,
+    setUnidadEtiquetaGuardando,
     vehiculos,
     setVehiculos,
     reportes,
@@ -4103,6 +4251,15 @@ export default function useGersDashboard() {
     archivarAlerta,
     archivarAlertas,
     restaurarAlerta,
+    resolverAlerta,
+    abrirComentarioAlerta,
+    cerrarComentarioAlerta,
+    cargarOpcionesComentario,
+    guardarOpcionesComentario,
+    cargarOpcionesEtiquetasUnidad,
+    guardarOpcionesEtiquetasUnidad,
+    cargarMapEtiquetasUnidad,
+    guardarEtiquetasUnidad,
     crearRemolque,
     cerrarRemolqueModal,
     eliminarRemolque,

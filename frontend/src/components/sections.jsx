@@ -455,6 +455,7 @@ export function UnidadesSection({
   apiJson,
   apiUrl,
   busquedaUnidades,
+  currentUser,
   filtroUnidades,
   hiddenUnits,
   loadAll,
@@ -471,6 +472,15 @@ export function UnidadesSection({
   todasLasUnidades,
   unidadKey,
   unidadesLocales,
+  unidadEtiquetasMap,
+  unidadEtiquetasOpciones,
+  setUnidadEtiquetaTarget,
+  setShowUnidadEtiquetaModal,
+  setShowOpcionesEtiquetasUnidadModal,
+  cargarOpcionesEtiquetasUnidad,
+  guardarOpcionesEtiquetasUnidad,
+  cargarMapEtiquetasUnidad,
+  guardarEtiquetasUnidad,
   vehiculos,
   vehiculosOffline,
   vehiculosOnline,
@@ -507,6 +517,12 @@ export function UnidadesSection({
                     style={{ ...s.button('#00ff41'), background: '#00ff4120', border: '1px solid #00ff41', color: '#00ff41', padding: '0.5rem 1rem' }}>
                     + Agregar Unidad
                   </button>
+                  {currentUser?.rol === 'admin' && (
+                    <button onClick={() => setShowOpcionesEtiquetasUnidadModal(true)}
+                      style={{ ...s.button('#8b5cf6'), padding: '0.5rem 1rem' }}>
+                      Editar etiquetas
+                    </button>
+                  )}
                   {hiddenUnits.length > 0 && <button onClick={() => setHiddenUnits([])} style={s.button('#3b82f6')}>Mostrar ocultas ({hiddenUnits.length})</button>}
                   <button onClick={loadAll} style={s.button()}>Actualizar</button>
                 </div>
@@ -616,6 +632,16 @@ export function UnidadesSection({
                           <td style={{ ...s.td, fontWeight: '600', color: v.isLocal ? '#f59e0b' : '#00ff41' }}>
                             <div>{v.isLocal ? '📌' : '🚛'} {v.name}</div>
                             <div style={{ fontSize: '0.7rem', color: '#4a8a4a', fontWeight: '400' }}>{v.isLocal ? `Local #${v.localId}` : `Samsara ID: ${v.id}`}</div>
+                            {(unidadEtiquetasMap[unidadKey(v)] || []).length > 0 && (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', marginTop: '0.3rem' }}>
+                                {(unidadEtiquetasMap[unidadKey(v)] || []).slice(0, 3).map(tag => (
+                                  <span key={tag} style={{ padding: '0.1rem 0.45rem', borderRadius: '999px', border: '1px solid #3b82f6', background: '#3b82f620', color: '#7cb5ff', fontSize: '0.62rem', fontWeight: '400' }}>{tag}</span>
+                                ))}
+                                {(unidadEtiquetasMap[unidadKey(v)] || []).length > 3 && (
+                                  <span style={{ padding: '0.1rem 0.45rem', borderRadius: '999px', border: '1px solid #4a8a4a', background: '#1a1a1a', color: '#6a9b6a', fontSize: '0.62rem', fontWeight: '400' }}>+{(unidadEtiquetasMap[unidadKey(v)] || []).length - 3}</span>
+                                )}
+                              </div>
+                            )}
                           </td>
                           <td style={s.td}>{v.isLocal ? <span style={{ color: '#6a9b6a' }}>{v.estatus || '-'}</span> : (operadores[String(v.id)]?.nombre || <span style={{ color: '#4a8a4a' }}>Sin asignar</span>)}</td>
                           <td style={s.td}>
@@ -644,14 +670,27 @@ export function UnidadesSection({
                           </td>
                           <td style={{ ...s.td, fontSize: '0.8rem', color: '#6a9b6a' }}>
                             {v.isLocal ? (
-                              <div style={{ display: 'flex', gap: '0.3rem' }}>
+                              <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
+                                {currentUser?.rol === 'admin' && (
+                                  <button onClick={(e) => { e.stopPropagation(); setUnidadEtiquetaTarget(unidadKey(v)); setShowUnidadEtiquetaModal(true); }}
+                                    title="Editar etiquetas de esta unidad"
+                                    style={{ padding: '0.2rem 0.5rem', borderRadius: '6px', border: '1px solid #8b5cf6', background: '#8b5cf620', color: '#a78bfa', cursor: 'pointer', fontSize: '0.7rem' }}>Etiquetas</button>
+                                )}
                                 <button onClick={(e) => { e.stopPropagation(); setEditUnidad(v); setFormUnidad({ nombre: v.nombre, estatus: v.estatus, notas: v.notas, tipo: v.tipo, samsara_id: v.samsara_id || '' }); setShowUnidadModal(true); }}
                                   style={{ padding: '0.2rem 0.5rem', borderRadius: '6px', border: '1px solid #3b82f6', background: '#3b82f620', color: '#3b82f6', cursor: 'pointer', fontSize: '0.7rem' }}>Editar</button>
                                 <button onClick={async (e) => { e.stopPropagation(); if (confirm('Eliminar esta unidad?')) { try { await apiJson(`${apiUrl}/unidades/${v.localId}`, { method: 'DELETE' }); await refreshUnidadesLocales(); } catch (err) { alert(err.message || 'No se pudo eliminar la unidad'); } } }}
                                   style={{ padding: '0.2rem 0.5rem', borderRadius: '6px', border: '1px solid #ef4444', background: '#ef444420', color: '#ef4444', cursor: 'pointer', fontSize: '0.7rem' }}>X</button>
                               </div>
                             ) : (v.lastSeen !== null && v.lastSeen !== undefined ? `hace ${v.lastSeen}min` : '-')}
-                            <div style={{ marginTop: '0.35rem' }}>
+                            <div style={{ marginTop: '0.35rem', display: 'flex', gap: '0.3rem' }}>
+                              {currentUser?.rol === 'admin' && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setUnidadEtiquetaTarget(unidadKey(v)); setShowUnidadEtiquetaModal(true); }}
+                                  style={{ padding: '0.2rem 0.5rem', borderRadius: '6px', border: '1px solid #8b5cf6', background: '#8b5cf620', color: '#a78bfa', cursor: 'pointer', fontSize: '0.7rem' }}
+                                >
+                                  Etiquetas
+                                </button>
+                              )}
                               <button
                                 onClick={(e) => { e.stopPropagation(); setHiddenUnits(prev => prev.includes(unidadKey(v)) ? prev : [...prev, unidadKey(v)]); }}
                                 style={{ padding: '0.2rem 0.5rem', borderRadius: '6px', border: '1px solid #6b7280', background: '#1a1a1a', color: '#c0c0c0', cursor: 'pointer', fontSize: '0.7rem' }}
@@ -909,6 +948,7 @@ export function AlertasSection({
   alertasArchivadas,
   alertasView,
   alertasVisibles,
+  abrirComentarioAlerta,
   apiJson,
   apiUrl,
   archivarAlerta,
@@ -916,7 +956,6 @@ export function AlertasSection({
   currentUser,
   filtroAlertas,
   loadAll,
-  marcarAlertaLeida,
   parseFecha,
   refreshAlertas,
   refreshAlertasArchivadas,
@@ -924,6 +963,7 @@ export function AlertasSection({
   s,
   setAlertasView,
   setFiltroAlertas,
+  setShowOpcionesComentarioModal,
 }) {
   return (<div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
@@ -945,6 +985,7 @@ export function AlertasSection({
                 <button onClick={async () => { try { await apiJson(`${apiUrl}/check-fuel`, { method: 'POST' }); await refreshAlertas(); } catch (err) { alert(err.message || 'No se pudo revisar combustible'); } }} style={s.button('#f59e0b')}>Revisar combustible</button>
                 <button onClick={loadAll} style={s.button()}>Actualizar</button>
                 {alertasView === 'activas' && currentUser?.rol === 'admin' && <button onClick={archivarAlertas} disabled={alertas.length === 0} style={{ ...s.button('#f59e0b'), opacity: alertas.length === 0 ? 0.5 : 1 }}>Archivar activas</button>}
+                {currentUser?.rol === 'admin' && <button onClick={() => setShowOpcionesComentarioModal(true)} style={s.button('#8b5cf6')}>Editar motivos</button>}
               </div>
             </div>
             {alertasVisibles.length === 0 ? (
@@ -969,6 +1010,7 @@ export function AlertasSection({
                           <strong>{a.vehicle_name || a.vehicle_id}</strong>
                         </div>
                         <div style={{ fontSize: '0.85rem', color: '#6a9b6a', marginTop: '0.25rem' }}>{a.mensaje}</div>
+                        {a.comentario_cierre && <div style={{ fontSize: '0.8rem', color: '#10b981', marginTop: '0.25rem', lineHeight: 1.4 }}>💬 {a.comentario_cierre}{a.cerrado_por ? <span style={{ color: '#4a8a4a' }}> — {a.cerrado_por}{a.cerrado_at ? ` · ${parseFecha(a.cerrado_at)?.toLocaleString()}` : ''}</span> : ''}</div>}
                         <div style={{ fontSize: '0.75rem', color: '#4a8a4a', marginTop: '0.25rem' }}>{parseFecha(a.timestamp)?.toLocaleString()}</div>
                         {a.archived_at && <div style={{ fontSize: '0.7rem', color: '#f59e0b', marginTop: '0.2rem' }}>Archivada: {parseFecha(a.archived_at)?.toLocaleString()}</div>}
                       </div>
@@ -977,7 +1019,7 @@ export function AlertasSection({
                           <button onClick={() => restaurarAlerta(a.id)} style={s.button('#3b82f6')}>Restaurar</button>
                         ) : (
                           <>
-                            {!a.leida && <button onClick={() => marcarAlertaLeida(a.id)} style={s.button('#10b981')}>Resuelta</button>}
+                            {!a.leida && <button onClick={() => abrirComentarioAlerta(a)} style={s.button('#10b981')}>Resuelta</button>}
                             <button onClick={() => archivarAlerta(a.id)} style={s.button('#f59e0b')}>Archivar</button>
                           </>
                         )}

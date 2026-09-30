@@ -50,6 +50,13 @@ function archivarAlerta(id) {
   return runQuery("UPDATE alertas SET archivada = 1, leida = 1, archived_at = datetime('now') WHERE id = ?", [id]);
 }
 
+function resolverAlerta(id, comentario, cerradoPor) {
+  return runQuery(
+    "UPDATE alertas SET leida = 1, comentario_cierre = ?, cerrado_por = ?, cerrado_at = datetime('now') WHERE id = ? AND COALESCE(leida, 0) = 0",
+    [comentario, cerradoPor, id]
+  );
+}
+
 function restaurarAlerta(id) {
   return runQuery('UPDATE alertas SET archivada = 0, archived_at = NULL WHERE id = ?', [id]);
 }
@@ -62,5 +69,6 @@ module.exports = {
   markAlertaLeida,
   archivarTodasAlertas,
   archivarAlerta,
+  resolverAlerta,
   restaurarAlerta,
 };
